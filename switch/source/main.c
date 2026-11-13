@@ -20,25 +20,70 @@ static bool resolve_available_android_import(const char *name, const char *versi
     return android_log_compat_resolve(name, address, context);
 }
 
+// Numbered logs preserve earlier Switch results and never contain ELF bytes.
+static FILE *open_stage_log(char *path, size_t size)
+{
+    for (unsigned i = 1; i <= 99; i++) {
+        snprintf(path, size, "sdmc:/switch/cordial-switched/stage-%02u.txt", i);
+        FILE *existing = fopen(path, "rb");
+        if (existing) {
+            fclose(existing);
+            continue;
+        }
+        FILE *log = fopen(path, "wb");
+        if (log)
+            return log;
+        return NULL;
+    }
+    return NULL;
+}
+
 static void try_engine_stage(UiState *state)
 {
     state->stage_attempted = true;
+    char log_path[128] = {0};
+    FILE *log = open_stage_log(log_path, sizeof(log_path));
+    if (log) {
+        fprintf(log, "Cordial Switched 0.12\\n");
+        fprintf(log, "Probe: non-executable ARM64 ELF staging; engine execution: NO\\n");
+        fprintf(log, "Source: sdmc:/switch/cordial-switched/libroblox.so\\n");
+        fprintf(log, "Status: started\\n");
+        fflush(log);
+    }
     FILE *engine = fopen(ENGINE_LIBRARY_PATH, "rb");
     if (!engine) {
         state->stage_status = ENGINE_STAGE_IO_ERROR;
         snprintf(state->stage_detail, sizeof(state->stage_detail),
                  "Could not open libroblox.so on the SD card.");
-        return;
+    } else {
+        EngineStage staged = {0};
+        // Only the user's ELF data is staged; no imported engine code runs.
+        engine_stage_stream_resolved(engine, &staged,
+                                     resolve_available_android_import, NULL);
+        fclose(engine);
+        state->stage_status = staged.status;
+        snprintf(state->stage_detail, sizeof(state->stage_detail), "%s", staged.detail);
+        if (log) {
+            fprintf(log, "RELA applied: %llu\\nRELR applied: %llu\\nAPS2 applied: %llu\\nSymbols resolved: %llu\\n",
+                    (unsigned long long)staged.rela_applied,
+                    (unsigned long long)staged.relr_applied,
+                    (unsigned long long)staged.packed_applied,
+                    (unsigned long long)staged.symbol_applied);
+        }
+        engine_stage_release(&staged);
     }
-    EngineStage staged = {0};
-    // This uses the user's real Android ELF, not the synthetic fixtures. The
-    // image stays non-executable and the resolver rejects unsupported APIs.
-    engine_stage_stream_resolved(engine, &staged,
-                                 resolve_available_android_import, NULL);
-    fclose(engine);
-    state->stage_status = staged.status;
-    snprintf(state->stage_detail, sizeof(state->stage_detail), "%s", staged.detail);
-    engine_stage_release(&staged);
+    if (log) {
+        fprintf(log, "Stage status: %d\\nDetail: %s\\nEngine execution: NO\\n",
+                (int)state->stage_status, state->stage_detail);
+        if (fclose(log) == 0) {
+            // The filename is short enough to fit the on-screen detail.
+            const char *name = strrchr(log_path, '/');
+            char detail[sizeof(state->stage_detail)];
+            snprintf(detail, sizeof(detail), "%.75s [log: %.20s]",
+                     state->stage_detail, name ? name + 1 : log_path);
+            snprintf(state->stage_detail, sizeof(state->stage_detail), "%s", detail);
+        }
+    }
 }
 
 static int failure_screen(const char *reason)
