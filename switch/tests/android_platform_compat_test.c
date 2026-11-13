@@ -75,6 +75,17 @@ int main(void)
     char destination[16] = {0};
     assert(checked_memcpy(destination, "safe", 5, sizeof(destination)) == destination);
     assert(strcmp(destination, "safe") == 0);
+    assert(android_fortify_compat_resolve("__mempcpy_chk", "LIBC", "libc.so", &address));
+    void *(*checked_mempcpy)(void *, const void *, size_t, size_t) =
+        (void *(*)(void *, const void *, size_t, size_t))(uintptr_t)address;
+    char end_pointer[8] = {0};
+    assert(checked_mempcpy(end_pointer, "hi", 3, sizeof(end_pointer)) == end_pointer + 3);
+    assert(checked_mempcpy(end_pointer + 2, "!", 2, sizeof(end_pointer) - 2)
+           == end_pointer + 4);
+    assert(strcmp(end_pointer, "hi!") == 0);
+    assert(checked_mempcpy(end_pointer, "", 0, 0) == end_pointer);
+    assert(!android_fortify_compat_resolve("__mempcpy_chk", "LIBC_N", "libc.so", &address));
+    assert(!android_fortify_compat_resolve("__mempcpy_chk", "LIBC", "libm.so", &address));
     assert(android_fortify_compat_resolve("__memmove_chk", "LIBC", "libc.so", &address));
     void *(*checked_memmove)(void *, const void *, size_t, size_t) =
         (void *(*)(void *, const void *, size_t, size_t))(uintptr_t)address;
@@ -120,6 +131,15 @@ int main(void)
         _exit(99);
     }
     int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        checked_mempcpy(destination, "unsafe", 7, 2);
+        _exit(99);
+    }
     assert(waitpid(child, &status, 0) == child);
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
 
