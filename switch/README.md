@@ -396,8 +396,18 @@ reject W+X page conflicts, map a separately prepared aligned source with
 primitive. The latter compiles into the Switch target but is **not invoked**
 by the UI or linked to the Roblox ELF at this stage.
 
-Critically, relocations in the eventual live loader must be calculated against
-the **final executable address**, not the old scratch address. All imports,
+The loader now separates **address reservation** from mapping:
+`horizon_code_memory_reserve` holds the final Horizon code address before
+relocations, and `horizon_code_memory_map_reserved` can map the prepared
+page-aligned heap image there later. `engine_stage_stream_resolved_at`
+computes ordinary RELA, Android APS2 and RELR relative relocations for this
+explicit final address, while its working buffer remains non-executable.
+The inspector also retains validated PT_LOAD page flags, allowing
+`engine_memory_plan_from_probe` to construct a permission plan for the actual
+ELF. Host fixtures cover the final-base arithmetic; **the full reserve → stage
+→ map → initialize sequence is not yet connected or run with Roblox code**.
+
+The final-address relocation API is only one part of a live linker. All imports,
 PT_TLS/DTV thread state, JNI/GameActivity, callbacks and ownership checks must
 be established before any Roblox initializer can be called. Half-Life 2's
 `dl_emu.c` illustrates module-scoped `dlopen`/`dlsym` and Mesa EGL/GLES symbol

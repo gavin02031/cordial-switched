@@ -262,6 +262,19 @@ static bool resolve_fixture(const unsigned char *bytes, EngineStage *stage,
     return ok;
 }
 
+static bool stage_fixture_at(const unsigned char *bytes, EngineStage *stage,
+                             uint64_t runtime_base,
+                             EngineSymbolResolver lookup, void *context)
+{
+    FILE *file = tmpfile();
+    assert(file);
+    assert(fwrite(bytes, 1, IMAGE_BYTES, file) == IMAGE_BYTES);
+    const bool ok = engine_stage_stream_resolved_at(file, stage, lookup, context,
+                                                    runtime_base);
+    fclose(file);
+    return ok;
+}
+
 static bool audit_fixture(const unsigned char *bytes, EngineStage *stage,
                           EngineSymbolResolver lookup, void *context)
 {
@@ -305,6 +318,44 @@ int main(void)
     assert(get64(stage.image + 0x368) == (uint64_t)(uintptr_t)(stage.image + 0x3c0));
     assert(stage.image[0x400] == 0); // BSS is zero-filled.
     engine_stage_release(&stage);
+    assert(stage.image == NULL);
+
+    // A future RX address is not the scratch allocation's address: both
+    // ordinary RELA and RELR must resolve to the reserved runtime mapping.
+    fixture(bytes);
+    const uint64_t future_base = 0x40000000;
+    assert(stage_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
+    assert(stage.intended_runtime_base == future_base);
+    assert(stage.lowest_virtual_address == 0x1000);
+    assert((uint64_t)(uintptr_t)stage.image != future_base);
+    assert(get64(stage.image + 0x340) == future_base + 0x380);
+    assert(get64(stage.image + 0x350) == future_base + 0x3a0);
+    assert(get64(stage.image + 0x358) == future_base + 0x3b0);
+    assert(get64(stage.image + 0x368) == future_base + 0x3c0);
+    engine_stage_release(&stage);
+
+    packed_fixture(bytes, 1027, 16, 0x1380);
+    assert(stage_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
+    assert(stage.packed_applied == 3);
+    for (unsigned i = 0; i < 3; i++)
+        assert(get64(stage.image + 0x340 + i * 16) == future_base + 0x380);
+    engine_stage_release(&stage);
+
+    fixture(bytes);
+    assert(!stage_fixture_at(bytes, &stage, future_base + 1, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+    assert(strstr(stage.detail, "aligned"));
+    assert(stage.image == NULL);
+
+    fixture(bytes);
+    assert(!stage_fixture_at(bytes, &stage, UINT64_MAX & ~0xfffull,
+                             fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+    assert(stage.image == NULL);
+
+    fixture(bytes);
+    assert(!stage_fixture_at(bytes, &stage, 0, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_INVALID);
     assert(stage.image == NULL);
 
     PackedFixture pack = packed_fixture(bytes, 1027, 16, 0x1380);

@@ -320,8 +320,11 @@ static void engine_probe_stream_to(FILE *file, EngineProbeResult *result,
         }
 
         if (type == PT_LOAD) {
-            segments[segments_count++] = (LoadSegment){file_offset, virtual_address, file_bytes};
             const uint32_t flags = read32(ph + 4);
+            result->load[segments_count] = (EngineProbeLoadSegment){
+                virtual_address, memory_bytes, flags
+            };
+            segments[segments_count++] = (LoadSegment){file_offset, virtual_address, file_bytes};
             if (flags & 1)
                 result->executable_segments++;
             if (flags & 2)

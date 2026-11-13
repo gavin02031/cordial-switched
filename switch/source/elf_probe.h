@@ -11,6 +11,7 @@
 #define ENGINE_PROBE_MAX_NEEDED 12
 #define ENGINE_PROBE_MAX_VISIBLE 5
 #define ENGINE_PROBE_MAX_IMPORT_NAMES 12
+#define ENGINE_PROBE_MAX_LOAD_SEGMENTS 128
 #define ENGINE_REPORT_DIR "sdmc:/switch/cordial-switched"
 
 typedef enum {
@@ -20,6 +21,12 @@ typedef enum {
     ENGINE_PROBE_WRONG_ARCH,
     ENGINE_PROBE_INSPECTED
 } EngineProbeStatus;
+
+typedef struct {
+    uint64_t virtual_address;
+    uint64_t memory_bytes;
+    uint32_t flags; // ELF PF_X=1, PF_W=2, PF_R=4.
+} EngineProbeLoadSegment;
 
 typedef struct {
     EngineProbeStatus status;
@@ -46,6 +53,8 @@ typedef struct {
     bool has_symbol_versions;
     bool has_unsupported_plt_format;
     bool has_tls_segment;
+    // Validated PT_LOAD layout for future Horizon code-memory mapping.
+    EngineProbeLoadSegment load[ENGINE_PROBE_MAX_LOAD_SEGMENTS];
     char needed[ENGINE_PROBE_MAX_NEEDED][64];
     char import_names[ENGINE_PROBE_MAX_IMPORT_NAMES][64];
     char detail[112];

@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "elf_probe.h"
 
 // Native-loader memory layout (not a Roblox/Android ABI implementation).
 // Page permissions are planned before mapping so no executable page ever
@@ -45,6 +46,9 @@ typedef struct {
 // ordering is required by the Switch code-memory permission mechanism.
 bool engine_memory_plan_build(const EngineMemorySegment *segments, size_t count,
                               EngineMemoryPlan *plan);
+// Convert the inspector's already-validated PT_LOAD layout to RX/R/RW spans.
+bool engine_memory_plan_from_probe(const EngineProbeResult *probe,
+                                   EngineMemoryPlan *plan);
 // Recheck run coverage, ordering, alignment and permission values before
 // passing the plan to privileged code-memory syscalls.
 bool engine_memory_plan_validate(const EngineMemoryPlan *plan);

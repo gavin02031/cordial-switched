@@ -76,7 +76,7 @@ bool engine_memory_plan_build(const EngineMemorySegment *segments, size_t count,
     if (!plan)
         return false;
     memset(plan, 0, sizeof(*plan));
-    if (!segments || !count || count > 64)
+    if (!segments || !count || count > ENGINE_PROBE_MAX_LOAD_SEGMENTS)
         return false;
 
     uint64_t lowest = UINT64_MAX, highest = 0;
@@ -183,4 +183,26 @@ bool engine_memory_plan_build(const EngineMemorySegment *segments, size_t count,
     }
     free(flags);
     return ok;
+}
+
+bool engine_memory_plan_from_probe(const EngineProbeResult *probe,
+                                   EngineMemoryPlan *plan)
+{
+    if (!plan) return false;
+    if (!probe || probe->status != ENGINE_PROBE_INSPECTED ||
+        !probe->load_segments ||
+        probe->load_segments > ENGINE_PROBE_MAX_LOAD_SEGMENTS) {
+        memset(plan, 0, sizeof(*plan));
+        return false;
+    }
+    EngineMemorySegment segments[ENGINE_PROBE_MAX_LOAD_SEGMENTS];
+    for (size_t i = 0; i < probe->load_segments; i++) {
+        segments[i] = (EngineMemorySegment){
+            probe->load[i].virtual_address,
+            probe->load[i].memory_bytes,
+            (probe->load[i].flags & 1u) != 0,
+            (probe->load[i].flags & 2u) != 0
+        };
+    }
+    return engine_memory_plan_build(segments, probe->load_segments, plan);
 }

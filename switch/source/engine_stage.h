@@ -32,6 +32,9 @@ typedef struct {
     unsigned unsupported_relocations_seen;
     unsigned tls_relocations_seen;
     unsigned tlsdesc_relocations_seen;
+    // Address of the first mapped ELF page, not the RW staging allocation.
+    // Set only when the explicit final-base relocation API was requested.
+    uint64_t intended_runtime_base;
     char detail[120];
 } EngineStage;
 
@@ -46,6 +49,12 @@ typedef bool (*EngineSymbolResolver)(const char *name, const char *version,
                                      void *context);
 bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
                                   EngineSymbolResolver resolver, void *context);
+// Prepares supported relocations against a reserved *future* RX mapping,
+// while writing only to a separate NX scratch image. No module is executed.
+// runtime_base must be page-aligned and at or above the ELF's lowest page.
+bool engine_stage_stream_resolved_at(FILE *file, EngineStage *stage,
+                                     EngineSymbolResolver resolver, void *context,
+                                     uint64_t runtime_base);
 // Audit mode continues past missing imports and unsupported relocations in
 // non-executable scratch memory, without fabricating ABI-compatible addresses
 // or Android TLS. It reports UNSUPPORTED_RELOCATION if any unsupported types

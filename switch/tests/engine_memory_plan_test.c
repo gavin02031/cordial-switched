@@ -35,6 +35,23 @@ int main(void)
     assert(engine_memory_plan_validate(&plan));
     engine_memory_plan_release(&plan);
 
+    EngineProbeResult probe = {0};
+    probe.status = ENGINE_PROBE_INSPECTED;
+    probe.load_segments = 3;
+    for (unsigned i = 0; i < 3; i++) {
+        probe.load[i].virtual_address = normal[i].virtual_address;
+        probe.load[i].memory_bytes = normal[i].memory_bytes;
+        probe.load[i].flags = normal[i].executable ? 5u :
+                              normal[i].writable ? 6u : 4u;
+    }
+    assert(engine_memory_plan_from_probe(&probe, &plan));
+    assert(plan.run_count == 3 && plan.image_bytes == 0x6000);
+    engine_memory_plan_release(&plan);
+    probe.load[0].flags = 7;
+    assert(!engine_memory_plan_from_probe(&probe, &plan));
+    probe.status = ENGINE_PROBE_INVALID_ELF;
+    assert(!engine_memory_plan_from_probe(&probe, &plan));
+
     const EngineMemorySegment shared_page[] = {
         {0x1000, 0x0ff0, true, false},
         {0x1ff0, 0x200, false, true}

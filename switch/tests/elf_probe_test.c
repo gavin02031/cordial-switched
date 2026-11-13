@@ -124,6 +124,9 @@ int main(void)
     assert(result.max_segment_alignment == 0x1000);
     assert(result.virtual_image_bytes == IMAGE_BYTES + 0x100);
     assert(result.load_segments == 1);
+    assert(result.load[0].virtual_address == 0x1000);
+    assert(result.load[0].memory_bytes == IMAGE_BYTES + 0x100);
+    assert(result.load[0].flags == 5); // RX layout is retained for the mapper.
     assert(result.executable_segments == 1);
     assert(result.writable_segments == 0);
     assert(result.needed_count == 2);

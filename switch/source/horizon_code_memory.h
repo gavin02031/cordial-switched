@@ -15,6 +15,18 @@ typedef struct {
     bool active;
 } HorizonCodeMemory;
 
+// Reserve the final code address BEFORE applying address-sensitive ELF
+// relocations. The caller can then stage the ELF against mapping->mapped,
+// copy the staged bytes to an aligned source, and map the prepared image.
+// A reservation is held until unmap, whether or not a mapping is active.
+bool horizon_code_memory_reserve(const EngineMemoryPlan *plan,
+                                 HorizonCodeMemory *mapping);
+bool horizon_code_memory_map_reserved(const EngineMemoryPlan *plan,
+                                      void *aligned_source,
+                                      HorizonCodeMemory *mapping, Result *error);
+
+// Convenience combined API, for callers with position-independent prepared
+// bytes. Relocatable ELF callers should use reserve + map_reserved instead.
 // Maps fully prepared, page-aligned bytes at a separate Horizon code address.
 // Does NOT load an ELF, apply relocations, bind Bionic/JNI, or call any code.
 // Relocations must refer to the final mapped base, not the writable source.
@@ -24,6 +36,7 @@ typedef struct {
 // Returns false on any failed syscall and stores the kernel result.
 bool horizon_code_memory_map(const EngineMemoryPlan *plan, void *aligned_source,
                              HorizonCodeMemory *mapping, Result *error);
+// Also releases a reservation that was never mapped.
 bool horizon_code_memory_unmap(HorizonCodeMemory *mapping, Result *error);
 
 #endif

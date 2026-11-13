@@ -486,7 +486,7 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
 
 static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
                                          EngineSymbolResolver resolver, void *context,
-                                         bool audit_missing)
+                                         bool audit_missing, uint64_t runtime_base)
 {
     if (!stage)
         return false;
@@ -543,6 +543,10 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
 
     stage->image_size = (size_t)(aligned_high - low);
     stage->lowest_virtual_address = low;
+    if (runtime_base && ((runtime_base & (PAGE_SIZE - 1)) || runtime_base < low ||
+                         runtime_base > UINT64_MAX - stage->image_size))
+        return abort_stage(stage, ENGINE_STAGE_INVALID,
+                           "Final code base must be aligned and fit the ELF span.");
     stage->image = calloc(1, stage->image_size);
     if (!stage->image)
         return abort_stage(stage, ENGINE_STAGE_IO_ERROR, "Insufficient non-executable staging memory.");
@@ -636,7 +640,8 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
 
     // These relocations are applied only to scratch RAM, which remains NX.
     // Unknown symbols and mismatched version requirements fail closed.
-    const uint64_t load_bias = (uint64_t)(uintptr_t)stage->image - low;
+    const uint64_t load_bias = (runtime_base ? runtime_base :
+                                (uint64_t)(uintptr_t)stage->image) - low;
     unsigned missing_count = 0;
     if ((android_packed_size && !apply_packed_rela(stage, segments, segment_count,
                                                  packed, (size_t)android_packed_size,
@@ -706,6 +711,7 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
         return abort_stage(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, detail);
     }
     stage->status = ENGINE_STAGE_PREPARED;
+    stage->intended_runtime_base = runtime_base;
     snprintf(stage->detail, sizeof(stage->detail),
              "Staged ELF bytes and supported relocations; not executable.");
     return true;
@@ -714,13 +720,29 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
 bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
                                   EngineSymbolResolver resolver, void *context)
 {
-    return engine_stage_stream_internal(file, stage, resolver, context, false);
+    return engine_stage_stream_internal(file, stage, resolver, context, false, 0);
+}
+
+bool engine_stage_stream_resolved_at(FILE *file, EngineStage *stage,
+                                     EngineSymbolResolver resolver, void *context,
+                                     uint64_t runtime_base)
+{
+    if (!runtime_base) {
+        if (stage) {
+            memset(stage, 0, sizeof(*stage));
+            stage->status = ENGINE_STAGE_INVALID;
+            snprintf(stage->detail, sizeof(stage->detail), "Missing final code base.");
+        }
+        return false;
+    }
+    return engine_stage_stream_internal(file, stage, resolver, context, false,
+                                        runtime_base);
 }
 
 bool engine_stage_stream_audit(FILE *file, EngineStage *stage,
                                EngineSymbolResolver resolver, void *context)
 {
-    return engine_stage_stream_internal(file, stage, resolver, context, true);
+    return engine_stage_stream_internal(file, stage, resolver, context, true, 0);
 }
 
 bool engine_stage_stream(FILE *file, EngineStage *stage)
