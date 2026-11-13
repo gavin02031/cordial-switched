@@ -75,6 +75,13 @@ int main(void)
     char destination[16] = {0};
     assert(checked_memcpy(destination, "safe", 5, sizeof(destination)) == destination);
     assert(strcmp(destination, "safe") == 0);
+    assert(android_fortify_compat_resolve("__memmove_chk", "LIBC", "libc.so", &address));
+    void *(*checked_memmove)(void *, const void *, size_t, size_t) =
+        (void *(*)(void *, const void *, size_t, size_t))(uintptr_t)address;
+    char overlapping[16] = "abcdef";
+    assert(checked_memmove(overlapping + 2, overlapping, 6, sizeof(overlapping) - 2)
+           == overlapping + 2);
+    assert(strcmp(overlapping, "ababcdef") == 0);
     assert(android_fortify_compat_resolve("__strlen_chk", "LIBC", "libc.so", &address));
     size_t (*checked_strlen)(const char *, size_t) =
         (size_t (*)(const char *, size_t))(uintptr_t)address;
@@ -113,6 +120,15 @@ int main(void)
         _exit(99);
     }
     int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        checked_memmove(overlapping + 2, overlapping, 15, 14);
+        _exit(99);
+    }
     assert(waitpid(child, &status, 0) == child);
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
 
