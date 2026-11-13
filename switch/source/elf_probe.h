@@ -30,6 +30,7 @@ typedef struct {
     uint64_t plt_records;
     uint64_t plt_imports;
     uint64_t plt_versioned_imports;
+    uint64_t plt_log_compat_imports;
     uint64_t relr_words;
     uint64_t android_packed_bytes;
     unsigned load_segments;

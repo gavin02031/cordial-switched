@@ -139,10 +139,22 @@ int main(void)
     assert(result.plt_versioned_imports == 2);
     assert(result.captured_import_names == 2);
     assert(strcmp(result.import_names[0], "eglSwapBuffers") == 0);
+    assert(result.plt_log_compat_imports == 0);
     assert(result.relr_words == 2);
     assert(result.android_packed_bytes == 128);
     assert(result.has_symbol_versions);
     assert(!result.has_unsupported_plt_format);
+
+    make_auditable_elf(bytes);
+    memcpy(bytes + 0x314, "__android_log_write", 20);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.plt_log_compat_imports == 0); // Version 2 is not implemented.
+
+    put16(bytes + 0x342, 1); // Same symbol, unversioned, is a real provider.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.plt_log_compat_imports == 2); // Two PLT entries, one symbol.
 
     make_auditable_elf(bytes);
     FILE *source = tmpfile();
@@ -282,6 +294,6 @@ int main(void)
     engine_probe_file("/a/file/that/does/not/exist", &result);
     assert(result.status == ENGINE_PROBE_NOT_FOUND);
 
-    puts("elf_probe_test: 21 checks passed");
+    puts("elf_probe_test: 23 checks passed");
     return 0;
 }

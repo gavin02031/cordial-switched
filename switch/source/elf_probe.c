@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "android_log_compat.h"
+
 enum {
     ELF_HEADER_BYTES = 64,
     PROGRAM_HEADER_BYTES = 56,
@@ -198,6 +200,9 @@ static bool inspect_plt_imports(FILE *file, EngineProbeResult *result,
         }
         if (!memchr(name, 0, size) && size == sizeof(name) - 1)
             memcpy(name + size - 3, "...", 3);
+
+        if (symbol_version <= 1 && android_log_compat_has(name))
+            result->plt_log_compat_imports++;
 
         if (result->captured_import_names < ENGINE_PROBE_MAX_IMPORT_NAMES) {
             snprintf(result->import_names[result->captured_import_names],

@@ -1,4 +1,5 @@
 #include "engine_stage.h"
+#include "android_log_compat.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -425,6 +426,18 @@ int main(void)
     assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
     assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
 
-    puts("engine_stage_test: 35 checks passed");
+    // A real provider address can be bound in scratch memory. It is never
+    // called by the test or from executable pages, and unknown APIs fail.
+    symbol_fixture(bytes, 1025, false);
+    memset(bytes + 0x301, 0, 23);
+    memcpy(bytes + 0x301, "__android_log_write", 20);
+    assert(resolve_fixture(bytes, &stage, android_log_compat_resolve, NULL));
+    uint64_t log_address = 0;
+    assert(android_log_compat_resolve("__android_log_write", &log_address, NULL));
+    assert(stage.symbol_applied == 1);
+    assert(get64(stage.image + 0x340) == log_address + 8);
+    engine_stage_release(&stage);
+
+    puts("engine_stage_test: 36 checks passed");
     return 0;
 }

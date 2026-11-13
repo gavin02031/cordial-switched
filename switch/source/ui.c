@@ -281,7 +281,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.9", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.10", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -539,8 +539,9 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
                  (unsigned long long)state->engine.plt_imports,
                  (unsigned long long)state->engine.plt_records);
         label(renderer, 340, 224, FONT_MEDIUM, WHITE, info);
-        snprintf(info, sizeof(info), "Versioned import entries: %llu",
-                 (unsigned long long)state->engine.plt_versioned_imports);
+        snprintf(info, sizeof(info), "Versioned: %llu   |   liblog adapters: %llu (not linked)",
+                 (unsigned long long)state->engine.plt_versioned_imports,
+                 (unsigned long long)state->engine.plt_log_compat_imports);
         label(renderer, 340, 259, FONT_SMALL,
               state->engine.plt_versioned_imports ? PINK : MUTED, info);
         for (unsigned i = 0; i < state->engine.captured_import_names; i++) {

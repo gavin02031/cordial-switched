@@ -22,15 +22,22 @@ jobs:
       - name: Test read-only ARM64 ELF inspector
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
-            switch/tests/elf_probe_test.c switch/source/elf_probe.c \
+            switch/tests/elf_probe_test.c switch/source/elf_probe.c switch/source/android_log_compat.c \
             -o /tmp/cordial-elf-probe-test
           /tmp/cordial-elf-probe-test
       - name: Test non-executable ARM64 segment staging
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/elf_probe.c \
+            switch/source/android_log_compat.c \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
+      - name: Test strict Android liblog providers
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_log_compat_test.c switch/source/android_log_compat.c \
+            -o /tmp/cordial-android-log-test
+          /tmp/cordial-android-log-test
 
   build:
     runs-on: ubuntu-latest

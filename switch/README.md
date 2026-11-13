@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.9 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.10 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -105,12 +105,29 @@ then export a text manifest on an explicit **ZL** press. This is a linker
 **preflight**, not an engine launch. Android library providers, bionic symbol
 resolution and JNI/GameActivity are still not connected to the Switch `.nro`.
 
+Version 0.10 adds actual implementations of four unversioned Android `liblog`
+imports: `__android_log_write`, `__android_log_buf_write`,
+`__android_log_print` and the fatal `__android_log_assert`. A strict resolver
+maps **only** these names to real functions and passes synthetic linker tests.
+The Imports view now counts these implemented candidates. **None have been
+bound to or called by the actual Roblox engine**, and Android dependency
+loading, versioned bionic imports, JNI and graphics remain unimplemented.
+The log compatibility functions can be tested without a Switch or an APK:
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+  switch/tests/android_log_compat_test.c switch/source/android_log_compat.c \
+  -o /tmp/cordial-android-log-test
+/tmp/cordial-android-log-test
+```
+
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
 
 ```sh
 cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
-  switch/tests/elf_probe_test.c switch/source/elf_probe.c -o /tmp/cordial-elf-probe-test
+  switch/tests/elf_probe_test.c switch/source/elf_probe.c switch/source/android_log_compat.c \
+  -o /tmp/cordial-elf-probe-test
 /tmp/cordial-elf-probe-test
 ```
 
@@ -151,6 +168,7 @@ The native CI runs these tests, which you can also execute locally:
 ```sh
 cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
   switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/elf_probe.c \
+  switch/source/android_log_compat.c \
   -o /tmp/cordial-engine-stage-test
 /tmp/cordial-engine-stage-test
 ```
