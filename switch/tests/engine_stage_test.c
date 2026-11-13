@@ -262,6 +262,17 @@ static bool resolve_fixture(const unsigned char *bytes, EngineStage *stage,
     return ok;
 }
 
+static bool audit_fixture(const unsigned char *bytes, EngineStage *stage,
+                          EngineSymbolResolver lookup, void *context)
+{
+    FILE *file = tmpfile();
+    assert(file);
+    assert(fwrite(bytes, 1, IMAGE_BYTES, file) == IMAGE_BYTES);
+    const bool ok = engine_stage_stream_audit(file, stage, lookup, context);
+    fclose(file);
+    return ok;
+}
+
 static void boot_fixture(const unsigned char *bytes, size_t length,
                          EngineBootReport *result, char *log, size_t log_bytes)
 {
@@ -494,6 +505,26 @@ int main(void)
     assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
     assert(strstr(stage.detail, "sample_symbol"));
 
+    // Unlike the strict live-link preparation, the NX audit examines every
+    // relocation and reports multiple missing imports without substituting
+    // fake ABI pointers. No image is retained if imports are unavailable.
+    symbol_fixture(bytes, 1025, false);
+    add_dynamic(bytes + 0x180, 4, 8, 48); // Two RELA entries.
+    put64(bytes + 0x258, 0x1378);
+    put64(bytes + 0x260, ((uint64_t)1 << 32) | 1025);
+    put64(bytes + 0x268, 0);
+    assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+    assert(strstr(stage.detail, "2 unresolved imports"));
+    assert(stage.image == NULL);
+
+    EngineBootReport audited_boot;
+    char audited_log[4096];
+    boot_fixture(bytes, sizeof(bytes), &audited_boot, audited_log, sizeof(audited_log));
+    assert(strstr(audited_log, "missing_import_lookups=2"));
+    assert(strstr(audited_log, "missing_import_2=sample_symbol"));
+    assert(strstr(audited_log, "engine_executed=no"));
+
     symbol_fixture(bytes, 1025, false);
     const uint64_t no_address = 0;
     assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&no_address));
@@ -573,6 +604,6 @@ int main(void)
     assert(!boot.stage_attempted);
     assert(strstr(log, "blocker=INSPECTION_FAILED"));
 
-    puts("engine_stage_test: 45 scenarios passed");
+    puts("engine_stage_test: 47 scenarios passed");
     return 0;
 }

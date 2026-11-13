@@ -42,6 +42,11 @@ typedef bool (*EngineSymbolResolver)(const char *name, const char *version,
                                      void *context);
 bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
                                   EngineSymbolResolver resolver, void *context);
+// Audit mode continues past missing imports in non-executable scratch memory,
+// recording each resolver failure without inventing ABI-compatible addresses.
+// It always reports UNRESOLVED_SYMBOL when any import was unavailable.
+bool engine_stage_stream_audit(FILE *file, EngineStage *stage,
+                               EngineSymbolResolver resolver, void *context);
 void engine_stage_release(EngineStage *stage);
 
 #endif

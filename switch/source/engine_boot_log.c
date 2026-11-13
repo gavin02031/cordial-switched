@@ -10,6 +10,8 @@ typedef struct {
     unsigned requested;
     unsigned supported;
     char first_missing[120];
+    unsigned missing;
+    char examples[24][120];
 } ImportTrace;
 
 static void trace_line(FILE *trace, const char *format, ...)
@@ -64,6 +66,18 @@ static bool resolve_compatible_import(const char *name, const char *version,
                  version ? safe_version : "unversioned",
                  library ? safe_library : "unspecified");
     }
+    if (imports->missing < 24) {
+        char safe_name[64], safe_version[36], safe_library[36];
+        printable(safe_name, sizeof(safe_name), name);
+        printable(safe_version, sizeof(safe_version), version);
+        printable(safe_library, sizeof(safe_library), library);
+        snprintf(imports->examples[imports->missing],
+                 sizeof(imports->examples[0]), "%.50s @ %.20s from %.20s",
+                 safe_name, version ? safe_version : "unversioned",
+                 library ? safe_library : "unspecified");
+    }
+    if (imports->missing != UINT32_MAX)
+        imports->missing++;
     return false;
 }
 
@@ -95,7 +109,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     if (!report)
         return;
     memset(report, 0, sizeof(*report));
-    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap preflight v0.13");
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.14");
     trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
     trace_line(trace, "event=preflight_started");
 
@@ -140,12 +154,13 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "platform_bionic_jni_gameactivity=not_connected");
     trace_line(trace, "platform_egl_gles=not_connected");
     trace_line(trace, "event=scratch_link_started");
+    trace_line(trace, "audit_mode=continue_on_unresolved_imports_without_binding");
 
     // The real file is read again, but never mapped as executable memory.
     EngineStage stage = {0};
     ImportTrace imports = {0};
     report->stage_attempted = true;
-    engine_stage_stream_resolved(source, &stage, resolve_compatible_import, &imports);
+    engine_stage_stream_audit(source, &stage, resolve_compatible_import, &imports);
     report->stage_status = stage.status;
     snprintf(report->detail, sizeof(report->detail), "%s", stage.detail);
     printable(safe, sizeof(safe), stage.detail);
@@ -153,8 +168,11 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "scratch_link_detail=%s", safe);
     trace_line(trace, "import_lookups=%u", imports.requested);
     trace_line(trace, "supported_imports=%u", imports.supported);
+    trace_line(trace, "missing_import_lookups=%u", imports.missing);
     if (imports.first_missing[0])
         trace_line(trace, "first_missing_import=%s", imports.first_missing);
+    for (unsigned i = 0; i < imports.missing && i < 24; i++)
+        trace_line(trace, "missing_import_%u=%s", i + 1, imports.examples[i]);
     if (stage.status == ENGINE_STAGE_PREPARED) {
         trace_line(trace, "relative_relocations=%u", stage.rela_applied);
         trace_line(trace, "relr_relocations=%u", stage.relr_applied);

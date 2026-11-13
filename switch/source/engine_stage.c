@@ -234,7 +234,8 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
                        uint64_t symtab_address, uint64_t sym_entry_size,
                        uint64_t strtab_address, uint64_t strtab_size,
                        const VersionInfo *versions, EngineSymbolResolver resolver,
-                       void *context, bool packed)
+                       void *context, bool packed, bool audit_missing,
+                       unsigned *missing_count)
 {
     const uint32_t type = (uint32_t)info;
     const uint32_t sym_index = (uint32_t)(info >> 32);
@@ -285,6 +286,15 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
                            "Malformed or missing Android symbol version metadata.");
     uint64_t symbol_address = 0;
     if (!resolver(name, version, library, &symbol_address, context) || !symbol_address) {
+        if (audit_missing) {
+            // Leave the unresolved slot zero; the scratch image stays NX and
+            // is discarded after the audit. Never synthesize a function or
+            // Bionic data-object pointer to make the relocation "succeed".
+            write64(target, 0);
+            if (*missing_count != UINT_MAX)
+                (*missing_count)++;
+            return true;
+        }
         char message[120];
         if (version)
             snprintf(message, sizeof(message), "Unresolved: %.60s@%.45s", name, version);
@@ -304,13 +314,15 @@ static bool apply_rela_table(EngineStage *stage, const Segment *segments,
                              uint64_t symtab_address, uint64_t sym_entry_size,
                              uint64_t strtab_address, uint64_t strtab_size,
                              const VersionInfo *versions, EngineSymbolResolver resolver,
-                             void *context)
+                             void *context, bool audit_missing,
+                             unsigned *missing_count)
 {
     for (size_t i = 0; i < length; i += 24) {
         if (!apply_rela(stage, segments, count, u64le(rela + i),
                         u64le(rela + i + 8), u64le(rela + i + 16), load_bias,
                         symtab_address, sym_entry_size, strtab_address,
-                        strtab_size, versions, resolver, context, false))
+                        strtab_size, versions, resolver, context, false,
+                        audit_missing, missing_count))
             return false;
     }
     return true;
@@ -374,7 +386,8 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
                               uint64_t symtab_address, uint64_t sym_entry_size,
                               uint64_t strtab_address, uint64_t strtab_size,
                               const VersionInfo *versions, EngineSymbolResolver resolver,
-                              void *context)
+                              void *context, bool audit_missing,
+                              unsigned *missing_count)
 {
     if (length < 4 || memcmp(data, "APS2", 4) != 0)
         return abort_stage(stage, ENGINE_STAGE_INVALID, "Expected Android APS2 RELA header.");
@@ -437,7 +450,8 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
             if (!apply_rela(stage, segments, count, offset, info, addend,
                             load_bias, symtab_address, sym_entry_size,
                             strtab_address, strtab_size, versions,
-                            resolver, context, true))
+                            resolver, context, true, audit_missing,
+                            missing_count))
                 return false;
         }
         consumed += (uint64_t)size;
@@ -448,8 +462,9 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
     return true;
 }
 
-bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
-                                  EngineSymbolResolver resolver, void *context)
+static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
+                                         EngineSymbolResolver resolver, void *context,
+                                         bool audit_missing)
 {
     if (!stage)
         return false;
@@ -600,19 +615,23 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
     // These relocations are applied only to scratch RAM, which remains NX.
     // Unknown symbols and mismatched version requirements fail closed.
     const uint64_t load_bias = (uint64_t)(uintptr_t)stage->image - low;
+    unsigned missing_count = 0;
     if ((android_packed_size && !apply_packed_rela(stage, segments, segment_count,
                                                  packed, (size_t)android_packed_size,
                                                  load_bias, symtab_address,
                                                  sym_entry_size, strtab_address,
-                                                 strtab_size, &versions, resolver, context)) ||
+                                                 strtab_size, &versions, resolver, context,
+                                                 audit_missing, &missing_count)) ||
         (rela_size && !apply_rela_table(stage, segments, segment_count, rela,
                                        (size_t)rela_size, load_bias, symtab_address,
                                        sym_entry_size, strtab_address, strtab_size,
-                                       &versions, resolver, context)) ||
+                                       &versions, resolver, context, audit_missing,
+                                       &missing_count)) ||
         (plt_size && !apply_rela_table(stage, segments, segment_count, plt,
                                       (size_t)plt_size, load_bias, symtab_address,
                                       sym_entry_size, strtab_address, strtab_size,
-                                      &versions, resolver, context)))
+                                      &versions, resolver, context, audit_missing,
+                                      &missing_count)))
         return false;
 
     // RELR encodes one direct address per even word, then a bitmap of the next
@@ -650,10 +669,28 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
         }
     }
 
+    if (missing_count) {
+        char detail[120];
+        snprintf(detail, sizeof(detail), "%u unresolved imports; scratch audit only.",
+                 missing_count);
+        return abort_stage(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, detail);
+    }
     stage->status = ENGINE_STAGE_PREPARED;
     snprintf(stage->detail, sizeof(stage->detail),
              "Staged ELF bytes and supported relocations; not executable.");
     return true;
+}
+
+bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
+                                  EngineSymbolResolver resolver, void *context)
+{
+    return engine_stage_stream_internal(file, stage, resolver, context, false);
+}
+
+bool engine_stage_stream_audit(FILE *file, EngineStage *stage,
+                               EngineSymbolResolver resolver, void *context)
+{
+    return engine_stage_stream_internal(file, stage, resolver, context, true);
 }
 
 bool engine_stage_stream(FILE *file, EngineStage *stage)

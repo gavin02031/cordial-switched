@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.13 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.14 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -56,10 +56,11 @@ then check:
    but no APK bytes or credentials. Old reports are never overwritten.
    Press **ZR** to run the opt-in **engine bootstrap preflight** against your
    real library, including copying/relocating it into non-executable scratch
-   RAM. It reports the first rejected import or relocation and automatically
+   RAM. It audits missing imports without binding them and automatically
    saves `sdmc:/switch/cordial-switched/stage-XX.txt`. The file records
-   inspected dependencies, relocation requirements, stage status and the first
-   blocker. It never includes engine bytes or credentials, and does **not**
+   inspected dependencies, relocation requirements, stage status, missing-import
+   count and up to 24 missing-import examples. It never includes engine bytes
+   or credentials, and does **not**
    call a Roblox function. Logs are numbered and previous reports are kept.
 7. **Plus** returns to the Homebrew Menu without a crash.
 
@@ -150,7 +151,12 @@ useful partial report. If staging completes, the test still records
 `engine_executed=no`: bionic, JNI/GameActivity, EGL/GLES and APK signature
 verification are not connected. This is a readiness test, **not** a playable
 Roblox launch or a claim that Roblox's entry point was called. Hardware logs
-have not been collected with this version yet.
+were collected on a Switch Lite: `stderr@LIBC` was the first unresolved import.
+
+Version 0.14 adds an **NX-only audit mode** that leaves unresolved relocation
+slots zero and continues inspecting remaining relocations. Reports now
+distinguish total unresolved lookups from the first 24 examples. Any unresolved
+symbol still prevents a prepared/usable image; no Android code executes.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
