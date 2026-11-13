@@ -23,6 +23,13 @@ static void *fortify_memcpy(void *dest, const void *source, size_t count,
     return memcpy(dest, source, count);
 }
 
+static void *fortify_memmove(void *dest, const void *source, size_t count,
+                             size_t dest_len)
+{
+    if (count > dest_len) bad_bound("memmove");
+    return memmove(dest, source, count);
+}
+
 static void *fortify_memset(void *dest, int byte, size_t count, size_t dest_len)
 {
     if (count > dest_len) bad_bound("memset");
@@ -97,6 +104,7 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
 #define MAP_FORTIFY(symbol, target) \
     if (strcmp(name, symbol) == 0) *address = (uint64_t)(uintptr_t)(target); else
     MAP_FORTIFY("__memcpy_chk", &fortify_memcpy)
+    MAP_FORTIFY("__memmove_chk", &fortify_memmove)
     MAP_FORTIFY("__memset_chk", &fortify_memset)
     MAP_FORTIFY("__strlen_chk", &fortify_strlen)
     MAP_FORTIFY("__strcpy_chk", &fortify_strcpy)
