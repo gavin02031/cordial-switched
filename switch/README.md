@@ -95,6 +95,13 @@ then check:
    free span and selects the correct 16 KiB load-bias phase within it.
    Remaining allocation failures are recorded with a specific reason in
    the numbered `link-XX.txt` report.
+   v0.30 attempts the **real engine entry-readiness checks** at the reserved
+   final address. If strict relocation fails, L3 now runs a separate bounded,
+   non-executable relocation audit at the *same* base and lists up to 24 missing
+   Android imports, total missing lookups, and unsupported relocation counts.
+   The `execution_gate` and `engine_entry_called` fields state exactly why a
+   call into Roblox is refused. It cannot safely execute the Roblox entry while
+   required imports, the Bionic/JNI runtime, and graphics services are absent.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

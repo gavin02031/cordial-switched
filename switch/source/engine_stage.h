@@ -61,6 +61,11 @@ bool engine_stage_stream_resolved_at(FILE *file, EngineStage *stage,
 // were seen, otherwise UNRESOLVED_SYMBOL if any import was unavailable.
 bool engine_stage_stream_audit(FILE *file, EngineStage *stage,
                                EngineSymbolResolver resolver, void *context);
+// Same NX audit but with the actual reserved runtime base, so relocation
+// validation matches the future executable mapping without jumping into it.
+bool engine_stage_stream_audit_at(FILE *file, EngineStage *stage,
+                                  EngineSymbolResolver resolver, void *context,
+                                  uint64_t runtime_base);
 void engine_stage_release(EngineStage *stage);
 
 #endif

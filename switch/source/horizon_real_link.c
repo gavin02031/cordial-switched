@@ -49,6 +49,14 @@ typedef struct {
     char library[48];
 } MissingImport;
 
+typedef struct {
+    MissingImport first;
+    MissingImport examples[24];
+    unsigned lookups;
+    unsigned supported;
+    unsigned missing;
+} ImportDiagnostics;
+
 static FILE *new_log(char *path, size_t capacity)
 {
     for (unsigned i = 1; i <= 99; i++) {
@@ -86,7 +94,9 @@ static bool resolve_compatible(const char *name, const char *version,
                                const char *library, uint64_t *address,
                                void *context)
 {
-    MissingImport *missing = context;
+    ImportDiagnostics *diagnostics = context;
+    if (diagnostics && diagnostics->lookups < UINT32_MAX)
+        diagnostics->lookups++;
     // Match the same real providers used by ZR's import audit, without
     // fabricating pointers for Android services that do not exist on Horizon.
     const bool supported = ((!version && !library &&
@@ -101,14 +111,22 @@ static bool resolve_compatible(const char *name, const char *version,
             android_tls_compat_resolve(name, version, library, address) ||
             android_thread_attr_compat_resolve(name, version, library, address) ||
             android_thread_lifecycle_compat_resolve(name, version, library, address));
-    if (!supported && missing && !missing->name[0]) {
-        // Keep the provider and symbol version, since the same symbol name
-        // may be intentionally rejected when a different Android DSO owns it.
-        snprintf(missing->name, sizeof(missing->name), "%.75s", name ? name : "?");
-        snprintf(missing->version, sizeof(missing->version), "%.44s",
+    if (supported) {
+        if (diagnostics && diagnostics->supported < UINT32_MAX)
+            diagnostics->supported++;
+    } else if (diagnostics) {
+        MissingImport value = {0};
+        // Match symbol names to their version and owning DSO; a same-named
+        // libc function does not automatically implement its Android ABI.
+        snprintf(value.name, sizeof(value.name), "%.75s", name ? name : "?");
+        snprintf(value.version, sizeof(value.version), "%.44s",
                  version ? version : "unversioned");
-        snprintf(missing->library, sizeof(missing->library), "%.44s",
+        snprintf(value.library, sizeof(value.library), "%.44s",
                  library ? library : "unspecified");
+        if (!diagnostics->first.name[0]) diagnostics->first = value;
+        if (diagnostics->missing < 24)
+            diagnostics->examples[diagnostics->missing] = value;
+        if (diagnostics->missing < UINT32_MAX) diagnostics->missing++;
     }
     return supported;
 }
@@ -121,6 +139,31 @@ static void printable(char *out, size_t size, const char *message)
         i++;
     }
     out[i] = 0;
+}
+
+static void log_import_summary(FILE *log, const char *prefix,
+                               const ImportDiagnostics *diagnostics)
+{
+    log_line(log, "%s_import_lookups=%u", prefix, diagnostics->lookups);
+    log_line(log, "%s_supported_imports=%u", prefix, diagnostics->supported);
+    log_line(log, "%s_missing_imports=%u", prefix, diagnostics->missing);
+    if (diagnostics->first.name[0]) {
+        char name[80], version[48], library[48];
+        printable(name, sizeof(name), diagnostics->first.name);
+        printable(version, sizeof(version), diagnostics->first.version);
+        printable(library, sizeof(library), diagnostics->first.library);
+        log_line(log, "%s_first_missing_name=%s", prefix, name);
+        log_line(log, "%s_first_missing_version=%s", prefix, version);
+        log_line(log, "%s_first_missing_provider=%s", prefix, library);
+    }
+    for (unsigned i = 0; i < diagnostics->missing && i < 24; i++) {
+        char name[80], version[48], library[48];
+        printable(name, sizeof(name), diagnostics->examples[i].name);
+        printable(version, sizeof(version), diagnostics->examples[i].version);
+        printable(library, sizeof(library), diagnostics->examples[i].library);
+        log_line(log, "%s_missing_import_%02u=%s @ %s from %s",
+                 prefix, i + 1, name, version, library);
+    }
 }
 
 static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
@@ -168,7 +211,8 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.29 final-base real ELF preflight");
+    log_line(log, "# Cordial Switched v0.30 real-engine entry readiness attempt");
+    log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     log_line(log, "event=preflight_started");
@@ -235,7 +279,7 @@ void horizon_real_link_run(RealLinkResult *result)
         log_line(log, "reserved_code_address_phase=%zu",
                  (size_t)((uintptr_t)reservation.mapped % plan.alignment_bytes));
         EngineStage stage = {0};
-        MissingImport missing = {0};
+        ImportDiagnostics missing = {0};
         log_line(log, "event=strict_final_base_relocation_started");
         const bool ready = engine_stage_stream_resolved_at(
             file, &stage, resolve_compatible, &missing,
@@ -244,25 +288,42 @@ void horizon_real_link_run(RealLinkResult *result)
         char safe[120];
         printable(safe, sizeof(safe), stage.detail);
         log_line(log, "strict_stage_detail=%s", safe);
-        if (missing.name[0]) {
-            char name[80], version[48], library[48];
-            printable(name, sizeof(name), missing.name);
-            printable(version, sizeof(version), missing.version);
-            printable(library, sizeof(library), missing.library);
-            log_line(log, "first_missing_name=%s", name);
-            log_line(log, "first_missing_version=%s", version);
-            log_line(log, "first_missing_provider=%s", library);
-        }
+        log_import_summary(log, "strict", &missing);
         log_line(log, "rela_applied=%u", stage.rela_applied);
         log_line(log, "relr_applied=%u", stage.relr_applied);
         log_line(log, "aps2_applied=%u", stage.packed_applied);
         log_line(log, "symbol_applied=%u", stage.symbol_applied);
         if (ready) {
             result->stage_prepared = true;
-            detail(result, "Final-address ELF staged; Android runtime still missing.");
+            detail(result, "Strict link passed; Android JNI/graphics runtime still missing.");
             log_line(log, "event=nx_stage_prepared_not_executed");
+            log_line(log, "execution_gate=blocked_android_jni_graphics_runtime");
         } else {
-            detail(result, safe);
+            detail(result, "Real engine entry blocked; see complete link report.");
+            // Strict binding stops at the first unknown symbol. Continue a
+            // separate, still-NX scan at that *same* final base to reveal the
+            // full import gap without manufacturing dummy function pointers.
+            EngineStage audit = {0};
+            ImportDiagnostics all_imports = {0};
+            log_line(log, "event=full_final_base_audit_started");
+            const bool all_ready = engine_stage_stream_audit_at(
+                file, &audit, resolve_compatible, &all_imports,
+                (uint64_t)(uintptr_t)reservation.mapped);
+            log_line(log, "full_audit_status=%d", audit.status);
+            printable(safe, sizeof(safe), audit.detail);
+            log_line(log, "full_audit_detail=%s", safe);
+            log_import_summary(log, "full_audit", &all_imports);
+            log_line(log, "full_audit_unsupported_relocations=%u",
+                     audit.unsupported_relocations_seen);
+            log_line(log, "full_audit_tls_relocations=%u", audit.tls_relocations_seen);
+            if (all_ready) {
+                log_line(log, "execution_gate=blocked_strict_link_inconsistency");
+            } else if (all_imports.missing) {
+                log_line(log, "execution_gate=blocked_unresolved_android_imports");
+            } else {
+                log_line(log, "execution_gate=blocked_relocation_or_elf_incompatibility");
+            }
+            engine_stage_release(&audit);
             log_line(log, "blocker=strict_relocation_incomplete");
         }
         engine_stage_release(&stage);
@@ -280,6 +341,7 @@ void horizon_real_link_run(RealLinkResult *result)
     fclose(file);
 
 done:
+    log_line(log, "engine_entry_called=no");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     const bool all_written = !ferror(log);

@@ -286,6 +286,19 @@ static bool audit_fixture(const unsigned char *bytes, EngineStage *stage,
     return ok;
 }
 
+static bool audit_fixture_at(const unsigned char *bytes, EngineStage *stage,
+                             uint64_t runtime_base,
+                             EngineSymbolResolver lookup, void *context)
+{
+    FILE *file = tmpfile();
+    assert(file);
+    assert(fwrite(bytes, 1, IMAGE_BYTES, file) == IMAGE_BYTES);
+    const bool ok = engine_stage_stream_audit_at(file, stage, lookup, context,
+                                                 runtime_base);
+    fclose(file);
+    return ok;
+}
+
 static void boot_fixture(const unsigned char *bytes, size_t length,
                          EngineBootReport *result, char *log, size_t log_bytes)
 {
@@ -324,6 +337,10 @@ int main(void)
     // ordinary RELA and RELR must resolve to the reserved runtime mapping.
     fixture(bytes);
     const uint64_t future_base = 0x40000000;
+    assert(audit_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
+    assert(stage.intended_runtime_base == future_base);
+    assert(get64(stage.image + 0x340) == future_base + 0x380);
+    engine_stage_release(&stage);
     assert(stage_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
     assert(stage.intended_runtime_base == future_base);
     assert(stage.lowest_virtual_address == 0x1000);
@@ -346,6 +363,11 @@ int main(void)
     assert(stage.status == ENGINE_STAGE_INVALID);
     assert(strstr(stage.detail, "aligned"));
     assert(stage.image == NULL);
+
+    fixture(bytes);
+    assert(!audit_fixture_at(bytes, &stage, 0, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+    assert(strstr(stage.detail, "Missing final code base"));
 
     fixture(bytes);
     assert(!stage_fixture_at(bytes, &stage, UINT64_MAX & ~0xfffull,
@@ -609,6 +631,10 @@ int main(void)
     put64(bytes + 0x260, ((uint64_t)1 << 32) | 1025);
     put64(bytes + 0x268, 0);
     assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+    assert(strstr(stage.detail, "2 unresolved imports"));
+    assert(stage.image == NULL);
+    assert(!audit_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
     assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
     assert(strstr(stage.detail, "2 unresolved imports"));
     assert(stage.image == NULL);

@@ -749,6 +749,22 @@ bool engine_stage_stream_audit(FILE *file, EngineStage *stage,
     return engine_stage_stream_internal(file, stage, resolver, context, true, 0);
 }
 
+bool engine_stage_stream_audit_at(FILE *file, EngineStage *stage,
+                                  EngineSymbolResolver resolver, void *context,
+                                  uint64_t runtime_base)
+{
+    if (!runtime_base) {
+        if (stage) {
+            memset(stage, 0, sizeof(*stage));
+            stage->status = ENGINE_STAGE_INVALID;
+            snprintf(stage->detail, sizeof(stage->detail), "Missing final code base.");
+        }
+        return false;
+    }
+    return engine_stage_stream_internal(file, stage, resolver, context, true,
+                                        runtime_base);
+}
+
 bool engine_stage_stream(FILE *file, EngineStage *stage)
 {
     return engine_stage_stream_resolved(file, stage, NULL, NULL);
