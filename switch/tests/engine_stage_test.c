@@ -588,6 +588,16 @@ int main(void)
     assert(strstr(stdio_trace, "missing_import_lookups=0"));
     assert(strstr(stdio_trace, "engine_executed=no"));
 
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 14);
+    memcpy(bytes + 0x301, "__memcpy_chk", 13);
+    char fortify_trace[4096];
+    EngineBootReport fortify_boot;
+    boot_fixture(bytes, sizeof(bytes), &fortify_boot, fortify_trace, sizeof(fortify_trace));
+    assert(fortify_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(fortify_trace, "supported_imports=1"));
+    assert(strstr(fortify_trace, "engine_executed=no"));
+
     // A real provider address can be bound in scratch memory. It is never
     // called by the test or from executable pages, and unknown APIs fail.
     symbol_fixture(bytes, 1025, false);
@@ -631,6 +641,6 @@ int main(void)
     assert(!boot.stage_attempted);
     assert(strstr(log, "blocker=INSPECTION_FAILED"));
 
-    puts("engine_stage_test: 48 scenarios passed");
+    puts("engine_stage_test: 50 scenarios passed");
     return 0;
 }

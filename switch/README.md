@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.16 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.17 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -183,6 +183,19 @@ Switch Lite's unsuccessful title takeover may also prevent full-memory tests.
 See [Angry Birds 2 NX](https://github.com/NaGaa95/angrybirds2_nx) for the
 stdio/clock reference and [Adventures of Mana NX](https://github.com/NaGaa95/aom_nx)
 for a working native ARM64 executable loader architecture.
+
+Version 0.17 adds Bionic FORTIFY checks for the AArch64 imports visible in
+the user's `imports-04.txt`: checked memory and string operations, the
+thread-local `__errno` accessor, and fatal `__assert`. Checked `fread` and
+`fwrite` use Android's `LIBC_N` export version and still translate the opaque
+Android FILE handles. Bad buffer sizes **abort instead of silently writing
+past the caller's buffer**. These signatures and symbol versions were checked
+against Android's official Bionic sources. The host suite tests ordinary
+success cases, intentional fatal bounds failures in isolated child processes,
+and wrong-provider rejection; real Switch Lite runtime behaviour
+remains unverified. This still does not implement Bionic pthread objects or
+execute the Roblox engine. The existing ZR stage log is the next hardware
+measurement needed to prioritise thread services, JNI and the live loader.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

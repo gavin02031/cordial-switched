@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 
@@ -51,6 +52,26 @@ static size_t stdio_fread(void *data, size_t size, size_t count, FILE *stream)
 static size_t stdio_fwrite(const void *data, size_t size, size_t count, FILE *stream)
 {
     return fwrite(data, size, count, host_stream(stream));
+}
+
+static size_t stdio_fread_chk(void *data, size_t size, size_t count,
+                              FILE *stream, size_t buffer_size)
+{
+    if (size && (count > SIZE_MAX / size || count * size > buffer_size)) {
+        fprintf(stderr, "Bionic FORTIFY violation in fread\n");
+        abort();
+    }
+    return stdio_fread(data, size, count, stream);
+}
+
+static size_t stdio_fwrite_chk(const void *data, size_t size, size_t count,
+                               FILE *stream, size_t buffer_size)
+{
+    if (size && (count > SIZE_MAX / size || count * size > buffer_size)) {
+        fprintf(stderr, "Bionic FORTIFY violation in fwrite\n");
+        abort();
+    }
+    return stdio_fwrite(data, size, count, stream);
 }
 
 static int stdio_fputs(const char *text, FILE *stream)
@@ -104,9 +125,20 @@ bool android_stdio_compat_resolve(const char *name, const char *version,
                                   const char *library, uint64_t *address)
 {
     if (!name || !version || !library || !address ||
-        strcmp(version, "LIBC") != 0 || strcmp(library, "libc.so") != 0)
+        strcmp(library, "libc.so") != 0)
         return false;
     *address = 0;
+    // Bionic exports fortify-checked fread/fwrite under LIBC_N (API 24+),
+    // not under the base LIBC symbol version of their ordinary variants.
+    if (strcmp(version, "LIBC_N") == 0) {
+        if (strcmp(name, "__fread_chk") == 0)
+            *address = (uint64_t)(uintptr_t)&stdio_fread_chk;
+        else if (strcmp(name, "__fwrite_chk") == 0)
+            *address = (uint64_t)(uintptr_t)&stdio_fwrite_chk;
+        return *address != 0;
+    }
+    if (strcmp(version, "LIBC") != 0)
+        return false;
     // Do not advertise __sF: our handles are not a real contiguous Bionic
     // FILE array, and Android code indexing them would corrupt memory.
 #define MAP_STDIO(symbol, target) \
