@@ -746,6 +746,20 @@ int main(void)
     assert(strstr(looper_trace, "supported_imports=1"));
     assert(strstr(looper_trace, "engine_executed=no"));
 
+    // Bionic libdl exposes dlopen with version LIBC from libdl.so, not from
+    // libc.so. Verify both the version and provider in the real import scan.
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 32);
+    memcpy(bytes + 0x301, "dlopen", 7);
+    memcpy(bytes + 0x30f, "libdl.so\0LIBC", 14);
+    put32(bytes + 0x388, 24); // vna_name follows the 9-byte library name.
+    EngineBootReport dl_boot;
+    char dl_trace[4096];
+    boot_fixture(bytes, sizeof(bytes), &dl_boot, dl_trace, sizeof(dl_trace));
+    assert(dl_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(dl_trace, "supported_imports=1"));
+    assert(strstr(dl_trace, "engine_executed=no"));
+
     // The first missing import in the real Switch Lite v0.13 log was
     // stderr@LIBC. Resolve it through the genuine Bionic FILE* data adapter,
     // rather than pointing the relocation at newlib's incompatible FILE.

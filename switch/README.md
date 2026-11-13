@@ -117,6 +117,13 @@ then check:
    This is not a GameActivity or JNI implementation. The libnx socket/poll
    backend has not been confirmed on the user's actual command-pipe fds, so
    hardware startup remains **unverified**.
+   v0.33 adds Android's **versioned libdl lookup** exports (`dlopen`, `dlsym`,
+   `dlclose`, `dlerror`, `dladdr`) using a bounded namespace of the real native
+   adapters already supplied here (`liblog.so`, partial `libandroid.so`,
+   `libm.so`, `libdl.so`). Unknown Android libraries and missing symbols fail
+   explicitly; per-thread `dlerror` retains useful errors and `dladdr`
+   refuses to fabricate a guest DSO base. This does **not** load arbitrary
+   Android binaries or replace the missing GameActivity/JNI/graphics runtime.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
