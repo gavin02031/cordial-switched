@@ -346,6 +346,27 @@ static void engine_probe_stream_to(FILE *file, EngineProbeResult *result,
     }
 
     result->load_segments = segments_count;
+    if (result->has_tls_segment) {
+        // The zero-filled TLS tail must also belong to one PT_LOAD mapping.
+        // Checking only the file-backed initializer misses an out-of-range tail.
+        bool contained = false;
+        for (unsigned i = 0; i < segments_count; i++) {
+            if (tls_virtual_address < result->load[i].virtual_address)
+                continue;
+            const uint64_t relative = tls_virtual_address -
+                result->load[i].virtual_address;
+            if (inside(relative, result->tls_memory_bytes,
+                       result->load[i].memory_bytes)) {
+                contained = true;
+                break;
+            }
+        }
+        if (!contained) {
+            failure(result, ENGINE_PROBE_INVALID_ELF,
+                    "PT_TLS memory is outside PT_LOAD.");
+            return;
+        }
+    }
     if (result->has_tls_segment && result->tls_initial_image_bytes) {
         // A TLS initializer outside the file-backed load segments would be
         // unrepresentable to a future linker even if it were readable.
