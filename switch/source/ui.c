@@ -281,7 +281,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.25", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.26", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -487,7 +487,9 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
         label(renderer, 339, 247, FONT_MEDIUM, WHITE, "No valid ARM64 library inspected.");
         label(renderer, 340, 305, FONT_BODY, MUTED, "Add your own library on the SD card, then press Y.");
         label(renderer, 340, 553, FONT_SMALL, PINK, "This screen never executes external code.");
-        if (state->loader_smoke.status != LOADER_SMOKE_NOT_RUN)
+        if (state->real_link.attempted)
+            label(renderer, 340, 611, FONT_SMALL, PINK, state->real_link.detail);
+        else if (state->loader_smoke.status != LOADER_SMOKE_NOT_RUN)
             label(renderer, 340, 611, FONT_SMALL,
                   state->loader_smoke.status == LOADER_SMOKE_VERIFIED ? MINT : PINK,
                   state->loader_smoke.detail);
@@ -503,7 +505,17 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
           state->loader_view == 0 ? "X: LIBRARIES" :
           state->loader_view == 1 ? "X: IMPORTS" : "X: PROFILE",
           (SDL_Color){54, 46, 83, 220}, LAVENDER);
-    if (state->loader_smoke.status != LOADER_SMOKE_NOT_RUN) {
+    if (state->real_link.attempted) {
+        const char *base = strrchr(state->real_link.log_path, '/');
+        char report[112];
+        snprintf(report, sizeof(report), "L3: %.58s / %.28s",
+                 state->real_link.detail,
+                 state->real_link.log_saved
+                     ? (base ? base + 1 : state->real_link.log_path)
+                     : "log not saved");
+        label(renderer, 341, 617, FONT_SMALL,
+              state->real_link.stage_prepared ? MINT : PINK, report);
+    } else if (state->loader_smoke.status != LOADER_SMOKE_NOT_RUN) {
         const char *base = strrchr(state->loader_smoke.log_path, '/');
         char report[112];
         snprintf(report, sizeof(report), "R3: %.58s / %.28s",
@@ -681,7 +693,7 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 
     label(renderer, 312, 666, FONT_SMALL, MUTED,
           state->page == UI_LOADER
-              ? "L/R: pages  |  X: views  |  ZL: list  |  ZR: audit  |  R3: ELF map  |  PLUS: exit"
+              ? "L/R: pages  |  X: views  |  ZL: list  |  ZR: audit  |  R3: ELF map  |  L3: real link  |  PLUS: exit"
               : "L/R or A/B: pages   |   X: context action   |   Y: rescan   |   PLUS: exit");
     label(renderer, 1050, 666, FONT_SMALL, LAVENDER, "60 Hz UI target");
 }

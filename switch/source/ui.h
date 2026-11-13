@@ -9,6 +9,7 @@
 #include "engine_stage.h"
 #include "jit_probe.h"
 #include "horizon_loader_smoke.h"
+#include "horizon_real_link.h"
 
 #define UI_WIDTH 1280
 #define UI_HEIGHT 720
@@ -36,6 +37,7 @@ typedef struct {
     bool boot_log_saved;
     char boot_log_path[112];
     LoaderSmokeResult loader_smoke;
+    RealLinkResult real_link;
     bool accelerated;
     bool vsync;
     double fps;

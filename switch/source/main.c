@@ -9,6 +9,7 @@
 #include "ui.h"
 #include "engine_boot_log.h"
 #include "horizon_loader_smoke.h"
+#include "horizon_real_link.h"
 
 // Keep the existing stage-XX naming while recording a fuller preflight trace.
 static FILE *open_stage_log(char *path, size_t length)
@@ -217,6 +218,8 @@ int main(void)
             try_engine_stage(&state);
         if (state.page == UI_LOADER && (pressed & HidNpadButton_StickR))
             horizon_loader_smoke_run(&state.loader_smoke);
+        if (state.page == UI_LOADER && (pressed & HidNpadButton_StickL))
+            horizon_real_link_run(&state.real_link);
 
         HidTouchScreenState touch = {0};
         const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;

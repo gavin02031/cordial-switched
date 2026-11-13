@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.25 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.26 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -70,7 +70,15 @@ then check:
    and removes the temporary fixture. **It never reads or runs `libroblox.so`.**
    This v0.25 test passed synthetic host checks; real Switch Lite execution
    remains unverified until a device log is collected.
-8. **Plus** returns to the Homebrew Menu without a crash.
+8. With your own Android ARM64 `libroblox.so` on the SD card, click **L3**
+   (left stick) on Loader for a strict final-base relocation preflight.
+   It reserves a real Horizon code address, stages supported relocations
+   against that address, reports the first unresolved or unsupported import,
+   then discards the NX staging bytes and releases the reservation.
+   This new option saves `link-XX.txt` in the same folder. **It does not
+   map the Roblox image as executable, call any engine initialiser, sign in,
+   or join a game.** A real engine still needs Android TLS, JNI and graphics.
+9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
 
