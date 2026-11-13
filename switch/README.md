@@ -404,8 +404,22 @@ computes ordinary RELA, Android APS2 and RELR relative relocations for this
 explicit final address, while its working buffer remains non-executable.
 The inspector also retains validated PT_LOAD page flags, allowing
 `engine_memory_plan_from_probe` to construct a permission plan for the actual
-ELF. Host fixtures cover the final-base arithmetic; **the full reserve → stage
-→ map → initialize sequence is not yet connected or run with Roblox code**.
+ELF. Host fixtures cover the final-base arithmetic. The new
+`engine_runtime_image_prepare` path connects inspector → permission plan →
+address reservation → final-base relocation → aligned source → code-memory
+mapping. Its mapping backend is implemented for Horizon, but **the UI does not
+invoke this path, and it has not been run against Roblox code or on Switch
+hardware**. Host tests use a synthetic ELF and a fake code-memory backend;
+they verify actual relocation bytes, reservation failures, map failures and
+retryable cleanup. Successful mapping is explicitly not treated as execution.
+
+The mapper now observes the ELF's `p_align` requirement (16 KiB in the
+user's reported library) instead of assuming every page-aligned address can
+be a valid load bias. An unsupported nonzero alignment phase fails closed.
+The scratch stage uses page-aligned NX memory that the runtime mapping path
+can take ownership of without copying the entire roughly 119 MiB image. This
+reduces peak host allocation demand but has **not** established a successful
+full-memory load on the user's Switch Lite.
 
 The final-address relocation API is only one part of a live linker. All imports,
 PT_TLS/DTV thread state, JNI/GameActivity, callbacks and ownership checks must

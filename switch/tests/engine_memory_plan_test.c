@@ -15,6 +15,7 @@ int main(void)
     assert(engine_memory_plan_build(normal, 3, &plan));
     assert(engine_memory_plan_validate(&plan));
     assert(plan.virtual_page_base == 0x1000);
+    assert(plan.alignment_bytes == ENGINE_MEMORY_PAGE_BYTES);
     assert(plan.image_bytes == 0x6000);
     assert(plan.run_count == 3);
     assert(plan.runs[0].permission == ENGINE_MEMORY_READ_EXECUTE);
@@ -47,6 +48,14 @@ int main(void)
     assert(engine_memory_plan_from_probe(&probe, &plan));
     assert(plan.run_count == 3 && plan.image_bytes == 0x6000);
     engine_memory_plan_release(&plan);
+    probe.max_segment_alignment = 16384;
+    assert(engine_memory_plan_from_probe(&probe, &plan));
+    assert(plan.alignment_bytes == 16384);
+    assert(engine_memory_plan_validate(&plan));
+    engine_memory_plan_release(&plan);
+    probe.max_segment_alignment = ENGINE_MEMORY_MAX_ALIGNMENT * 2u;
+    assert(!engine_memory_plan_from_probe(&probe, &plan));
+    probe.max_segment_alignment = 0;
     probe.load[0].flags = 7;
     assert(!engine_memory_plan_from_probe(&probe, &plan));
     probe.status = ENGINE_PROBE_INVALID_ELF;

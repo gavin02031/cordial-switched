@@ -11,6 +11,7 @@
 // passes through a writable code-memory permission transition.
 #define ENGINE_MEMORY_PAGE_BYTES 4096u
 #define ENGINE_MEMORY_MAX_BYTES (192u * 1024u * 1024u)
+#define ENGINE_MEMORY_MAX_ALIGNMENT (2u * 1024u * 1024u)
 
 typedef struct {
     uint64_t virtual_address;
@@ -33,6 +34,8 @@ typedef struct {
 
 typedef struct {
     uint64_t virtual_page_base;
+    // ELF load bias must preserve each PT_LOAD's p_align congruence.
+    size_t alignment_bytes;
     size_t image_bytes;
     size_t executable_bytes;
     size_t writable_bytes;

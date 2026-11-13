@@ -547,9 +547,13 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
                          runtime_base > UINT64_MAX - stage->image_size))
         return abort_stage(stage, ENGINE_STAGE_INVALID,
                            "Final code base must be aligned and fit the ELF span.");
-    stage->image = calloc(1, stage->image_size);
+    // This buffer may later become the source of a separate Horizon code
+    // mapping. Allocating it page-aligned avoids a second full-size copy of
+    // the 119 MiB Android image on a memory-limited Switch Lite.
+    stage->image = aligned_alloc(PAGE_SIZE, stage->image_size);
     if (!stage->image)
         return abort_stage(stage, ENGINE_STAGE_IO_ERROR, "Insufficient non-executable staging memory.");
+    memset(stage->image, 0, stage->image_size);
 
     for (unsigned i = 0; i < segment_count; i++) {
         const Segment *segment = &segments[i];

@@ -19,7 +19,12 @@ bool horizon_code_memory_reserve(const EngineMemoryPlan *plan,
         return false;
 
     virtmemLock();
-    void *target = virtmemFindCodeMemory(plan->image_bytes, ENGINE_MEMORY_PAGE_BYTES);
+    void *target = virtmemFindCodeMemory(plan->image_bytes, plan->alignment_bytes);
+    // A misphased load bias violates ELF p_align even when each page is 4 KiB.
+    // Current libnx address finding cannot request a nonzero alignment phase.
+    if (target && (uintptr_t)target % plan->alignment_bytes !=
+                  plan->virtual_page_base % plan->alignment_bytes)
+        target = NULL;
     void *reservation = target ? virtmemAddReservation(target, plan->image_bytes) : NULL;
     virtmemUnlock();
     if (!reservation)

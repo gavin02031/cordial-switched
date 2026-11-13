@@ -101,6 +101,15 @@ jobs:
             switch/tests/engine_memory_plan_test.c switch/source/engine_memory_plan.c \
             -o /tmp/cordial-memory-plan-test
           /tmp/cordial-memory-plan-test
+      - name: Test final-base ELF image mapping sequence and rollback
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_runtime_image_test.c \
+            switch/source/engine_runtime_image.c switch/source/engine_stage.c \
+            switch/source/engine_memory_plan.c switch/source/elf_probe.c \
+            switch/source/android_log_compat.c \
+            -o /tmp/cordial-runtime-image-test
+          /tmp/cordial-runtime-image-test
 
   build:
     runs-on: ubuntu-latest

@@ -27,6 +27,9 @@ bool engine_memory_plan_validate(const EngineMemoryPlan *plan)
 {
     if (!plan || !plan->runs || !plan->run_count || !plan->image_bytes ||
         plan->image_bytes > ENGINE_MEMORY_MAX_BYTES ||
+        plan->alignment_bytes < ENGINE_MEMORY_PAGE_BYTES ||
+        plan->alignment_bytes > ENGINE_MEMORY_MAX_ALIGNMENT ||
+        (plan->alignment_bytes & (plan->alignment_bytes - 1)) ||
         (plan->image_bytes % ENGINE_MEMORY_PAGE_BYTES))
         return false;
 
@@ -176,6 +179,7 @@ bool engine_memory_plan_build(const EngineMemorySegment *segments, size_t count,
             }
         }
         plan->virtual_page_base = lowest;
+        plan->alignment_bytes = ENGINE_MEMORY_PAGE_BYTES;
         plan->image_bytes = size;
         plan->runs = runs;
     } else {
@@ -204,5 +208,18 @@ bool engine_memory_plan_from_probe(const EngineProbeResult *probe,
             (probe->load[i].flags & 2u) != 0
         };
     }
-    return engine_memory_plan_build(segments, probe->load_segments, plan);
+    if (!engine_memory_plan_build(segments, probe->load_segments, plan))
+        return false;
+    if (probe->max_segment_alignment > ENGINE_MEMORY_PAGE_BYTES) {
+        if (probe->max_segment_alignment > ENGINE_MEMORY_MAX_ALIGNMENT) {
+            engine_memory_plan_release(plan);
+            return false;
+        }
+        plan->alignment_bytes = (size_t)probe->max_segment_alignment;
+    }
+    if (!engine_memory_plan_validate(plan)) {
+        engine_memory_plan_release(plan);
+        return false;
+    }
+    return true;
 }
