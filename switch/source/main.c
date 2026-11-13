@@ -1,114 +1,177 @@
 #include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
 
+#include <SDL.h>
 #include <switch.h>
 
-// This executable exercises Horizon services before the Linux runtime is ported.
-// It never loads, downloads or authenticates to the Roblox engine.
-enum { PAGE_COUNT = 3 };
+#include "ui.h"
 
-static void draw_screen(unsigned page, const HidTouchScreenState *touch, bool touched)
+static int failure_screen(const char *reason)
 {
-    consoleClear();
+    // A graphics failure must remain legible on hardware without a debugger.
+    consoleInit(NULL);
+    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+    PadState pad;
+    padInitializeDefault(&pad);
 
-    printf("CORDIAL SWITCHED  |  Horizon smoke test\n");
-    printf("========================================\n\n");
-
-    switch (page) {
-    case 0:
-        printf("Host: Nintendo Switch / Horizon OS\n");
-        printf("CPU: ARM64 (native homebrew build)\n");
-        printf("Display: libnx text console\n");
-        printf("Controller: handheld + standard pads\n");
-        printf("Touchscreen: initialised\n\n");
-        printf("Roblox engine: NOT LOADED\n");
-        printf("Online login: NOT IMPLEMENTED\n\n");
-        printf("This is a platform diagnostic, not a game.\n");
-        break;
-    case 1:
-        printf("Porting milestones\n\n");
-        printf("[1] NRO boot + display + input: TESTING\n");
-        printf("[2] Android ARM64 ELF loader: TODO\n");
-        printf("[3] Bionic / JNI / Android APIs: TODO\n");
-        printf("[4] GPU + audio + networking: TODO\n");
-        printf("[5] Engine init + official login: TODO\n\n");
-        printf("Milestone 1 needs a real Switch test.\n");
-        break;
-    default:
-        printf("Input diagnostics\n\n");
-        printf("A / Right: next screen\n");
-        printf("B / Left: previous screen\n");
-        printf("Plus: exit to Homebrew Menu\n\n");
-        if (touched && touch->count > 0) {
-            printf("Touches: %u\n", (unsigned)touch->count);
-            printf("First touch: x=%u y=%u\n",
-                   (unsigned)touch->touches[0].x,
-                   (unsigned)touch->touches[0].y);
-        } else {
-            printf("Touch the screen to check coordinates.\n");
-        }
-        break;
+    printf("Cordial Switched could not start its graphics.\n\n%s\n\n", reason);
+    printf("Please include this message when reporting a problem.\n");
+    printf("Press PLUS to return to Homebrew Menu.\n");
+    while (appletMainLoop()) {
+        padUpdate(&pad);
+        if (padGetButtonsDown(&pad) & HidNpadButton_Plus)
+            break;
+        consoleUpdate(NULL);
     }
+    consoleExit(NULL);
+    return 1;
+}
 
-    printf("\n----------------------------------------\n");
-    printf("Page %u/%u    A/Right: next  B/Left: back\n",
-           page + 1, (unsigned)PAGE_COUNT);
-    printf("Plus: exit\n");
+static void page_forward(UiState *state)
+{
+    state->page = (UiPage)((state->page + 1) % UI_PAGE_COUNT);
+}
+
+static void page_back(UiState *state)
+{
+    state->page = (UiPage)((state->page + UI_PAGE_COUNT - 1) % UI_PAGE_COUNT);
+}
+
+static void handle_touch(UiState *state, unsigned x, unsigned y)
+{
+    // libnx touch coordinates are in the Switch's native 1280x720 space.
+    if (x < 273) {
+        if (y >= 229 && y < 289)
+            state->page = UI_OVERVIEW;
+        else if (y >= 298 && y < 358)
+            state->page = UI_PERFORMANCE;
+        else if (y >= 367 && y < 427)
+            state->page = UI_ROADMAP;
+    } else if (state->page == UI_PERFORMANCE &&
+               x >= 731 && x < 1176 && y >= 492 && y < 586) {
+        state->animations = !state->animations;
+    }
 }
 
 int main(void)
 {
-    consoleInit(NULL);
-    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0)
+        return failure_screen("SDL could not initialise the video service.");
 
+    // 720p is the Lite display's native resolution. No 1080p framebuffer cost.
+    SDL_Window *window = SDL_CreateWindow("Cordial Switched", 0, 0,
+                                           UI_WIDTH, UI_HEIGHT, SDL_WINDOW_SHOWN);
+    if (!window) {
+        SDL_Quit();
+        return failure_screen("SDL could not create a 1280x720 window.");
+    }
+
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1,
+        SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!renderer)
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    if (!renderer)
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_SOFTWARE);
+    if (!renderer) {
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return failure_screen("No usable SDL rendering backend was found.");
+    }
+
+    SDL_RenderSetLogicalSize(renderer, UI_WIDTH, UI_HEIGHT);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_RendererInfo info = {0};
+    SDL_GetRendererInfo(renderer, &info);
+
+    if (!ui_init(renderer)) {
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return failure_screen("The Switch shared font or UI resources failed to load.");
+    }
+
+    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
     padInitializeDefault(&pad);
     hidInitializeTouchScreen();
 
-    unsigned page = 0;
-    bool redraw = true;
-    bool was_touched = false;
-    u32 previous_x = 0;
-    u32 previous_y = 0;
+    UiState state = {
+        .page = UI_OVERVIEW,
+        .animations = true,
+        .accelerated = (info.flags & SDL_RENDERER_ACCELERATED) != 0,
+        .vsync = (info.flags & SDL_RENDERER_PRESENTVSYNC) != 0,
+        .fps = 0.0,
+        .frame_ms = 0.0,
+    };
+    snprintf(state.renderer_name, sizeof(state.renderer_name), "%s",
+             info.name ? info.name : "unknown");
 
-    while (appletMainLoop()) {
+    bool quit = false;
+    bool was_touching = false;
+    const Uint64 frequency = SDL_GetPerformanceFrequency();
+    Uint64 sample_start = SDL_GetPerformanceCounter();
+    Uint64 sample_frames = 0;
+    double sample_frame_ms = 0.0;
+
+    while (!quit && appletMainLoop()) {
+        const Uint64 frame_start = SDL_GetPerformanceCounter();
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT)
+                quit = true;
+        }
+
         padUpdate(&pad);
         const u64 pressed = padGetButtonsDown(&pad);
-
         if (pressed & HidNpadButton_Plus)
             break;
-
-        if (pressed & (HidNpadButton_A | HidNpadButton_Right)) {
-            page = (page + 1) % PAGE_COUNT;
-            redraw = true;
-        } else if (pressed & (HidNpadButton_B | HidNpadButton_Left)) {
-            page = (page + PAGE_COUNT - 1) % PAGE_COUNT;
-            redraw = true;
-        }
+        if (pressed & (HidNpadButton_A | HidNpadButton_Right | HidNpadButton_R))
+            page_forward(&state);
+        if (pressed & (HidNpadButton_B | HidNpadButton_Left | HidNpadButton_L))
+            page_back(&state);
+        if (state.page == UI_PERFORMANCE && (pressed & HidNpadButton_X))
+            state.animations = !state.animations;
 
         HidTouchScreenState touch = {0};
-        const bool touched = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;
+        const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;
+        if (touching && !was_touching)
+            handle_touch(&state, touch.touches[0].x, touch.touches[0].y);
+        was_touching = touching;
 
-        if (page == 2 && (touched != was_touched ||
-                          (touched && (previous_x != touch.touches[0].x ||
-                                       previous_y != touch.touches[0].y)))) {
-            redraw = true;
+        ui_draw(renderer, &state, (double)SDL_GetTicks() / 1000.0);
+        SDL_RenderPresent(renderer);
+
+        // Only manually pace a driver which cannot provide a 60 Hz swap.
+        if (!state.vsync) {
+            const Uint64 deadline = frame_start + frequency / 60;
+            const double elapsed_ms = (double)(SDL_GetPerformanceCounter() - frame_start)
+                * 1000.0 / (double)frequency;
+            if (elapsed_ms < 15.0)
+                SDL_Delay((Uint32)(15.0 - elapsed_ms));
+            while (SDL_GetPerformanceCounter() < deadline)
+                SDL_Delay(0);
         }
 
-        if (redraw) {
-            draw_screen(page, &touch, touched);
-            redraw = false;
-        }
+        const Uint64 frame_end = SDL_GetPerformanceCounter();
+        sample_frame_ms += (double)(frame_end - frame_start) * 1000.0 / (double)frequency;
+        sample_frames++;
 
-        was_touched = touched;
-        if (touched) {
-            previous_x = touch.touches[0].x;
-            previous_y = touch.touches[0].y;
+        const double window_seconds = (double)(frame_end - sample_start) / (double)frequency;
+        if (window_seconds >= 1.0) {
+            state.fps = (double)sample_frames / window_seconds;
+            state.frame_ms = sample_frame_ms / (double)sample_frames;
+            sample_start = frame_end;
+            sample_frames = 0;
+            sample_frame_ms = 0.0;
         }
-
-        consoleUpdate(NULL);
     }
 
-    consoleExit(NULL);
+    ui_shutdown();
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    SDL_Quit();
     return 0;
 }

@@ -54,8 +54,9 @@ Credit to sober for making android Roblox runtimes possible
 
 Experimental. Full table in [`docs/status.md`](docs/status.md).
 
-This fork also has an [early Nintendo Switch homebrew target](switch/README.md).
-It currently tests Horizon OS input and display only; it **does not run Roblox**.
+This fork also has an [early Nintendo Switch homebrew target](switch/README.md)
+with a 720p graphical dashboard and UI performance diagnostics. It **does not
+run Roblox** yet.
 
 **Works:** loading an experience, sign-in, keyboard and mouse, camera, text
 entry with IME preedit, audio, voice chat, pointer capture, fullscreen, two

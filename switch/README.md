@@ -1,10 +1,20 @@
 # Cordial Switched: native Horizon experiment
 
-This directory builds a **Nintendo Switch `.nro` smoke test**, separate from
-Cordial's existing Linux binaries. The first milestone is a real executable
-which opens through the Homebrew Menu, renders text and reads handheld controls
-and touchscreen input. **It does not currently run Roblox, connect to Roblox
-servers or sign in to any Roblox account.**
+This directory builds a **Nintendo Switch `.nro` preview**, separate from
+Cordial's existing Linux binaries. Version 0.2 includes a 720p GPU-first
+dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
+SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
+roadmap. It reads handheld controls and touchscreen input. **It does not
+currently run Roblox, connect to Roblox servers or sign in to any Roblox
+account.**
+
+The renderer requests GPU acceleration and VSync, then falls back to an
+accelerated renderer without VSync or a software renderer if necessary. Static
+backgrounds and text are cached instead of rasterised every frame. The
+performance page reports the actual renderer, the measured UI frame rate and
+average frame time; 60 FPS is a **target**, not a measured hardware result or
+a promise about eventual game performance. The current layout targets the
+Switch Lite's 1280x720 handheld display.
 
 ## Build
 
@@ -13,8 +23,8 @@ GitHub Actions workflow uses the `devkitpro/devkita64` toolchain container.
 Download the resulting `cordial-switched-nro-smoke-test` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
-For a local build, install devkitPro with `devkitA64` and `libnx`, set
-`DEVKITPRO`, and run:
+For a local build, install devkitPro with `devkitA64`, `libnx`,
+`switch-sdl2`, and `switch-sdl2_ttf`, set `DEVKITPRO`, and run:
 
 ```sh
 make -C switch
@@ -24,10 +34,13 @@ Copy `switch/cordial-switched.nro` to `sdmc:/switch/cordial-switched.nro`,
 launch it from the Homebrew Menu on a Switch with working homebrew support,
 then check:
 
-1. The first page is legible on the Switch Lite screen.
-2. **A** and **B** change pages; directional left and right also work.
-3. On page 3, tapping the screen changes the displayed coordinates.
-4. **Plus** returns to the Homebrew Menu without a crash.
+1. The Overview page renders correctly, including fonts, colours and cards.
+2. **A/B**, **left/right** or **L/R** switch Overview, Performance and Roadmap.
+3. Tapping navigation items switches pages; on Performance, **X** or the toggle
+   turns the ambient movement on and off.
+4. Check the Performance page after a few seconds. Report the renderer type,
+   average UI frame rate and any stutters; do not treat it as Roblox FPS.
+5. **Plus** returns to the Homebrew Menu without a crash.
 
 Do not enter Roblox credentials into this build. It has no login functionality.
 
