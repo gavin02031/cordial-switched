@@ -10,6 +10,8 @@
 #include <unistd.h>
 
 #include "android_log_compat.h"
+#include "android_media_codec_compat.h"
+#include "android_media_format_compat.h"
 #include "android_math_compat.h"
 #include "android_libc_compat.h"
 #include "android_stdio_compat.h"
@@ -26,6 +28,12 @@
 #include "horizon_code_memory.h"
 
 static HorizonCodeMemory reservation;
+
+typedef struct {
+    char name[80];
+    char version[48];
+    char library[48];
+} MissingImport;
 
 static FILE *new_log(char *path, size_t capacity)
 {
@@ -64,11 +72,13 @@ static bool resolve_compatible(const char *name, const char *version,
                                const char *library, uint64_t *address,
                                void *context)
 {
-    (void)context;
+    MissingImport *missing = context;
     // Match the same real providers used by ZR's import audit, without
     // fabricating pointers for Android services that do not exist on Horizon.
-    return ((!version && !library &&
+    const bool supported = ((!version && !library &&
              android_log_compat_resolve(name, address, NULL)) ||
+            android_media_codec_compat_resolve(name, version, library, address) ||
+            android_media_format_compat_resolve(name, version, library, address) ||
             android_math_compat_resolve(name, version, library, address) ||
             android_libc_compat_resolve(name, version, library, address) ||
             android_stdio_compat_resolve(name, version, library, address) ||
@@ -77,6 +87,16 @@ static bool resolve_compatible(const char *name, const char *version,
             android_tls_compat_resolve(name, version, library, address) ||
             android_thread_attr_compat_resolve(name, version, library, address) ||
             android_thread_lifecycle_compat_resolve(name, version, library, address));
+    if (!supported && missing && !missing->name[0]) {
+        // Keep the provider and symbol version, since the same symbol name
+        // may be intentionally rejected when a different Android DSO owns it.
+        snprintf(missing->name, sizeof(missing->name), "%.75s", name ? name : "?");
+        snprintf(missing->version, sizeof(missing->version), "%.44s",
+                 version ? version : "unversioned");
+        snprintf(missing->library, sizeof(missing->library), "%.44s",
+                 library ? library : "unspecified");
+    }
+    return supported;
 }
 static void printable(char *out, size_t size, const char *message)
 {
@@ -134,7 +154,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.27 final-base real ELF preflight");
+    log_line(log, "# Cordial Switched v0.28 final-base real ELF preflight");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     log_line(log, "event=preflight_started");
@@ -187,14 +207,24 @@ void horizon_real_link_run(RealLinkResult *result)
     } else {
         log_line(log, "event=final_address_reserved");
         EngineStage stage = {0};
+        MissingImport missing = {0};
         log_line(log, "event=strict_final_base_relocation_started");
         const bool ready = engine_stage_stream_resolved_at(
-            file, &stage, resolve_compatible, NULL,
+            file, &stage, resolve_compatible, &missing,
             (uint64_t)(uintptr_t)reservation.mapped);
         log_line(log, "strict_stage_status=%d", stage.status);
         char safe[120];
         printable(safe, sizeof(safe), stage.detail);
         log_line(log, "strict_stage_detail=%s", safe);
+        if (missing.name[0]) {
+            char name[80], version[48], library[48];
+            printable(name, sizeof(name), missing.name);
+            printable(version, sizeof(version), missing.version);
+            printable(library, sizeof(library), missing.library);
+            log_line(log, "first_missing_name=%s", name);
+            log_line(log, "first_missing_version=%s", version);
+            log_line(log, "first_missing_provider=%s", library);
+        }
         log_line(log, "rela_applied=%u", stage.rela_applied);
         log_line(log, "relr_applied=%u", stage.relr_applied);
         log_line(log, "aps2_applied=%u", stage.packed_applied);

@@ -82,6 +82,13 @@ then check:
    copy of the real library's PT_TLS initializer and a single-module DTV
    shadow can be prepared. These are diagnostic per-thread allocations only;
    the CPU thread pointer and Android thread callbacks are **not** installed.
+   v0.28 also implements the NDK media format object and exported key symbols,
+   following the user's first real L3 blocker (
+   `AMediaFormat_delete`). Codec creation correctly reports unavailable and
+   codec methods return an NDK invalid-object error; it does **not** decode or
+   encode any media or invent a successful codec handle.
+   The log now includes the first missing import's version and provider so a
+   correctly rejected API can be distinguished from an absent implementation.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

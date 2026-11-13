@@ -30,6 +30,7 @@ jobs:
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
             switch/source/android_log_compat.c switch/source/android_math_compat.c \
+            switch/source/android_media_format_compat.c switch/source/android_media_codec_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
             switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
@@ -49,6 +50,20 @@ jobs:
             switch/tests/android_math_compat_test.c switch/source/android_math_compat.c -lm \
             -o /tmp/cordial-android-math-test
           /tmp/cordial-android-math-test
+      - name: Test versioned Android NDK media formats
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_media_format_compat_test.c \
+            switch/source/android_media_format_compat.c \
+            -o /tmp/cordial-android-media-format-test
+          /tmp/cordial-android-media-format-test
+      - name: Test truthful unavailable Android NDK codec responses
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_media_codec_compat_test.c \
+            switch/source/android_media_codec_compat.c \
+            -o /tmp/cordial-android-media-codec-test
+          /tmp/cordial-android-media-codec-test
       - name: Test Android Bionic libc and stdio adapters
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

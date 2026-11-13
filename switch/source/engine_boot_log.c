@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include "android_log_compat.h"
+#include "android_media_codec_compat.h"
+#include "android_media_format_compat.h"
 #include "android_math_compat.h"
 #include "android_libc_compat.h"
 #include "android_stdio_compat.h"
@@ -61,6 +63,8 @@ static bool resolve_compatible_import(const char *name, const char *version,
     // require opaque wrappers; pthread internals must never alias newlib.
     const bool supported = ((!version && !library &&
                              android_log_compat_resolve(name, address, NULL)) ||
+                            android_media_codec_compat_resolve(name, version, library, address) ||
+                            android_media_format_compat_resolve(name, version, library, address) ||
                             android_math_compat_resolve(name, version, library, address) ||
                             android_libc_compat_resolve(name, version, library, address) ||
                             android_stdio_compat_resolve(name, version, library, address) ||
