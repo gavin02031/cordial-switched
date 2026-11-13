@@ -500,7 +500,7 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
         if (state->boot_log_saved) {
             const char *base = strrchr(state->boot_log_path, '/');
             char report[112];
-            snprintf(report, sizeof(report), "ZR: saved %.80s / engine not executed",
+            snprintf(report, sizeof(report), "ZR: saved %.32s / engine not executed",
                      base ? base + 1 : state->boot_log_path);
             label(renderer, 341, 617, FONT_SMALL, MINT, report);
         } else {
