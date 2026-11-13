@@ -102,6 +102,13 @@ then check:
    The `execution_gate` and `engine_entry_called` fields state exactly why a
    call into Roblox is refused. It cannot safely execute the Roblox entry while
    required imports, the Bionic/JNI runtime, and graphics services are absent.
+   v0.31 supplies a separate, bounded C++ destructor registry for Android's
+   versioned `__cxa_atexit` and `__cxa_finalize` imports. It respects DSO
+   ownership and reverse registration order, runs callbacks outside its lock,
+   and never aliases a native newlib C++ exit-handler list. The missing
+   `__register_atfork` import is **not** claimed as working: actual process-fork
+   semantics are not implemented. This is a linker-runtime component, not
+   evidence of successful Roblox engine execution.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

@@ -11,6 +11,7 @@
 
 #include "android_log_compat.h"
 #include "android_media_codec_compat.h"
+#include "android_cxa_compat.h"
 #include "android_media_format_compat.h"
 #include "android_math_compat.h"
 #include "android_libc_compat.h"
@@ -103,6 +104,7 @@ static bool resolve_compatible(const char *name, const char *version,
              android_log_compat_resolve(name, address, NULL)) ||
             android_media_codec_compat_resolve(name, version, library, address) ||
             android_media_format_compat_resolve(name, version, library, address) ||
+            android_cxa_compat_resolve(name, version, library, address) ||
             android_math_compat_resolve(name, version, library, address) ||
             android_libc_compat_resolve(name, version, library, address) ||
             android_stdio_compat_resolve(name, version, library, address) ||
@@ -211,7 +213,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.30 real-engine entry readiness attempt");
+    log_line(log, "# Cordial Switched v0.31 real-engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");

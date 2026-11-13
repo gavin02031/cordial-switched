@@ -31,6 +31,7 @@ jobs:
             switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
             switch/source/android_log_compat.c switch/source/android_math_compat.c \
             switch/source/android_media_format_compat.c switch/source/android_media_codec_compat.c \
+            switch/source/android_cxa_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
             switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
@@ -44,6 +45,12 @@ jobs:
             switch/tests/android_log_compat_test.c switch/source/android_log_compat.c \
             -o /tmp/cordial-android-log-test
           /tmp/cordial-android-log-test
+      - name: Test Bionic C++ destructor lifecycle bridge
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_cxa_compat_test.c switch/source/android_cxa_compat.c \
+            -o /tmp/cordial-android-cxa-test
+          /tmp/cordial-android-cxa-test
       - name: Test Android libm ABI providers
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

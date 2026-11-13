@@ -722,6 +722,18 @@ int main(void)
     assert(strstr(math_trace, "supported_imports=1"));
     assert(strstr(math_trace, "engine_executed=no"));
 
+    // Real Bionic C++ atexit registration has its own lifecycle table;
+    // binding an arbitrary host __cxa_atexit address would be unsafe.
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 14);
+    memcpy(bytes + 0x301, "__cxa_atexit", 13);
+    EngineBootReport cxa_boot;
+    char cxa_trace[4096];
+    boot_fixture(bytes, sizeof(bytes), &cxa_boot, cxa_trace, sizeof(cxa_trace));
+    assert(cxa_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(cxa_trace, "supported_imports=1"));
+    assert(strstr(cxa_trace, "engine_executed=no"));
+
     // The first missing import in the real Switch Lite v0.13 log was
     // stderr@LIBC. Resolve it through the genuine Bionic FILE* data adapter,
     // rather than pointing the relocation at newlib's incompatible FILE.
