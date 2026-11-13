@@ -21,6 +21,8 @@
 #include "elf_probe.h"
 #include "engine_memory_plan.h"
 #include "engine_stage.h"
+#include "engine_tls_scratch.h"
+#include "engine_tls_thread.h"
 #include "horizon_code_memory.h"
 
 static HorizonCodeMemory reservation;
@@ -87,6 +89,37 @@ static void printable(char *out, size_t size, const char *message)
     out[i] = 0;
 }
 
+static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
+                             FILE *log)
+{
+    EngineTlsScratch template_image = {0};
+    const EngineTlsScratchStatus status =
+        engine_tls_scratch_prepare(library, profile, &template_image);
+    log_line(log, "tls_template_status=%d", status);
+    log_line(log, "tls_thread_pointer_installed=no");
+    log_line(log, "tls_dynamic_modules_supported=no");
+    if (status == ENGINE_TLS_PREPARED && template_image.size) {
+        EngineTlsThread thread = {0};
+        const bool copied = engine_tls_thread_prepare(&template_image, NULL, &thread);
+        log_line(log, "tls_thread_image_prepared=%s", copied ? "yes" : "no");
+        if (copied) {
+            log_line(log, "tls_thread_image_bytes=%zu", thread.size);
+            log_line(log, "tls_thread_image_alignment=%zu", thread.alignment);
+            log_line(log, "tls_thread_image_is_private=%s",
+                     thread.data != template_image.data ? "yes" : "no");
+            log_line(log, "tls_dtv_slot_1_prepared=%s",
+                     thread.tcb.dtv == &thread.dtv &&
+                     thread.dtv.modules[1] == thread.data ? "yes" : "no");
+        }
+        engine_tls_thread_release(&thread);
+    } else if (status == ENGINE_TLS_PREPARED) {
+        log_line(log, "tls_thread_image_prepared=empty_template");
+    } else {
+        log_line(log, "tls_thread_image_prepared=no");
+    }
+    engine_tls_scratch_release(&template_image);
+}
+
 void horizon_real_link_run(RealLinkResult *result)
 {
     if (!result) return;
@@ -101,7 +134,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.26 final-base real ELF preflight");
+    log_line(log, "# Cordial Switched v0.27 final-base real ELF preflight");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     log_line(log, "event=preflight_started");
@@ -137,6 +170,7 @@ void horizon_real_link_run(RealLinkResult *result)
              (unsigned long long)probe.max_segment_alignment);
     log_line(log, "android_dependencies=%u", probe.needed_count);
     log_line(log, "tls_segment=%s", probe.has_tls_segment ? "present" : "absent");
+    audit_thread_tls(file, &probe, log);
 
     EngineMemoryPlan plan = {0};
     if (!engine_memory_plan_from_probe(&probe, &plan)) {

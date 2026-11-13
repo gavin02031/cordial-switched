@@ -95,6 +95,13 @@ jobs:
             switch/tests/engine_tls_scratch_test.c switch/source/engine_tls_scratch.c \
             -o /tmp/cordial-android-elf-tls-scratch-test
           /tmp/cordial-android-elf-tls-scratch-test
+      - name: Test isolated Android ELF TLS thread storage
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_tls_thread_test.c \
+            switch/source/engine_tls_thread.c switch/source/android_arm64_tcb_shadow.c \
+            -pthread -o /tmp/cordial-android-elf-tls-thread-test
+          timeout 30s /tmp/cordial-android-elf-tls-thread-test
       - name: Test native Horizon code-memory segment permission planning
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

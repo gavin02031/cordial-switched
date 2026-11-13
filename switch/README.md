@@ -78,6 +78,10 @@ then check:
    This new option saves `link-XX.txt` in the same folder. **It does not
    map the Roblox image as executable, call any engine initialiser, sign in,
    or join a game.** A real engine still needs Android TLS, JNI and graphics.
+   Starting with v0.27, this same report checks whether a separate, aligned
+   copy of the real library's PT_TLS initializer and a single-module DTV
+   shadow can be prepared. These are diagnostic per-thread allocations only;
+   the CPU thread pointer and Android thread callbacks are **not** installed.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
