@@ -1,0 +1,33 @@
+name: Switch homebrew smoke build
+
+on:
+  push:
+    paths:
+      - 'switch/**'
+      - '.github/workflows/switch-homebrew.yml'
+  pull_request:
+    paths:
+      - 'switch/**'
+      - '.github/workflows/switch-homebrew.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native Horizon target
+        working-directory: switch
+        run: make -j2
+      - name: Check generated executable
+        run: test -s switch/cordial-switched.nro
+      - name: Upload test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cordial-switched-nro-smoke-test
+          path: switch/cordial-switched.nro
+          if-no-files-found: error
