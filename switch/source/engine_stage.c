@@ -16,6 +16,10 @@ enum {
     DT_RELA = 7,
     DT_RELASZ = 8,
     DT_RELAENT = 9,
+    DT_SYMTAB = 6,
+    DT_STRTAB = 5,
+    DT_STRSZ = 10,
+    DT_SYMENT = 11,
     DT_REL = 17,
     DT_RELSZ = 18,
     DT_RELRSZ = 35,
@@ -23,6 +27,8 @@ enum {
     DT_RELRENT = 37,
     DT_PLTRELSZ = 2,
     DT_JMPREL = 23,
+    DT_PLTREL = 20,
+    DT_VERSYM = 0x6ffffff0,
     DT_ANDROID_RELA = 0x60000011,
     DT_ANDROID_RELASZ = 0x60000012,
     DT_ANDROID_REL = 0x6000000f,
@@ -31,6 +37,9 @@ enum {
     DT_ANDROID_RELRSZ = 0x6fffe001,
     DT_ANDROID_RELRENT = 0x6fffe003,
     R_AARCH64_RELATIVE = 1027,
+    R_AARCH64_ABS64 = 257,
+    R_AARCH64_GLOB_DAT = 1025,
+    R_AARCH64_JUMP_SLOT = 1026,
     PAGE_SIZE = 4096,
 };
 
@@ -117,6 +126,7 @@ static bool abort_stage(EngineStage *stage, EngineStageStatus status, const char
     stage->image_size = 0;
     stage->rela_applied = 0;
     stage->relr_applied = 0;
+    stage->symbol_applied = 0;
     stage->status = status;
     snprintf(stage->detail, sizeof(stage->detail), "%s", message);
     return false;
@@ -130,7 +140,75 @@ void engine_stage_release(EngineStage *stage)
     memset(stage, 0, sizeof(*stage));
 }
 
-bool engine_stage_stream(FILE *file, EngineStage *stage)
+static bool apply_rela_table(EngineStage *stage, const Segment *segments,
+                             unsigned count, const unsigned char *rela,
+                             size_t length, uint64_t load_bias,
+                             uint64_t symtab_address, uint64_t sym_entry_size,
+                             uint64_t strtab_address, uint64_t strtab_size,
+                             bool versioned, EngineSymbolResolver resolver,
+                             void *context)
+{
+    for (size_t i = 0; i < length; i += 24) {
+        const uint64_t destination = u64le(rela + i);
+        const uint64_t info = u64le(rela + i + 8);
+        const uint64_t addend = u64le(rela + i + 16);
+        const uint32_t type = (uint32_t)info;
+        const uint32_t sym_index = (uint32_t)(info >> 32);
+        unsigned char *target = load_at(stage, segments, count, destination, 8, false);
+        if ((destination & 7) || !target)
+            return abort_stage(stage, ENGINE_STAGE_INVALID,
+                               "RELA target is outside PT_LOAD or unaligned.");
+
+        if (type == R_AARCH64_RELATIVE && sym_index == 0) {
+            write64(target, load_bias + addend);
+            stage->rela_applied++;
+            continue;
+        }
+
+        if (type != R_AARCH64_ABS64 && type != R_AARCH64_GLOB_DAT &&
+            type != R_AARCH64_JUMP_SLOT)
+            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                               "Relocation needs the full Android linker.");
+        if (!resolver)
+            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                               "External-symbol relocation needs a symbol resolver.");
+        if (versioned)
+            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                               "Versioned symbols need the full Android linker.");
+        if (!sym_index || sym_entry_size != 24 || !symtab_address || !strtab_address ||
+            !strtab_size || (uint64_t)sym_index * 24 > UINT64_MAX - symtab_address)
+            return abort_stage(stage, ENGINE_STAGE_INVALID,
+                               "Missing or malformed ELF dynamic symbol metadata.");
+
+        const unsigned char *sym = load_at(stage, segments, count,
+                                           symtab_address + (uint64_t)sym_index * 24,
+                                           24, true);
+        const unsigned char *strings = load_at(stage, segments, count,
+                                               strtab_address, (size_t)strtab_size, true);
+        if (!sym || !strings || u16le(sym + 6) != 0)
+            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                               "Non-imported or invalid dynamic symbol.");
+
+        const uint32_t name_offset = u32le(sym);
+        if (name_offset == 0 || name_offset >= strtab_size ||
+            !memchr(strings + name_offset, 0, (size_t)(strtab_size - name_offset)))
+            return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid import symbol name.");
+
+        const char *name = (const char *)strings + name_offset;
+        uint64_t symbol_address = 0;
+        if (!resolver(name, &symbol_address, context) || !symbol_address) {
+            char message[120];
+            snprintf(message, sizeof(message), "Unresolved import: %.96s", name);
+            return abort_stage(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, message);
+        }
+        write64(target, symbol_address + addend);
+        stage->symbol_applied++;
+    }
+    return true;
+}
+
+bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
+                                  EngineSymbolResolver resolver, void *context)
 {
     if (!stage)
         return false;
@@ -207,7 +285,10 @@ bool engine_stage_stream(FILE *file, EngineStage *stage)
 
     uint64_t rela_addr = 0, rela_size = 0, rela_entry = 0;
     uint64_t relr_addr = 0, relr_size = 0, relr_entry = 0;
-    uint64_t plt_size = 0, android_packed_size = 0, unsupported_rel = 0;
+    uint64_t plt_size = 0, plt_addr = 0, plt_format = 0;
+    uint64_t symtab_address = 0, sym_entry_size = 0, strtab_address = 0, strtab_size = 0;
+    uint64_t android_packed_size = 0, unsupported_rel = 0;
+    bool versioned = false;
     bool android_relr = false;
     for (size_t i = 0; i < (size_t)dynamic_size; i += 16) {
         const uint64_t tag = u64le(dynamic + i);
@@ -220,52 +301,54 @@ bool engine_stage_stream(FILE *file, EngineStage *stage)
         else if (tag == DT_RELR) relr_addr = value;
         else if (tag == DT_RELRSZ) relr_size = value;
         else if (tag == DT_RELRENT) relr_entry = value;
+        else if (tag == DT_SYMTAB) symtab_address = value;
+        else if (tag == DT_SYMENT) sym_entry_size = value;
+        else if (tag == DT_STRTAB) strtab_address = value;
+        else if (tag == DT_STRSZ) strtab_size = value;
         else if (tag == DT_ANDROID_RELR) { relr_addr = value; android_relr = true; }
         else if (tag == DT_ANDROID_RELRSZ) { relr_size = value; android_relr = true; }
         else if (tag == DT_ANDROID_RELRENT) relr_entry = value;
         else if (tag == DT_PLTRELSZ) plt_size = value;
-        else if (tag == DT_JMPREL && value != 0) plt_size = 1;
+        else if (tag == DT_JMPREL) plt_addr = value;
+        else if (tag == DT_PLTREL) plt_format = value;
+        else if (tag == DT_VERSYM && value != 0) versioned = true;
         else if ((tag == DT_REL || tag == DT_RELSZ || tag == DT_ANDROID_REL ||
                   tag == DT_ANDROID_RELSZ) && value != 0) unsupported_rel = 1;
         else if (tag == DT_ANDROID_RELASZ) android_packed_size = value;
         else if (tag == DT_ANDROID_RELA && value != 0) android_packed_size = 1;
     }
 
-    if (plt_size || android_packed_size || unsupported_rel)
+    if ((!resolver && (plt_size || plt_addr)) || android_packed_size || unsupported_rel)
         return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
                            "PLT, REL or Android packed symbols need the bionic linker.");
     if (android_relr && relr_size && relr_entry == 0)
         relr_entry = 8; // Older Android RELR tags omit DT_RELRENT.
     if ((rela_size && (rela_entry != 24 || rela_size % 24 != 0)) ||
+        (plt_size && (!plt_addr || plt_format != DT_RELA || plt_size % 24 != 0)) ||
+        (plt_addr && !plt_size) ||
         (relr_size && (relr_entry != 8 || relr_size % 8 != 0)))
         return abort_stage(stage, ENGINE_STAGE_INVALID, "Malformed relocation table sizes.");
     unsigned char *rela = rela_size ? load_at(stage, segments, segment_count, rela_addr,
                                               (size_t)rela_size, true) : NULL;
     unsigned char *relr = relr_size ? load_at(stage, segments, segment_count, relr_addr,
                                               (size_t)relr_size, true) : NULL;
-    if ((rela_size && !rela) || (relr_size && !relr))
+    unsigned char *plt = plt_size ? load_at(stage, segments, segment_count, plt_addr,
+                                             (size_t)plt_size, true) : NULL;
+    if ((rela_size && !rela) || (relr_size && !relr) || (plt_size && !plt))
         return abort_stage(stage, ENGINE_STAGE_INVALID, "Relocation table is outside staged memory.");
 
-    // Refuse unknown AArch64 relocations before changing a single pointer.
-    // External symbols are the job of Cordial's bionic linker, not this layer.
-    for (size_t i = 0; i < (size_t)rela_size; i += 24) {
-        const uint64_t offset = u64le(rela + i);
-        const uint64_t info = u64le(rela + i + 8);
-        if ((uint32_t)info != R_AARCH64_RELATIVE || info >> 32 != 0)
-            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                               "An external-symbol relocation requires the bionic linker.");
-        if ((offset & 7) != 0 ||
-            !load_at(stage, segments, segment_count, offset, 8, false))
-            return abort_stage(stage, ENGINE_STAGE_INVALID, "RELA target is outside PT_LOAD.");
-    }
-
+    // These relocations are applied only to scratch RAM, which remains NX.
+    // Unknown or versioned symbols fail closed instead of installing stubs.
     const uint64_t load_bias = (uint64_t)(uintptr_t)stage->image - low;
-    for (size_t i = 0; i < (size_t)rela_size; i += 24) {
-        const uint64_t target = u64le(rela + i);
-        const uint64_t addend = u64le(rela + i + 16);
-        write64(load_at(stage, segments, segment_count, target, 8, false), load_bias + addend);
-        stage->rela_applied++;
-    }
+    if ((rela_size && !apply_rela_table(stage, segments, segment_count, rela,
+                                       (size_t)rela_size, load_bias, symtab_address,
+                                       sym_entry_size, strtab_address, strtab_size,
+                                       versioned, resolver, context)) ||
+        (plt_size && !apply_rela_table(stage, segments, segment_count, plt,
+                                      (size_t)plt_size, load_bias, symtab_address,
+                                      sym_entry_size, strtab_address, strtab_size,
+                                      versioned, resolver, context)))
+        return false;
 
     // RELR encodes one direct address per even word, then a bitmap of the next
     // 63 pointer-sized slots. Android uses this to compress relative relocations.
@@ -304,6 +387,11 @@ bool engine_stage_stream(FILE *file, EngineStage *stage)
 
     stage->status = ENGINE_STAGE_PREPARED;
     snprintf(stage->detail, sizeof(stage->detail),
-             "Staged ELF bytes and relative relocations; not executable.");
+             "Staged ELF bytes and supported relocations; not executable.");
     return true;
+}
+
+bool engine_stage_stream(FILE *file, EngineStage *stage)
+{
+    return engine_stage_stream_resolved(file, stage, NULL, NULL);
 }

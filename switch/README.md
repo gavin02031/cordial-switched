@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.5 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.6 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, and an ARM64 ELF inspection screen. It reads handheld controls and
@@ -84,11 +84,22 @@ construct a **bounded, non-executable scratch image** from an inspected ARM64
 ELF: copy file-backed `PT_LOAD` bytes, zero-fill BSS, and apply the
 `R_AARCH64_RELATIVE` RELA and ELF/Android RELR relative relocations. It checks
 each relocation destination against a real loaded segment and fails closed on
-unknown, symbol-binding, PLT or Android packed relocations. This prepares data
+unknown and Android packed relocations. This prepares data
 only; it does not map executable memory, perform bionic symbol resolution,
 verify an APK signature or start Roblox. **The Switch UI does not invoke the
 stager yet**; the validation is against synthetic ELF fixtures, not an actual
 Roblox engine or a Switch Lite hardware run.
+
+Version 0.6 extends that scratch-only layer with an optional, strict
+**symbol-resolver callback**. Synthetic tests demonstrate applying
+`R_AARCH64_ABS64`, `R_AARCH64_GLOB_DAT`, and `R_AARCH64_JUMP_SLOT` from ordinary
+RELA and PLT (`DT_JMPREL`) tables. It validates dynamic symbol/string names,
+never fabricates a success address, and rejects unresolved, malformed,
+versioned, or unsupported relocation formats. The original no-resolver API
+still fails closed on external imports. **This is a linker unit-test capability,
+not a working Android bionic linker**: it has no actual Android symbol
+providers, dependency loader, symbol version lookup, TLS or constructor support.
+No caller on Switch currently supplies a resolver or executes staged ELF code.
 
 The native CI runs these tests, which you can also execute locally:
 
@@ -138,8 +149,8 @@ The actual engine port must establish, in order:
 1. A working Horizon platform abstraction for memory, threads, TLS and files.
 2. Loading and relocating an **unmodified, user-provided** Android ARM64 ELF
    library with bionic-compatible symbols. `elf_probe.c` inspects its ELF
-   metadata; `engine_stage.c` prepares only relative relocations in scratch
-   memory under synthetic tests. `native/` and
+   metadata; `engine_stage.c` prepares a limited set of relocations and
+   callback-resolved symbols in scratch memory under synthetic tests. `native/` and
    `third_party/mcpelauncher-linker/` are reference implementations, not yet
    compiled into this `.nro`.
 3. Working JNI and GameActivity services without Android itself.

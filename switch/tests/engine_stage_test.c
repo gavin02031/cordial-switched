@@ -93,12 +93,55 @@ static void fixture(unsigned char *bytes)
     memcpy(bytes + 0x300, "\0libc.so\0", 9);
 }
 
+static void symbol_fixture(unsigned char *bytes, uint32_t type, bool plt)
+{
+    fixture(bytes);
+    unsigned char *dyn = bytes + 0x180;
+    add_dynamic(dyn, 2, 6, 0x12c0); // DT_SYMTAB
+    if (plt) {
+        add_dynamic(dyn, 3, 11, 24);     // DT_SYMENT
+        add_dynamic(dyn, 4, 2, 24);      // DT_PLTRELSZ
+        add_dynamic(dyn, 5, 23, 0x1240); // DT_JMPREL
+        add_dynamic(dyn, 6, 20, 7);      // DT_PLTREL = DT_RELA
+    } else {
+        add_dynamic(dyn, 6, 11, 24);     // DT_SYMENT
+    }
+    add_dynamic(dyn, 7, 0, 0);
+    add_dynamic(dyn, 8, 0, 0);
+
+    put64(bytes + 0x248, ((uint64_t)1 << 32) | type);
+    put64(bytes + 0x250, 8); // Addend for S + A.
+    put32(bytes + 0x2d8, 1); // Symbol #1 st_name.
+    bytes[0x2dc] = 0x12; // Global function.
+    memset(bytes + 0x300, 0, 24);
+    memcpy(bytes + 0x301, "sample_symbol", 14);
+}
+
+static bool fake_resolver(const char *name, uint64_t *address, void *context)
+{
+    if (strcmp(name, "sample_symbol") != 0 || !context)
+        return false;
+    *address = *(uint64_t *)context;
+    return true;
+}
+
 static bool stage_fixture(const unsigned char *bytes, size_t length, EngineStage *stage)
 {
     FILE *file = tmpfile();
     assert(file);
     assert(fwrite(bytes, 1, length, file) == length);
     const bool ok = engine_stage_stream(file, stage);
+    fclose(file);
+    return ok;
+}
+
+static bool resolve_fixture(const unsigned char *bytes, EngineStage *stage,
+                            EngineSymbolResolver lookup, void *context)
+{
+    FILE *file = tmpfile();
+    assert(file);
+    assert(fwrite(bytes, 1, IMAGE_BYTES, file) == IMAGE_BYTES);
+    const bool ok = engine_stage_stream_resolved(file, stage, lookup, context);
     fclose(file);
     return ok;
 }
@@ -197,6 +240,50 @@ int main(void)
     assert(stage.relr_applied == 3);
     engine_stage_release(&stage);
 
-    puts("engine_stage_test: 14 checks passed");
+    const uint64_t address = 0x1234567800ull;
+    symbol_fixture(bytes, 1025, false); // GLOB_DAT from regular RELA.
+    assert(resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
+    assert(stage.symbol_applied == 1);
+    assert(stage.relr_applied == 0);
+    assert(get64(stage.image + 0x340) == address + 8);
+    engine_stage_release(&stage);
+
+    symbol_fixture(bytes, 1026, true); // JUMP_SLOT from DT_JMPREL.
+    assert(resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
+    assert(stage.symbol_applied == 1);
+    assert(get64(stage.image + 0x340) == address + 8);
+    engine_stage_release(&stage);
+
+    symbol_fixture(bytes, 257, false); // ABS64 also uses S + A.
+    assert(resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
+    assert(get64(stage.image + 0x340) == address + 8);
+    engine_stage_release(&stage);
+
+    symbol_fixture(bytes, 1025, false);
+    assert(!stage_fixture(bytes, sizeof(bytes), &stage));
+    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+
+    symbol_fixture(bytes, 1025, false);
+    assert(!resolve_fixture(bytes, &stage, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+    assert(strstr(stage.detail, "sample_symbol"));
+
+    symbol_fixture(bytes, 1025, false);
+    const uint64_t no_address = 0;
+    assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&no_address));
+    assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+
+    symbol_fixture(bytes, 1025, false);
+    put32(bytes + 0x2d8, 24); // Out-of-range string-table offset.
+    assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+
+    symbol_fixture(bytes, 1025, false);
+    add_dynamic(bytes + 0x180, 7, 0x6ffffff0, 0x1320); // Versioned symbol table.
+    add_dynamic(bytes + 0x180, 8, 0, 0);
+    assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
+    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+
+    puts("engine_stage_test: 22 checks passed");
     return 0;
 }
