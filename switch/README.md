@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.17 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.18 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -193,9 +193,21 @@ past the caller's buffer**. These signatures and symbol versions were checked
 against Android's official Bionic sources. The host suite tests ordinary
 success cases, intentional fatal bounds failures in isolated child processes,
 and wrong-provider rejection; real Switch Lite runtime behaviour
-remains unverified. This still does not implement Bionic pthread objects or
-execute the Roblox engine. The existing ZR stage log is the next hardware
-measurement needed to prioritise thread services, JNI and the live loader.
+remains unverified. This still does not execute the Roblox engine.
+
+Version 0.18 adds a **partial Bionic pthread object adapter**, following the
+opaque-object technique used in native Android-to-Switch ports while using a
+thread-safe registry and lifetime tracking. It translates Bionic's inline
+mutex and condition storage into distinct native pthread objects rather than
+casting between incompatible structs. Static normal, recursive and errorcheck
+mutex initializers, default condition variables, `pthread_once`, mutex attrs,
+and basic lock/wait/signal/broadcast/destroy calls have host concurrency
+tests. Unsupported attributes, nonstandard object patterns and unresolved
+pthread services (`pthread_create`, TLS keys, rwlocks, timed waits, etc.) still
+**fail closed**. The wrapper does not establish that Roblox's particular
+threads run on the Switch Lite. JNI/GameActivity, graphics, assets, Android
+dependency loading and executable engine startup are still missing. A fresh
+**ZR stage log** is needed to measure the remaining imports on your hardware.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

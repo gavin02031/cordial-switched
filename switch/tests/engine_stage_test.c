@@ -598,6 +598,17 @@ int main(void)
     assert(strstr(fortify_trace, "supported_imports=1"));
     assert(strstr(fortify_trace, "engine_executed=no"));
 
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 14);
+    memcpy(bytes + 0x301, "pthread_once", 13);
+    char pthread_trace[4096];
+    EngineBootReport pthread_boot;
+    boot_fixture(bytes, sizeof(bytes), &pthread_boot, pthread_trace, sizeof(pthread_trace));
+    assert(pthread_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(pthread_trace, "provider_bionic_pthread=mutex_cond_once_partial"));
+    assert(strstr(pthread_trace, "supported_imports=1"));
+    assert(strstr(pthread_trace, "engine_executed=no"));
+
     // A real provider address can be bound in scratch memory. It is never
     // called by the test or from executable pages, and unknown APIs fail.
     symbol_fixture(bytes, 1025, false);

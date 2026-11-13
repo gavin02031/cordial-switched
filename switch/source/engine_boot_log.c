@@ -9,6 +9,7 @@
 #include "android_libc_compat.h"
 #include "android_stdio_compat.h"
 #include "android_fortify_compat.h"
+#include "android_pthread_compat.h"
 
 typedef struct {
     unsigned requested;
@@ -59,7 +60,8 @@ static bool resolve_compatible_import(const char *name, const char *version,
                             android_math_compat_resolve(name, version, library, address) ||
                             android_libc_compat_resolve(name, version, library, address) ||
                             android_stdio_compat_resolve(name, version, library, address) ||
-                            android_fortify_compat_resolve(name, version, library, address));
+                            android_fortify_compat_resolve(name, version, library, address) ||
+                            android_pthread_compat_resolve(name, version, library, address));
     if (supported) {
         imports->supported++;
         return true;
@@ -117,7 +119,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     if (!report)
         return;
     memset(report, 0, sizeof(*report));
-    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.17");
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.18");
     trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
     trace_line(trace, "event=preflight_started");
 
@@ -164,6 +166,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "provider_bionic_stdio=partial_wrapped");
     trace_line(trace, "provider_bionic_libc=partial_abi_checked");
     trace_line(trace, "provider_bionic_fortify=checked_bounds_partial");
+    trace_line(trace, "provider_bionic_pthread=mutex_cond_once_partial");
     trace_line(trace, "event=scratch_link_started");
     trace_line(trace, "audit_mode=continue_on_unresolved_imports_without_binding");
 
