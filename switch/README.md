@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.14 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.15 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -158,6 +158,14 @@ slots zero and continues inspecting remaining relocations. Reports now
 distinguish total unresolved lookups from the first 24 examples. Any unresolved
 symbol still prevents a prepared/usable image; no Android code executes.
 
+Version 0.15 adds real, provider- and version-checked native math bindings for
+the plain AArch64 float/double signatures in Android `libm.so` (`LIBC` symbol
+version), such as `sinf`, `cosf`, `pow`, and `log`. These are actual compiled
+math routines, not address placeholders. Android's `stderr`, JNI, pthread
+runtime and long-double routines remain intentionally unresolved, because a
+wrong ABI binding could crash the console. The new host suite validates a
+versioned math binding without ever executing the Roblox library itself.
+
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
 
@@ -199,16 +207,16 @@ RELA format, with tests for grouped and ungrouped addends and malformed inputs.
 It applies supported relocations only to non-executable scratch RAM and
 explicitly rejects unresolved imports, malformed data and unsupported REL
 records. **This does not mean the user-supplied 2.17 MB relocation section
-has been successfully decoded or linked:** host tests use synthetic ELF
-images. Version 0.11 adds an opt-in real-library scratch stage on Switch;
-its hardware outcome remains unverified until the user runs it.
+has been fully linked:** host tests use synthetic ELF images, and the actual
+Switch log from v0.13 stopped at an unresolved Bionic `stderr` import.
 
 The native CI runs these tests, which you can also execute locally:
 
 ```sh
 cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
   switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/elf_probe.c \
-  switch/source/android_log_compat.c \
+  switch/source/engine_boot_log.c switch/source/android_log_compat.c \
+  switch/source/android_math_compat.c -lm \
   -o /tmp/cordial-engine-stage-test
 /tmp/cordial-engine-stage-test
 ```

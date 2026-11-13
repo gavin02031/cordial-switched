@@ -561,6 +561,19 @@ int main(void)
     assert(resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
     engine_stage_release(&stage);
 
+    // An Android versioned libm routine can bind to a real native routine,
+    // unlike Bionic FILE data objects. The preflight still never executes it.
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 14);
+    memcpy(bytes + 0x301, "sinf", 5);
+    memcpy(bytes + 0x30f, "libm.so", 8);
+    char math_trace[4096];
+    EngineBootReport math_boot;
+    boot_fixture(bytes, sizeof(bytes), &math_boot, math_trace, sizeof(math_trace));
+    assert(math_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(math_trace, "supported_imports=1"));
+    assert(strstr(math_trace, "engine_executed=no"));
+
     // A real provider address can be bound in scratch memory. It is never
     // called by the test or from executable pages, and unknown APIs fail.
     symbol_fixture(bytes, 1025, false);
@@ -604,6 +617,6 @@ int main(void)
     assert(!boot.stage_attempted);
     assert(strstr(log, "blocker=INSPECTION_FAILED"));
 
-    puts("engine_stage_test: 47 scenarios passed");
+    puts("engine_stage_test: 48 scenarios passed");
     return 0;
 }
