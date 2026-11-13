@@ -23,6 +23,16 @@ static void *fortify_memcpy(void *dest, const void *source, size_t count,
     return memcpy(dest, source, count);
 }
 
+// Bionic's checked mempcpy returns the byte immediately after the copy.
+// Do not calculate that pointer until the destination bound is validated.
+static void *fortify_mempcpy(void *dest, const void *source, size_t count,
+                             size_t dest_len)
+{
+    if (count > dest_len) bad_bound("mempcpy");
+    memcpy(dest, source, count);
+    return (unsigned char *)dest + count;
+}
+
 static void *fortify_memmove(void *dest, const void *source, size_t count,
                              size_t dest_len)
 {
@@ -104,6 +114,7 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
 #define MAP_FORTIFY(symbol, target) \
     if (strcmp(name, symbol) == 0) *address = (uint64_t)(uintptr_t)(target); else
     MAP_FORTIFY("__memcpy_chk", &fortify_memcpy)
+    MAP_FORTIFY("__mempcpy_chk", &fortify_mempcpy)
     MAP_FORTIFY("__memmove_chk", &fortify_memmove)
     MAP_FORTIFY("__memset_chk", &fortify_memset)
     MAP_FORTIFY("__strlen_chk", &fortify_strlen)
