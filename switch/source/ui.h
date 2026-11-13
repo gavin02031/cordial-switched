@@ -16,12 +16,14 @@ typedef enum {
     UI_PERFORMANCE,
     UI_ROADMAP,
     UI_ENGINE,
+    UI_LOADER,
     UI_PAGE_COUNT
 } UiPage;
 
 typedef struct {
     UiPage page;
     bool animations;
+    bool loader_show_dependencies;
     bool accelerated;
     bool vsync;
     double fps;

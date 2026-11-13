@@ -18,8 +18,20 @@ enum {
     MAX_NEEDED_OFFSETS = 128,
     DT_NULL = 0,
     DT_NEEDED = 1,
+    DT_PLTRELSZ = 2,
     DT_STRTAB = 5,
+    DT_RELA = 7,
+    DT_RELASZ = 8,
+    DT_RELAENT = 9,
     DT_STRSZ = 10,
+    DT_PLTREL = 20,
+    DT_RELRSZ = 35,
+    DT_ANDROID_RELASZ = 0x60000012,
+    DT_ANDROID_RELSZ = 0x60000010,
+    DT_ANDROID_RELRSZ = 0x6fffe001,
+    DT_VERSYM = 0x6ffffff0,
+    DT_VERDEF = 0x6ffffffc,
+    DT_VERNEED = 0x6ffffffe,
 };
 
 typedef struct {
@@ -131,6 +143,8 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
 
     LoadSegment segments[MAX_PROGRAM_HEADERS];
     unsigned segments_count = 0;
+    uint64_t lowest_load = UINT64_MAX;
+    uint64_t highest_load = 0;
     uint64_t dynamic_offset = 0;
     uint64_t dynamic_size = 0;
     unsigned char ph[PROGRAM_HEADER_BYTES];
@@ -151,6 +165,7 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
             continue;
         if (!inside(file_offset, file_bytes, result->file_bytes) ||
             memory_bytes < file_bytes ||
+            virtual_address > UINT64_MAX - memory_bytes ||
             (alignment > 1 &&
              ((alignment & (alignment - 1)) != 0 ||
               file_offset % alignment != virtual_address % alignment))) {
@@ -160,6 +175,15 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
 
         if (type == PT_LOAD) {
             segments[segments_count++] = (LoadSegment){file_offset, virtual_address, file_bytes};
+            const uint32_t flags = read32(ph + 4);
+            if (flags & 1)
+                result->executable_segments++;
+            if (flags & 2)
+                result->writable_segments++;
+            if (virtual_address < lowest_load)
+                lowest_load = virtual_address;
+            if (virtual_address + memory_bytes > highest_load)
+                highest_load = virtual_address + memory_bytes;
             if (alignment > result->max_segment_alignment)
                 result->max_segment_alignment = alignment;
         } else {
@@ -173,6 +197,8 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
     }
 
     result->load_segments = segments_count;
+    if (segments_count)
+        result->virtual_image_bytes = highest_load - lowest_load;
     if (segments_count == 0 || dynamic_size == 0 ||
         dynamic_size > MAX_DYNAMIC_BYTES || dynamic_size % 16 != 0) {
         failure(result, ENGINE_PROBE_INVALID_ELF, "Missing or malformed dynamic ELF segments.");
@@ -195,6 +221,8 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
     uint64_t needed_offsets[MAX_NEEDED_OFFSETS];
     unsigned offsets_count = 0;
     bool terminated = false;
+    uint64_t rela_bytes = 0, rela_entry_size = 0, plt_bytes = 0, plt_kind = 0;
+    uint64_t relr_bytes = 0, packed_rela = 0, packed_rel = 0;
     for (size_t i = 0; i < (size_t)dynamic_size; i += 16) {
         const uint64_t tag = read64(dynamic + i);
         const uint64_t value = read64(dynamic + i + 8);
@@ -206,6 +234,22 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
             string_virtual_address = value;
         else if (tag == DT_STRSZ)
             string_bytes = value;
+        else if (tag == DT_RELASZ)
+            rela_bytes = value;
+        else if (tag == DT_RELAENT)
+            rela_entry_size = value;
+        else if (tag == DT_PLTRELSZ)
+            plt_bytes = value;
+        else if (tag == DT_PLTREL)
+            plt_kind = value;
+        else if (tag == DT_RELRSZ || tag == DT_ANDROID_RELRSZ)
+            relr_bytes = value;
+        else if (tag == DT_ANDROID_RELASZ)
+            packed_rela = value;
+        else if (tag == DT_ANDROID_RELSZ)
+            packed_rel = value;
+        else if ((tag == DT_VERSYM || tag == DT_VERDEF || tag == DT_VERNEED) && value)
+            result->has_symbol_versions = true;
         else if (tag == DT_NEEDED) {
             if (offsets_count == MAX_NEEDED_OFFSETS) {
                 free(dynamic);
@@ -216,6 +260,17 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
         }
     }
     free(dynamic);
+
+    // Report declarative relocation sizes only. No code, relocations, or
+    // pointers from the user-provided file are executed or followed here.
+    result->rela_records = rela_bytes / 24;
+    result->plt_records = plt_bytes / 24;
+    result->relr_words = relr_bytes / 8;
+    result->android_packed_bytes = packed_rela > UINT64_MAX - packed_rel
+        ? UINT64_MAX : packed_rela + packed_rel;
+    result->has_unsupported_plt_format = (plt_bytes && plt_kind != DT_RELA) ||
+        (rela_bytes && rela_entry_size != 24) || rela_bytes % 24 ||
+        plt_bytes % 24 || relr_bytes % 8;
 
     if (!terminated) {
         failure(result, ENGINE_PROBE_INVALID_ELF, "Dynamic entries have no DT_NULL terminator.");

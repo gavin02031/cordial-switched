@@ -1,12 +1,14 @@
 #ifndef CORDIAL_SWITCH_ELF_PROBE_H
 #define CORDIAL_SWITCH_ELF_PROBE_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 
 // A user-supplied Android ARM64 library. Never commit the file to this repo.
 #define ENGINE_LIBRARY_PATH "sdmc:/switch/cordial-switched/libroblox.so"
-#define ENGINE_PROBE_MAX_NEEDED 5
+#define ENGINE_PROBE_MAX_NEEDED 12
+#define ENGINE_PROBE_MAX_VISIBLE 5
 
 typedef enum {
     ENGINE_PROBE_NOT_FOUND = 0,
@@ -20,8 +22,18 @@ typedef struct {
     EngineProbeStatus status;
     uint64_t file_bytes;
     uint64_t max_segment_alignment;
+    uint64_t virtual_image_bytes;
+    uint64_t rela_records;
+    uint64_t plt_records;
+    uint64_t relr_words;
+    uint64_t android_packed_bytes;
     unsigned load_segments;
+    unsigned executable_segments;
+    unsigned writable_segments;
     unsigned needed_count;
+    // Sizes/counts come from dynamic ELF tags, not from executing a loader.
+    bool has_symbol_versions;
+    bool has_unsupported_plt_format;
     char needed[ENGINE_PROBE_MAX_NEEDED][64];
     char detail[112];
 } EngineProbeResult;

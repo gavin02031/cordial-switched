@@ -8,8 +8,10 @@
 #include <SDL_ttf.h>
 #include <switch.h>
 
+#include "engine_stage.h"
+
 enum { FONT_SMALL, FONT_BODY, FONT_MEDIUM, FONT_TITLE, FONT_HERO, FONT_TOTAL };
-enum { MAX_LABELS = 128 };
+enum { MAX_LABELS = 192 };
 
 typedef struct {
     char label[112];
@@ -255,7 +257,7 @@ static void sidebar(SDL_Renderer *renderer, const UiState *state)
     label(renderer, 112, 81, FONT_SMALL, LAVENDER, "SWITCHED");
 
     label(renderer, 49, 155, FONT_SMALL, MUTED, "NAVIGATION");
-    const char *items[] = {"Overview", "Performance", "Roadmap", "Engine"};
+    const char *items[] = {"Overview", "Performance", "Roadmap", "Engine", "Loader"};
     for (unsigned i = 0; i < UI_PAGE_COUNT; i++) {
         const int y = 229 + (int)i * 69;
         const bool active = state->page == (UiPage)i;
@@ -279,7 +281,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.6", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.7", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -442,11 +444,11 @@ static void engine(SDL_Renderer *renderer, const UiState *state)
         label(renderer, 339, 408, FONT_SMALL, MUTED, info);
         snprintf(info, sizeof(info), "Android dependencies: %u (first %u shown)",
                  state->engine.needed_count,
-                 (unsigned)ENGINE_PROBE_MAX_NEEDED);
+                 (unsigned)ENGINE_PROBE_MAX_VISIBLE);
         label(renderer, 339, 448, FONT_SMALL, MUTED, info);
 
-        const unsigned visible = state->engine.needed_count < ENGINE_PROBE_MAX_NEEDED
-            ? state->engine.needed_count : ENGINE_PROBE_MAX_NEEDED;
+        const unsigned visible = state->engine.needed_count < ENGINE_PROBE_MAX_VISIBLE
+            ? state->engine.needed_count : ENGINE_PROBE_MAX_VISIBLE;
         for (unsigned i = 0; i < visible; i++) {
             label(renderer, 340 + (int)(i % 3) * 269,
                   482 + (int)(i / 3) * 36, FONT_SMALL, LAVENDER,
@@ -475,6 +477,97 @@ static void engine(SDL_Renderer *renderer, const UiState *state)
           "Only our tiny ARM64 test runs. Roblox stays offline. Y: rescan.");
 }
 
+static void loader(SDL_Renderer *renderer, const UiState *state)
+{
+    topbar(renderer, "Loader readiness.", "Read-only ARM64 requirements from your own library");
+    panel(renderer, 306, 142, 921, 496, PANEL);
+    if (state->engine.status != ENGINE_PROBE_INSPECTED) {
+        badge(renderer, 337, 170, 190, "NO ENGINE PROFILE",
+              (SDL_Color){77, 46, 68, 255}, PINK);
+        label(renderer, 339, 247, FONT_MEDIUM, WHITE, "No valid ARM64 library inspected.");
+        label(renderer, 340, 305, FONT_BODY, MUTED, "Add your own library on the SD card, then press Y.");
+        label(renderer, 340, 553, FONT_SMALL, PINK, "This screen never executes external code.");
+        return;
+    }
+
+    badge(renderer, 337, 168, 212, "ARM64 PROFILE READY",
+          (SDL_Color){41, 82, 79, 255}, MINT);
+    badge(renderer, 976, 168, 212,
+          state->loader_show_dependencies ? "X: PROFILE" : "X: LIBRARIES",
+          (SDL_Color){54, 46, 83, 220}, LAVENDER);
+
+    if (state->loader_show_dependencies) {
+        char heading[100];
+        snprintf(heading, sizeof(heading), "Android dependencies: %u required",
+                 state->engine.needed_count);
+        label(renderer, 340, 224, FONT_MEDIUM, WHITE, heading);
+        const unsigned visible = state->engine.needed_count < ENGINE_PROBE_MAX_NEEDED
+            ? state->engine.needed_count : ENGINE_PROBE_MAX_NEEDED;
+        for (unsigned i = 0; i < visible; i++) {
+            const int col = (int)i / 6;
+            const int row = (int)i % 6;
+            const int x = 336 + col * 439;
+            const int y = 277 + row * 48;
+            rounded(renderer, x, y, 411, 41, 10, PANEL_LIGHT);
+            label(renderer, x + 14, y + 7, FONT_BODY, LAVENDER,
+                  state->engine.needed[i]);
+        }
+        label(renderer, 340, 589, FONT_SMALL, PINK,
+              "These are imports, not services currently available on Horizon.");
+        return;
+    }
+
+    rounded(renderer, 332, 218, 416, 181, 15, PANEL_LIGHT);
+    label(renderer, 354, 238, FONT_SMALL, LAVENDER, "MEMORY REQUIREMENTS");
+    char info[112];
+    snprintf(info, sizeof(info), "Disk: %.1f MiB   |   Span: %.1f MiB",
+             (double)state->engine.file_bytes / (1024.0 * 1024.0),
+             (double)state->engine.virtual_image_bytes / (1024.0 * 1024.0));
+    label(renderer, 354, 271, FONT_BODY, WHITE, info);
+    snprintf(info, sizeof(info), "Segments: %u   |   RX: %u   |   RW: %u",
+             state->engine.load_segments, state->engine.executable_segments,
+             state->engine.writable_segments);
+    label(renderer, 354, 314, FONT_SMALL, MUTED, info);
+    snprintf(info, sizeof(info), "Largest alignment: %llu bytes",
+             (unsigned long long)state->engine.max_segment_alignment);
+    label(renderer, 354, 344, FONT_SMALL, MUTED, info);
+    if (state->engine.virtual_image_bytes > ENGINE_STAGE_MAX_BYTES)
+        label(renderer, 354, 373, FONT_SMALL, PINK, "Over current 192 MiB scratch cap");
+
+    rounded(renderer, 762, 218, 432, 181, 15, PANEL_LIGHT);
+    label(renderer, 783, 238, FONT_SMALL, LAVENDER, "DYNAMIC RELOCATIONS");
+    snprintf(info, sizeof(info), "RELA: %llu   |   PLT: %llu",
+             (unsigned long long)state->engine.rela_records,
+             (unsigned long long)state->engine.plt_records);
+    label(renderer, 783, 271, FONT_BODY, WHITE, info);
+    snprintf(info, sizeof(info), "RELR words: %llu   |   Packed: %llu B",
+             (unsigned long long)state->engine.relr_words,
+             (unsigned long long)state->engine.android_packed_bytes);
+    label(renderer, 783, 315, FONT_SMALL, MUTED, info);
+    label(renderer, 783, 349, FONT_SMALL,
+          state->engine.has_unsupported_plt_format ? PINK : MINT,
+          state->engine.has_unsupported_plt_format
+              ? "Unsupported relocation format tag present"
+              : "Relocation table sizes parsed");
+
+    fill(renderer, 335, 421, 854, 1, (SDL_Color){144, 150, 204, 38});
+    label(renderer, 339, 434, FONT_MEDIUM, WHITE, "Still blocking engine startup");
+    label(renderer, 341, 477, FONT_SMALL, MUTED,
+          "Full bionic + JNI / GameActivity compatibility: NOT CONNECTED");
+    label(renderer, 341, 508, FONT_SMALL,
+          state->engine.android_packed_bytes ? PINK : MUTED,
+          state->engine.android_packed_bytes
+              ? "Android packed relocations: PRESENT / UNSUPPORTED"
+              : "Android packed relocations: not declared in this ELF");
+    label(renderer, 341, 539, FONT_SMALL,
+          state->engine.has_symbol_versions ? PINK : MUTED,
+          state->engine.has_symbol_versions
+              ? "Versioned symbols: PRESENT / NOT RESOLVED"
+              : "Versioned symbols: not declared in this ELF");
+    label(renderer, 341, 584, FONT_SMALL, PINK,
+          "APK signature not verified. Real engine execution remains disabled.");
+}
+
 void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 {
     SDL_SetRenderDrawColor(renderer, 10, 13, 30, 255);
@@ -497,6 +590,9 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
         break;
     case UI_ENGINE:
         engine(renderer, state);
+        break;
+    case UI_LOADER:
+        loader(renderer, state);
         break;
     default:
         break;

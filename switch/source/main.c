@@ -50,12 +50,17 @@ static void handle_touch(UiState *state, unsigned x, unsigned y)
             state->page = UI_ROADMAP;
         else if (y >= 436 && y < 496)
             state->page = UI_ENGINE;
+        else if (y >= 505 && y < 565)
+            state->page = UI_LOADER;
     } else if (state->page == UI_PERFORMANCE &&
                x >= 731 && x < 1176 && y >= 492 && y < 586) {
         state->animations = !state->animations;
     } else if (state->page == UI_ENGINE &&
                x >= 982 && x < 1186 && y >= 568 && y < 602) {
         jit_probe_run(&state->jit);
+    } else if (state->page == UI_LOADER &&
+               x >= 976 && x < 1188 && y >= 168 && y < 202) {
+        state->loader_show_dependencies = !state->loader_show_dependencies;
     }
 }
 
@@ -140,10 +145,13 @@ int main(void)
             page_back(&state);
         if (state.page == UI_PERFORMANCE && (pressed & HidNpadButton_X))
             state.animations = !state.animations;
-        if (state.page == UI_ENGINE && (pressed & HidNpadButton_Y))
+        if ((state.page == UI_ENGINE || state.page == UI_LOADER) &&
+            (pressed & HidNpadButton_Y))
             engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
         if (state.page == UI_ENGINE && (pressed & HidNpadButton_X))
             jit_probe_run(&state.jit);
+        if (state.page == UI_LOADER && (pressed & HidNpadButton_X))
+            state.loader_show_dependencies = !state.loader_show_dependencies;
 
         HidTouchScreenState touch = {0};
         const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;

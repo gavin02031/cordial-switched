@@ -1,10 +1,11 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.6 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.7 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
-roadmap, and an ARM64 ELF inspection screen. It reads handheld controls and
+roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
+It reads handheld controls and
 touchscreen input. **It does not
 currently run Roblox, connect to Roblox servers or sign in to any Roblox
 account.**
@@ -36,8 +37,8 @@ launch it from the Homebrew Menu on a Switch with working homebrew support,
 then check:
 
 1. The Overview page renders correctly, including fonts, colours and cards.
-2. **A/B**, **left/right** or **L/R** switch Overview, Performance, Roadmap
-   and Engine.
+2. **A/B**, **left/right** or **L/R** switch Overview, Performance, Roadmap,
+   Engine, and Loader.
 3. Tapping navigation items switches pages; on Performance, **X** or the toggle
    turns the ambient movement on and off.
 4. Check the Performance page after a few seconds. Report the renderer type,
@@ -45,7 +46,12 @@ then check:
 5. On the Engine tab, press **X** (or tap **X: TEST JIT**) to try the optional
    isolated executable-memory check described below. It does **not** require
    a Roblox library, and it does **not** launch Roblox.
-6. **Plus** returns to the Homebrew Menu without a crash.
+6. Open the **Loader** page after adding your library. It reports segment
+   permissions, memory span, relative/PLT relocation counts, Android packed
+   relocation bytes and symbol version tags. Press **X** (or tap **LIBRARIES**)
+   to show all named dependencies, up to 12. **Y** rescans on either Engine
+   or Loader; it is metadata inspection only.
+7. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
 
@@ -67,6 +73,21 @@ It reads only a small amount of metadata and does not map executable pages,
 relocate code, call into the engine or verify the APK's signing certificate.
 **A structurally valid ELF is not necessarily a genuine or safe Roblox build.**
 We will need signed-package verification before any future execution feature.
+
+### Actual Switch Lite observations (November 13, 2026)
+
+In the user's photograph of a v0.6 run on their Switch Lite, the on-screen
+results showed **JIT VERIFIED / ARM64 test returned 42**, and an
+**ELF STRUCTURE OK** result for a user-supplied 103.3 MiB file, with
+3 `PT_LOAD` segments, maximum alignment 16,384 bytes and 10 `DT_NEEDED`
+libraries (including `libandroid.so`, `libmediandk.so`, `liblog.so`,
+`libGLESv2.so` and `libOpenMAXAL.so`). These are **user-reported hardware
+observations**; they establish neither APK authenticity nor engine startup.
+
+The v0.7 **Loader** tab reads further dynamic metadata with bounded small
+reads; it does not load the file into RAM, resolve symbols, map executable
+pages or call any library function. This distinguishes the actual dependency
+and relocation requirements from what our current synthetic tests cover.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
@@ -124,9 +145,9 @@ The check is never triggered automatically at launch.
 The memory capability can legitimately be unavailable depending on Horizon
 homebrew permissions, launch mode, firmware or system configuration. **A
 successful compilation on GitHub Actions is not a successful hardware test.**
-Until an actual Switch Lite run reports `JIT execution: VERIFIED` and
-`ARM64 test returned 42`, execution is unverified; even a successful result
-would prove only a tiny native test, not the Android/Roblox engine.
+The user has observed `JIT execution: VERIFIED` and `ARM64 test returned 42`
+on their own Lite, but that proves only the tiny native test, not the
+Android/Roblox engine.
 
 This probe **never loads or executes `libroblox.so` or any external code**.
 The staged ELF image remains non-executable and disconnected from the probe.
