@@ -77,6 +77,24 @@ static char *fortify_strcat(char *dest, const char *source, size_t dest_len)
     return dest;
 }
 
+
+// Bionic's checked strncat appends at most count source bytes and always
+// terminates the destination. Check the destination before reading or writing
+// past its advertised capacity; avoid count + 1 overflow.
+static char *fortify_strncat(char *dest, const char *source, size_t count,
+                             size_t dest_len)
+{
+    const size_t used = fortify_strlen(dest, dest_len);
+    const size_t available = dest_len - used - 1;
+    size_t added = 0;
+    while (added < count && added <= available && source[added])
+        added++;
+    if (added > available) bad_bound("strncat");
+    memcpy(dest + used, source, added);
+    dest[used + added] = 0;
+    return dest;
+}
+
 static char *fortify_strncpy(char *dest, const char *source, size_t count,
                              size_t dest_len)
 {
@@ -135,6 +153,7 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
     MAP_FORTIFY("__strlen_chk", &fortify_strlen)
     MAP_FORTIFY("__strcpy_chk", &fortify_strcpy)
     MAP_FORTIFY("__strcat_chk", &fortify_strcat)
+    MAP_FORTIFY("__strncat_chk", &fortify_strncat)
     MAP_FORTIFY("__strncpy_chk", &fortify_strncpy)
     MAP_FORTIFY("__strncpy_chk2", &fortify_strncpy2)
     MAP_FORTIFY("__errno", &fortify_errno)
