@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { IMAGE_BYTES = 1024 };
+enum { IMAGE_BYTES = 2048 };
 
 static void put16(unsigned char *p, uint16_t value)
 {
@@ -79,8 +79,8 @@ static void make_auditable_elf(unsigned char *bytes)
 {
     make_valid_elf(bytes);
     unsigned char *dynamic_ph = bytes + 64 + 56;
-    put64(dynamic_ph + 32, 12 * 16);
-    put64(dynamic_ph + 40, 12 * 16);
+    put64(dynamic_ph + 32, 15 * 16);
+    put64(dynamic_ph + 40, 15 * 16);
     unsigned char *entries = bytes + 0x180;
     put_dynamic(entries, 4, 8, 48);                // DT_RELASZ
     put_dynamic(entries, 5, 9, 24);                // DT_RELAENT
@@ -88,8 +88,18 @@ static void make_auditable_elf(unsigned char *bytes)
     put_dynamic(entries, 7, 20, 7);                // DT_PLTREL = DT_RELA
     put_dynamic(entries, 8, 35, 16);               // DT_RELRSZ
     put_dynamic(entries, 9, 0x60000012, 128);      // DT_ANDROID_RELASZ
-    put_dynamic(entries, 10, 0x6ffffff0, 0x1320); // DT_VERSYM
-    put_dynamic(entries, 11, 0, 0);
+    put_dynamic(entries, 10, 0x6ffffff0, 0x1340); // DT_VERSYM
+    put_dynamic(entries, 11, 6, 0x1350);          // DT_SYMTAB
+    put_dynamic(entries, 12, 11, 24);             // DT_SYMENT
+    put_dynamic(entries, 13, 23, 0x1380);        // DT_JMPREL
+    put_dynamic(entries, 14, 0, 0);
+    put_dynamic(entries, 1, 10, 40);             // More dynstr bytes for import
+    memcpy(bytes + 0x314, "eglSwapBuffers", 15);
+    put16(bytes + 0x342, 2);                     // Symbol #1 needs version 2
+    put32(bytes + 0x368, 20);                    // Symbol #1 st_name
+    put64(bytes + 0x388, ((uint64_t)1 << 32) | 1026);
+    put64(bytes + 0x3a0, ((uint64_t)1 << 32) | 1026);
+    put64(bytes + 0x3b8, 1027);                  // Relative PLT record
 }
 
 static EngineProbeResult inspect(const unsigned char *bytes, size_t size)
@@ -125,10 +135,86 @@ int main(void)
     assert(result.status == ENGINE_PROBE_INSPECTED);
     assert(result.rela_records == 2);
     assert(result.plt_records == 3);
+    assert(result.plt_imports == 2);
+    assert(result.plt_versioned_imports == 2);
+    assert(result.captured_import_names == 2);
+    assert(strcmp(result.import_names[0], "eglSwapBuffers") == 0);
     assert(result.relr_words == 2);
     assert(result.android_packed_bytes == 128);
     assert(result.has_symbol_versions);
     assert(!result.has_unsupported_plt_format);
+
+    make_auditable_elf(bytes);
+    FILE *source = tmpfile();
+    FILE *manifest = tmpfile();
+    assert(source && manifest);
+    assert(fwrite(bytes, 1, sizeof(bytes), source) == sizeof(bytes));
+    engine_probe_stream_manifest(source, &result, manifest);
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    rewind(manifest);
+    char output[512] = {0};
+    assert(fread(output, 1, sizeof(output) - 1, manifest) > 0);
+    assert(strstr(output, "1\t2\teglSwapBuffers\n"));
+    fclose(source);
+    fclose(manifest);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 6, 2, 13 * 24);
+    for (unsigned i = 0; i < 13; i++)
+        put64(bytes + 0x380 + i * 24 + 8, ((uint64_t)1 << 32) | 1026);
+    source = tmpfile();
+    manifest = tmpfile();
+    assert(source && manifest);
+    assert(fwrite(bytes, 1, sizeof(bytes), source) == sizeof(bytes));
+    engine_probe_stream_manifest(source, &result, manifest);
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.plt_imports == 13);
+    assert(result.captured_import_names == ENGINE_PROBE_MAX_IMPORT_NAMES);
+    rewind(manifest);
+    char full[1024] = {0};
+    assert(fread(full, 1, sizeof(full) - 1, manifest) > 0);
+    unsigned exported = 0;
+    for (const char *p = full; (p = strstr(p, "eglSwapBuffers\n")); p++)
+        exported++;
+    assert(exported == 13); // Export is not capped to the on-screen dozen.
+    fclose(source);
+    fclose(manifest);
+
+    make_auditable_elf(bytes);
+    bytes[0x317] = '\n'; // Untrusted names cannot insert report lines.
+    source = tmpfile();
+    manifest = tmpfile();
+    assert(source && manifest);
+    assert(fwrite(bytes, 1, sizeof(bytes), source) == sizeof(bytes));
+    engine_probe_stream_manifest(source, &result, manifest);
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(strchr(result.import_names[0], '?'));
+    rewind(manifest);
+    memset(full, 0, sizeof(full));
+    assert(fread(full, 1, sizeof(full) - 1, manifest) > 0);
+    assert(strstr(full, "egl?wapBuffers"));
+    fclose(source);
+    fclose(manifest);
+
+    make_auditable_elf(bytes);
+    put64(bytes + 0x388, ((uint64_t)50 << 32) | 1026);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_auditable_elf(bytes);
+    put32(bytes + 0x368, 999); // Import string offset is outside DT_STRSZ.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 10, 0x6ffffff0, 0x9000);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 12, 11, 16); // Invalid Elf64_Sym entry size.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
 
     make_valid_elf(bytes);
     unsigned char *dynamic_ph = bytes + 64 + 56;
@@ -196,6 +282,6 @@ int main(void)
     engine_probe_file("/a/file/that/does/not/exist", &result);
     assert(result.status == ENGINE_PROBE_NOT_FOUND);
 
-    puts("elf_probe_test: 14 checks passed");
+    puts("elf_probe_test: 21 checks passed");
     return 0;
 }

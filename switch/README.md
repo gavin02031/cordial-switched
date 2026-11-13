@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.8 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.9 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,9 +48,12 @@ then check:
    a Roblox library, and it does **not** launch Roblox.
 6. Open the **Loader** page after adding your library. It reports segment
    permissions, memory span, relative/PLT relocation counts, Android packed
-   relocation bytes and symbol version tags. Press **X** (or tap **LIBRARIES**)
-   to show all named dependencies, up to 12. **Y** rescans on either Engine
-   or Loader; it is metadata inspection only.
+   relocation bytes and symbol version tags. Press **X** to cycle between
+   the profile, the dependency list and imported PLT symbol names. **Y**
+   rescans on either Engine or Loader; it is metadata inspection only.
+   Press **ZL** on Loader to save a numbered `imports-XX.txt` report in
+   `sdmc:/switch/cordial-switched/`, with names and symbol version indices
+   but no APK bytes or credentials. Old reports are never overwritten.
 7. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
@@ -97,6 +100,11 @@ reads; it does not load the file into RAM, resolve symbols, map executable
 pages or call any library function. This distinguishes the actual dependency
 and relocation requirements from what our current synthetic tests cover.
 
+Version 0.9 can also inspect undefined PLT symbol names and version indices,
+then export a text manifest on an explicit **ZL** press. This is a linker
+**preflight**, not an engine launch. Android library providers, bionic symbol
+resolution and JNI/GameActivity are still not connected to the Switch `.nro`.
+
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
 
@@ -113,7 +121,7 @@ construct a **bounded, non-executable scratch image** from an inspected ARM64
 ELF: copy file-backed `PT_LOAD` bytes, zero-fill BSS, and apply the
 `R_AARCH64_RELATIVE` RELA and ELF/Android RELR relative relocations. It checks
 each relocation destination against a real loaded segment and fails closed on
-unknown and Android packed relocations. This prepares data
+unknown relocations. Version 0.8 adds synthetic APS2 packed-RELA support. This prepares data
 only; it does not map executable memory, perform bionic symbol resolution,
 verify an APK signature or start Roblox. **The Switch UI does not invoke the
 stager yet**; the validation is against synthetic ELF fixtures, not an actual
@@ -202,3 +210,8 @@ This sequence is **INFERRED**, not a demonstrated Switch engine boot. No APK,
 engine binaries, account tokens, or proprietary Roblox files belong in Git.
 The first testable deliverable is deliberately labelled a smoke test so it
 cannot be mistaken for a playable Roblox client.
+
+**Morrow** is the proposed v1.0 rebrand, reserved for the point where real
+account login and joining playable games have been demonstrated. Current
+development builds remain **Cordial Switched**; 60 FPS gameplay and the v1.0
+timeline are not guaranteed.

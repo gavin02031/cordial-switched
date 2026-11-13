@@ -23,7 +23,10 @@ typedef enum {
 typedef struct {
     UiPage page;
     bool animations;
-    bool loader_show_dependencies;
+    unsigned loader_view; // Profile, required libraries, imported symbols.
+    bool report_attempted;
+    bool report_saved;
+    char report_path[112];
     bool accelerated;
     bool vsync;
     double fps;

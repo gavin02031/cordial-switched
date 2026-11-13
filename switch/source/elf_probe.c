@@ -19,12 +19,15 @@ enum {
     DT_NULL = 0,
     DT_NEEDED = 1,
     DT_PLTRELSZ = 2,
+    DT_SYMTAB = 6,
     DT_STRTAB = 5,
     DT_RELA = 7,
     DT_RELASZ = 8,
     DT_RELAENT = 9,
     DT_STRSZ = 10,
+    DT_SYMENT = 11,
     DT_PLTREL = 20,
+    DT_JMPREL = 23,
     DT_RELRSZ = 35,
     DT_ANDROID_RELASZ = 0x60000012,
     DT_ANDROID_RELSZ = 0x60000010,
@@ -95,7 +98,121 @@ static bool virtual_to_file(const LoadSegment *segments, unsigned count,
     return false;
 }
 
-void engine_probe_stream(FILE *file, EngineProbeResult *result)
+// Follow only the read-only PLT and dynsym metadata. This is a blocker report,
+// not a linker: none of these imported symbols are resolved or called.
+static bool inspect_plt_imports(FILE *file, EngineProbeResult *result,
+                                 const LoadSegment *segments, unsigned count,
+                                 uint64_t plt_address, uint64_t plt_bytes,
+                                 uint64_t symtab_address, uint64_t sym_entry_size,
+                                 uint64_t versym_address,
+                                 uint64_t strtab_file_offset, uint64_t strtab_bytes,
+                                 FILE *manifest)
+{
+    if (!plt_bytes)
+        return true;
+    if (!plt_address || !symtab_address || sym_entry_size != 24 ||
+        plt_bytes % 24 || plt_bytes / 24 > 65536) {
+        failure(result, ENGINE_PROBE_INVALID_ELF, "Invalid PLT/symbol metadata.");
+        return false;
+    }
+    uint64_t plt_offset = 0;
+    if (!virtual_to_file(segments, count, plt_address, plt_bytes, &plt_offset)) {
+        failure(result, ENGINE_PROBE_INVALID_ELF, "PLT relocations are outside PT_LOAD.");
+        return false;
+    }
+
+    for (uint64_t i = 0; i < plt_bytes / 24; i++) {
+        unsigned char entry[8];
+        if (!read_at(file, plt_offset + i * 24 + 8, entry, sizeof(entry))) {
+            failure(result, ENGINE_PROBE_IO_ERROR, "Could not read PLT relocation.");
+            return false;
+        }
+        const uint64_t info = read64(entry);
+        const uint64_t symbol_index = info >> 32;
+        if (symbol_index == 0)
+            continue;
+        if (symbol_index > (UINT64_MAX - symtab_address) / 24) {
+            failure(result, ENGINE_PROBE_INVALID_ELF, "Dynamic symbol index overflow.");
+            return false;
+        }
+        uint64_t sym_offset = 0;
+        if (!virtual_to_file(segments, count, symtab_address + symbol_index * 24,
+                             24, &sym_offset)) {
+            failure(result, ENGINE_PROBE_INVALID_ELF, "PLT symbol is outside PT_LOAD.");
+            return false;
+        }
+        unsigned char symbol[24];
+        if (!read_at(file, sym_offset, symbol, sizeof(symbol))) {
+            failure(result, ENGINE_PROBE_IO_ERROR, "Could not read dynamic symbol.");
+            return false;
+        }
+        const uint32_t name_offset = read32(symbol);
+        if (name_offset >= strtab_bytes) {
+            failure(result, ENGINE_PROBE_INVALID_ELF, "PLT import name is outside strings.");
+            return false;
+        }
+
+        // Only undefined symbols require cross-library resolution. The count
+        // includes repeats, which the future linker must still bind safely.
+        if (read16(symbol + 6) != 0)
+            continue;
+        result->plt_imports++;
+
+        uint16_t symbol_version = 0;
+        if (versym_address) {
+            if (symbol_index > (UINT64_MAX - versym_address) / 2) {
+                failure(result, ENGINE_PROBE_INVALID_ELF, "Symbol version index overflow.");
+                return false;
+            }
+            uint64_t versym_offset = 0;
+            if (!virtual_to_file(segments, count, versym_address + symbol_index * 2,
+                                 2, &versym_offset)) {
+                failure(result, ENGINE_PROBE_INVALID_ELF, "Symbol version is outside PT_LOAD.");
+                return false;
+            }
+            unsigned char versym[2];
+            if (!read_at(file, versym_offset, versym, sizeof(versym))) {
+                failure(result, ENGINE_PROBE_IO_ERROR, "Could not read symbol version.");
+                return false;
+            }
+            symbol_version = read16(versym) & 0x7fff;
+            if (symbol_version > 1)
+                result->plt_versioned_imports++;
+        }
+
+        if (result->captured_import_names >= ENGINE_PROBE_MAX_IMPORT_NAMES && !manifest)
+            continue;
+        char name[192];
+        const uint64_t remaining = strtab_bytes - name_offset;
+        const size_t size = remaining < sizeof(name) - 1
+            ? (size_t)remaining : sizeof(name) - 1;
+        if (!read_at(file, strtab_file_offset + name_offset, name, size)) {
+            failure(result, ENGINE_PROBE_IO_ERROR, "Could not read PLT import name.");
+            return false;
+        }
+        name[size] = 0;
+        // Prevent untrusted ELF strings from drawing control characters.
+        for (size_t j = 0; j < size && name[j]; j++) {
+            if ((unsigned char)name[j] < 32 || (unsigned char)name[j] > 126)
+                name[j] = '?';
+        }
+        if (!memchr(name, 0, size) && size == sizeof(name) - 1)
+            memcpy(name + size - 3, "...", 3);
+
+        if (result->captured_import_names < ENGINE_PROBE_MAX_IMPORT_NAMES) {
+            snprintf(result->import_names[result->captured_import_names],
+                     sizeof(result->import_names[0]), "%.63s", name);
+            result->captured_import_names++;
+        }
+        if (manifest)
+            fprintf(manifest, "%llu\t%u\t%s\n",
+                    (unsigned long long)symbol_index, symbol_version, name);
+    }
+    return true;
+}
+
+static void engine_probe_stream_to(FILE *file, EngineProbeResult *result,
+                                    FILE *manifest)
 {
     if (!result)
         return;
@@ -222,6 +339,7 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
     unsigned offsets_count = 0;
     bool terminated = false;
     uint64_t rela_bytes = 0, rela_entry_size = 0, plt_bytes = 0, plt_kind = 0;
+    uint64_t plt_address = 0, symtab_address = 0, sym_entry_size = 0, versym_address = 0;
     uint64_t relr_bytes = 0, packed_rela = 0, packed_rel = 0;
     for (size_t i = 0; i < (size_t)dynamic_size; i += 16) {
         const uint64_t tag = read64(dynamic + i);
@@ -242,6 +360,16 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
             plt_bytes = value;
         else if (tag == DT_PLTREL)
             plt_kind = value;
+        else if (tag == DT_JMPREL)
+            plt_address = value;
+        else if (tag == DT_SYMTAB)
+            symtab_address = value;
+        else if (tag == DT_SYMENT)
+            sym_entry_size = value;
+        else if (tag == DT_VERSYM) {
+            versym_address = value;
+            result->has_symbol_versions |= value != 0;
+        }
         else if (tag == DT_RELRSZ || tag == DT_ANDROID_RELRSZ)
             relr_bytes = value;
         else if (tag == DT_ANDROID_RELASZ)
@@ -307,7 +435,27 @@ void engine_probe_stream(FILE *file, EngineProbeResult *result)
             snprintf(result->needed[i], sizeof(result->needed[i]), "%s", name);
     }
 
+    // Import names come from a real DT_JMPREL table; the synthetic test
+    // fixtures in older revisions have no symbol table and remain valid.
+    if (plt_bytes && !result->has_unsupported_plt_format &&
+        !inspect_plt_imports(file, result, segments, segments_count,
+                             plt_address, plt_bytes, symtab_address,
+                             sym_entry_size, versym_address,
+                             strtab_file_offset, string_bytes, manifest))
+        return;
+
     failure(result, ENGINE_PROBE_INSPECTED, "ARM64 ELF inspected; engine not executed.");
+}
+
+void engine_probe_stream(FILE *file, EngineProbeResult *result)
+{
+    engine_probe_stream_to(file, result, NULL);
+}
+
+void engine_probe_stream_manifest(FILE *file, EngineProbeResult *result,
+                                  FILE *manifest)
+{
+    engine_probe_stream_to(file, result, manifest);
 }
 
 void engine_probe_file(const char *path, EngineProbeResult *result)
@@ -330,4 +478,59 @@ void engine_probe_file(const char *path, EngineProbeResult *result)
     }
     engine_probe_stream(file, result);
     fclose(file);
+}
+
+bool engine_probe_export_imports(const char *path, char *saved_path,
+                                  size_t saved_path_bytes)
+{
+    if (!saved_path || saved_path_bytes < 64 || !path)
+        return false;
+    saved_path[0] = 0;
+    FILE *source = fopen(path, "rb");
+    if (!source)
+        return false;
+
+    // The first pass validates the metadata before a user-triggered export
+    // creates a file. Every report contains names only, never engine bytes.
+    EngineProbeResult preview;
+    engine_probe_stream(source, &preview);
+    if (preview.status != ENGINE_PROBE_INSPECTED) {
+        fclose(source);
+        return false;
+    }
+
+    bool saved = false;
+    for (unsigned number = 1; number <= 99 && !saved; number++) {
+        char candidate[112];
+        snprintf(candidate, sizeof(candidate), ENGINE_REPORT_DIR "/imports-%02u.txt", number);
+        FILE *existing = fopen(candidate, "rb");
+        if (existing) {
+            fclose(existing);
+            continue;
+        }
+        if (errno != ENOENT)
+            break;
+        FILE *report = fopen(candidate, "wb");
+        if (!report)
+            break;
+        fprintf(report, "# Cordial Switched read-only ARM64 PLT import report\n");
+        fprintf(report, "# Symbol index\tVersion index\tImport name\n");
+        EngineProbeResult check;
+        engine_probe_stream_to(source, &check, report);
+        if (check.status == ENGINE_PROBE_INSPECTED)
+            fprintf(report, "# COMPLETE: %llu undefined PLT import entries, %llu versioned\n",
+                    (unsigned long long)check.plt_imports,
+                    (unsigned long long)check.plt_versioned_imports);
+        bool ok = check.status == ENGINE_PROBE_INSPECTED && !ferror(report);
+        if (fclose(report) != 0)
+            ok = false;
+        // The diagnostic is allowed to leave an explicitly incomplete file
+        // on sudden SD removal; it never deletes or replaces an old report.
+        if (ok) {
+            const int written = snprintf(saved_path, saved_path_bytes, "%s", candidate);
+            saved = written > 0 && (size_t)written < saved_path_bytes;
+        }
+    }
+    fclose(source);
+    return saved;
 }

@@ -281,7 +281,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.8", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.9", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -493,10 +493,25 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
     badge(renderer, 337, 168, 212, "ARM64 PROFILE READY",
           (SDL_Color){41, 82, 79, 255}, MINT);
     badge(renderer, 976, 168, 212,
-          state->loader_show_dependencies ? "X: PROFILE" : "X: LIBRARIES",
+          state->loader_view == 0 ? "X: LIBRARIES" :
+          state->loader_view == 1 ? "X: IMPORTS" : "X: PROFILE",
           (SDL_Color){54, 46, 83, 220}, LAVENDER);
+    if (state->report_attempted) {
+        if (state->report_saved) {
+            const char *base = strrchr(state->report_path, '/');
+            char report[112];
+            snprintf(report, sizeof(report), "ZL: saved %s", base ? base + 1 : state->report_path);
+            label(renderer, 341, 617, FONT_SMALL, MINT, report);
+        } else {
+            label(renderer, 341, 617, FONT_SMALL, PINK,
+                  "ZL: report failed (check SD free space and folder permissions)");
+        }
+    } else {
+        label(renderer, 341, 617, FONT_SMALL, MUTED,
+              "ZL: export full symbol list to sdmc:/switch/cordial-switched/");
+    }
 
-    if (state->loader_show_dependencies) {
+    if (state->loader_view == 1) {
         char heading[100];
         snprintf(heading, sizeof(heading), "Android dependencies: %u required",
                  state->engine.needed_count);
@@ -514,6 +529,34 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
         }
         label(renderer, 340, 589, FONT_SMALL, PINK,
               "These are imports, not services currently available on Horizon.");
+        return;
+    }
+
+    if (state->loader_view == 2) {
+        char info[112];
+        snprintf(info, sizeof(info), "PLT imports: %llu from %llu relocations",
+                 (unsigned long long)state->engine.plt_imports,
+                 (unsigned long long)state->engine.plt_records);
+        label(renderer, 340, 224, FONT_MEDIUM, WHITE, info);
+        snprintf(info, sizeof(info), "Versioned import entries: %llu",
+                 (unsigned long long)state->engine.plt_versioned_imports);
+        label(renderer, 340, 259, FONT_SMALL,
+              state->engine.plt_versioned_imports ? PINK : MUTED, info);
+        for (unsigned i = 0; i < state->engine.captured_import_names; i++) {
+            const int col = (int)i / 6;
+            const int row = (int)i % 6;
+            const int x = 336 + col * 439;
+            const int y = 293 + row * 46;
+            rounded(renderer, x, y, 411, 40, 10, PANEL_LIGHT);
+            char display[44];
+            snprintf(display, sizeof(display), "%.40s", state->engine.import_names[i]);
+            label(renderer, x + 14, y + 9, FONT_SMALL, LAVENDER, display);
+        }
+        if (!state->engine.captured_import_names)
+            label(renderer, 340, 363, FONT_BODY, MUTED,
+                  "No enumerable PLT symbol names in this library.");
+        label(renderer, 340, 589, FONT_SMALL, PINK,
+              "Read-only symbol inspection. No imports linked; engine remains offline.");
         return;
     }
 

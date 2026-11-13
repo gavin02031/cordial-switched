@@ -60,7 +60,7 @@ static void handle_touch(UiState *state, unsigned x, unsigned y)
         jit_probe_run(&state->jit);
     } else if (state->page == UI_LOADER &&
                x >= 976 && x < 1188 && y >= 168 && y < 202) {
-        state->loader_show_dependencies = !state->loader_show_dependencies;
+        state->loader_view = (state->loader_view + 1) % 3;
     }
 }
 
@@ -146,12 +146,19 @@ int main(void)
         if (state.page == UI_PERFORMANCE && (pressed & HidNpadButton_X))
             state.animations = !state.animations;
         if ((state.page == UI_ENGINE || state.page == UI_LOADER) &&
-            (pressed & HidNpadButton_Y))
+            (pressed & HidNpadButton_Y)) {
             engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
+            state.report_attempted = false;
+        }
         if (state.page == UI_ENGINE && (pressed & HidNpadButton_X))
             jit_probe_run(&state.jit);
         if (state.page == UI_LOADER && (pressed & HidNpadButton_X))
-            state.loader_show_dependencies = !state.loader_show_dependencies;
+            state.loader_view = (state.loader_view + 1) % 3;
+        if (state.page == UI_LOADER && (pressed & HidNpadButton_ZL)) {
+            state.report_attempted = true;
+            state.report_saved = engine_probe_export_imports(
+                ENGINE_LIBRARY_PATH, state.report_path, sizeof(state.report_path));
+        }
 
         HidTouchScreenState touch = {0};
         const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;
