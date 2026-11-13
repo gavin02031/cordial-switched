@@ -281,7 +281,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.7", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.8", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -557,7 +557,7 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
     label(renderer, 341, 508, FONT_SMALL,
           state->engine.android_packed_bytes ? PINK : MUTED,
           state->engine.android_packed_bytes
-              ? "Android packed relocations: PRESENT / UNSUPPORTED"
+              ? "Android packed: PRESENT / synthetic scratch parser only"
               : "Android packed relocations: not declared in this ELF");
     label(renderer, 341, 539, FONT_SMALL,
           state->engine.has_symbol_versions ? PINK : MUTED,

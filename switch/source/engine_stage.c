@@ -41,6 +41,11 @@ enum {
     R_AARCH64_GLOB_DAT = 1025,
     R_AARCH64_JUMP_SLOT = 1026,
     PAGE_SIZE = 4096,
+    APS2_GROUPED_BY_INFO = 1,
+    APS2_GROUPED_BY_OFFSET = 2,
+    APS2_GROUPED_BY_ADDEND = 4,
+    APS2_HAS_ADDEND = 8,
+    APS2_MAX_RELOCATIONS = 8 * 1024 * 1024,
 };
 
 typedef struct {
@@ -126,6 +131,7 @@ static bool abort_stage(EngineStage *stage, EngineStageStatus status, const char
     stage->image_size = 0;
     stage->rela_applied = 0;
     stage->relr_applied = 0;
+    stage->packed_applied = 0;
     stage->symbol_applied = 0;
     stage->status = status;
     snprintf(stage->detail, sizeof(stage->detail), "%s", message);
@@ -140,6 +146,70 @@ void engine_stage_release(EngineStage *stage)
     memset(stage, 0, sizeof(*stage));
 }
 
+static bool apply_rela(EngineStage *stage, const Segment *segments,
+                       unsigned count, uint64_t destination, uint64_t info,
+                       uint64_t addend, uint64_t load_bias,
+                       uint64_t symtab_address, uint64_t sym_entry_size,
+                       uint64_t strtab_address, uint64_t strtab_size,
+                       bool versioned, EngineSymbolResolver resolver,
+                       void *context, bool packed)
+{
+    const uint32_t type = (uint32_t)info;
+    const uint32_t sym_index = (uint32_t)(info >> 32);
+    unsigned char *target = load_at(stage, segments, count, destination, 8, false);
+    if ((destination & 7) || !target)
+        return abort_stage(stage, ENGINE_STAGE_INVALID,
+                           "RELA target is outside PT_LOAD or unaligned.");
+
+    if (type == R_AARCH64_RELATIVE && sym_index == 0) {
+        write64(target, load_bias + addend);
+        if (packed) stage->packed_applied++;
+        else stage->rela_applied++;
+        return true;
+    }
+
+    if (type != R_AARCH64_ABS64 && type != R_AARCH64_GLOB_DAT &&
+        type != R_AARCH64_JUMP_SLOT)
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                           "Relocation needs the full Android linker.");
+    if (!resolver)
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                           "External-symbol relocation needs a symbol resolver.");
+    if (versioned)
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                           "Versioned symbols need the full Android linker.");
+    if (!sym_index || sym_entry_size != 24 || !symtab_address || !strtab_address ||
+        !strtab_size || (uint64_t)sym_index * 24 > UINT64_MAX - symtab_address)
+        return abort_stage(stage, ENGINE_STAGE_INVALID,
+                           "Missing or malformed ELF dynamic symbol metadata.");
+
+    const unsigned char *sym = load_at(stage, segments, count,
+                                       symtab_address + (uint64_t)sym_index * 24,
+                                       24, true);
+    const unsigned char *strings = load_at(stage, segments, count,
+                                           strtab_address, (size_t)strtab_size, true);
+    if (!sym || !strings || u16le(sym + 6) != 0)
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                           "Non-imported or invalid dynamic symbol.");
+
+    const uint32_t name_offset = u32le(sym);
+    if (name_offset == 0 || name_offset >= strtab_size ||
+        !memchr(strings + name_offset, 0, (size_t)(strtab_size - name_offset)))
+        return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid import symbol name.");
+
+    const char *name = (const char *)strings + name_offset;
+    uint64_t symbol_address = 0;
+    if (!resolver(name, &symbol_address, context) || !symbol_address) {
+        char message[120];
+        snprintf(message, sizeof(message), "Unresolved import: %.96s", name);
+        return abort_stage(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, message);
+    }
+    write64(target, symbol_address + addend);
+    stage->symbol_applied++;
+    if (packed) stage->packed_applied++;
+    return true;
+}
+
 static bool apply_rela_table(EngineStage *stage, const Segment *segments,
                              unsigned count, const unsigned char *rela,
                              size_t length, uint64_t load_bias,
@@ -149,61 +219,127 @@ static bool apply_rela_table(EngineStage *stage, const Segment *segments,
                              void *context)
 {
     for (size_t i = 0; i < length; i += 24) {
-        const uint64_t destination = u64le(rela + i);
-        const uint64_t info = u64le(rela + i + 8);
-        const uint64_t addend = u64le(rela + i + 16);
-        const uint32_t type = (uint32_t)info;
-        const uint32_t sym_index = (uint32_t)(info >> 32);
-        unsigned char *target = load_at(stage, segments, count, destination, 8, false);
-        if ((destination & 7) || !target)
-            return abort_stage(stage, ENGINE_STAGE_INVALID,
-                               "RELA target is outside PT_LOAD or unaligned.");
-
-        if (type == R_AARCH64_RELATIVE && sym_index == 0) {
-            write64(target, load_bias + addend);
-            stage->rela_applied++;
-            continue;
-        }
-
-        if (type != R_AARCH64_ABS64 && type != R_AARCH64_GLOB_DAT &&
-            type != R_AARCH64_JUMP_SLOT)
-            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                               "Relocation needs the full Android linker.");
-        if (!resolver)
-            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                               "External-symbol relocation needs a symbol resolver.");
-        if (versioned)
-            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                               "Versioned symbols need the full Android linker.");
-        if (!sym_index || sym_entry_size != 24 || !symtab_address || !strtab_address ||
-            !strtab_size || (uint64_t)sym_index * 24 > UINT64_MAX - symtab_address)
-            return abort_stage(stage, ENGINE_STAGE_INVALID,
-                               "Missing or malformed ELF dynamic symbol metadata.");
-
-        const unsigned char *sym = load_at(stage, segments, count,
-                                           symtab_address + (uint64_t)sym_index * 24,
-                                           24, true);
-        const unsigned char *strings = load_at(stage, segments, count,
-                                               strtab_address, (size_t)strtab_size, true);
-        if (!sym || !strings || u16le(sym + 6) != 0)
-            return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                               "Non-imported or invalid dynamic symbol.");
-
-        const uint32_t name_offset = u32le(sym);
-        if (name_offset == 0 || name_offset >= strtab_size ||
-            !memchr(strings + name_offset, 0, (size_t)(strtab_size - name_offset)))
-            return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid import symbol name.");
-
-        const char *name = (const char *)strings + name_offset;
-        uint64_t symbol_address = 0;
-        if (!resolver(name, &symbol_address, context) || !symbol_address) {
-            char message[120];
-            snprintf(message, sizeof(message), "Unresolved import: %.96s", name);
-            return abort_stage(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, message);
-        }
-        write64(target, symbol_address + addend);
-        stage->symbol_applied++;
+        if (!apply_rela(stage, segments, count, u64le(rela + i),
+                        u64le(rela + i + 8), u64le(rela + i + 16), load_bias,
+                        symtab_address, sym_entry_size, strtab_address,
+                        strtab_size, versioned, resolver, context, false))
+            return false;
     }
+    return true;
+}
+
+typedef struct {
+    const unsigned char *bytes;
+    size_t length;
+    size_t cursor;
+} PackedReader;
+
+// APS2 uses signed LEB128 even for the non-negative count, offsets and info.
+// Bound every read and reject values that exceed signed 64-bit encoding.
+static bool packed_read(PackedReader *reader, int64_t *value)
+{
+    uint64_t bits = 0;
+    unsigned shift = 0;
+    for (unsigned i = 0; i < 10; i++, shift += 7) {
+        if (reader->cursor >= reader->length)
+            return false;
+        const unsigned char byte = reader->bytes[reader->cursor++];
+        const unsigned char payload = byte & 0x7f;
+        if (shift == 63 && payload != 0 && payload != 0x7f)
+            return false;
+        bits |= (uint64_t)payload << shift;
+        if (!(byte & 0x80)) {
+            if (byte & 0x40 && shift + 7 < 64)
+                bits |= UINT64_MAX << (shift + 7);
+            // Preserve the two's-complement bit pattern without an
+            // out-of-range unsigned-to-signed integer conversion.
+            memcpy(value, &bits, sizeof(bits));
+            return true;
+        }
+    }
+    return false;
+}
+
+// Android's bionic APS2 grouped-RELA encoding (linker_reloc_iterators.h).
+// This works ONLY on the non-executable scratch image, never on live code.
+static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
+                              unsigned count, const unsigned char *data,
+                              size_t length, uint64_t load_bias,
+                              uint64_t symtab_address, uint64_t sym_entry_size,
+                              uint64_t strtab_address, uint64_t strtab_size,
+                              bool versioned, EngineSymbolResolver resolver,
+                              void *context)
+{
+    if (length < 4 || memcmp(data, "APS2", 4) != 0)
+        return abort_stage(stage, ENGINE_STAGE_INVALID, "Expected Android APS2 RELA header.");
+    PackedReader reader = {data + 4, length - 4, 0};
+    int64_t value = 0;
+    if (!packed_read(&reader, &value) || value < 0 || value > APS2_MAX_RELOCATIONS)
+        return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 relocation count.");
+    const uint64_t total = (uint64_t)value;
+    if (!packed_read(&reader, &value) || value < 0)
+        return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 base offset.");
+    uint64_t offset = (uint64_t)value;
+    uint64_t info = 0;
+    uint64_t addend = 0;
+
+    for (uint64_t consumed = 0; consumed < total;) {
+        int64_t size = 0, flags = 0;
+        if (!packed_read(&reader, &size) || size <= 0 ||
+            (uint64_t)size > total - consumed ||
+            !packed_read(&reader, &flags) || flags < 0 || flags > 15 ||
+            ((flags & APS2_GROUPED_BY_ADDEND) && !(flags & APS2_HAS_ADDEND)))
+            return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 relocation group.");
+
+        uint64_t offset_delta = 0;
+        if (flags & APS2_GROUPED_BY_OFFSET) {
+            if (!packed_read(&reader, &value) || value < 0)
+                return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 offset delta.");
+            offset_delta = (uint64_t)value;
+        }
+        if (flags & APS2_GROUPED_BY_INFO) {
+            if (!packed_read(&reader, &value) || value < 0)
+                return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 relocation info.");
+            info = (uint64_t)value;
+        }
+        if (!(flags & APS2_HAS_ADDEND)) {
+            addend = 0;
+        } else if (flags & APS2_GROUPED_BY_ADDEND) {
+            if (!packed_read(&reader, &value))
+                return abort_stage(stage, ENGINE_STAGE_INVALID, "Truncated APS2 addend.");
+            addend += (uint64_t)value;
+        }
+
+        for (uint64_t i = 0; i < (uint64_t)size; i++) {
+            if (!(flags & APS2_GROUPED_BY_OFFSET)) {
+                if (!packed_read(&reader, &value) || value < 0)
+                    return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 offset delta.");
+                offset_delta = (uint64_t)value;
+            }
+            if (offset > UINT64_MAX - offset_delta)
+                return abort_stage(stage, ENGINE_STAGE_INVALID, "APS2 offset overflow.");
+            offset += offset_delta;
+            if (!(flags & APS2_GROUPED_BY_INFO)) {
+                if (!packed_read(&reader, &value) || value < 0)
+                    return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 relocation info.");
+                info = (uint64_t)value;
+            }
+            if ((flags & APS2_HAS_ADDEND) && !(flags & APS2_GROUPED_BY_ADDEND)) {
+                if (!packed_read(&reader, &value))
+                    return abort_stage(stage, ENGINE_STAGE_INVALID, "Truncated APS2 addend.");
+                addend += (uint64_t)value;
+            }
+            if (!apply_rela(stage, segments, count, offset, info, addend,
+                            load_bias, symtab_address, sym_entry_size,
+                            strtab_address, strtab_size, versioned,
+                            resolver, context, true))
+                return false;
+        }
+        consumed += (uint64_t)size;
+    }
+
+    if (reader.cursor != reader.length)
+        return abort_stage(stage, ENGINE_STAGE_INVALID, "Trailing bytes in APS2 stream.");
     return true;
 }
 
@@ -287,7 +423,8 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
     uint64_t relr_addr = 0, relr_size = 0, relr_entry = 0;
     uint64_t plt_size = 0, plt_addr = 0, plt_format = 0;
     uint64_t symtab_address = 0, sym_entry_size = 0, strtab_address = 0, strtab_size = 0;
-    uint64_t android_packed_size = 0, unsupported_rel = 0;
+    uint64_t android_packed_addr = 0, android_packed_size = 0, unsupported_rel = 0;
+    bool packed_addr_seen = false, packed_size_seen = false;
     bool versioned = false;
     bool android_relr = false;
     for (size_t i = 0; i < (size_t)dynamic_size; i += 16) {
@@ -314,13 +451,22 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
         else if (tag == DT_VERSYM && value != 0) versioned = true;
         else if ((tag == DT_REL || tag == DT_RELSZ || tag == DT_ANDROID_REL ||
                   tag == DT_ANDROID_RELSZ) && value != 0) unsupported_rel = 1;
-        else if (tag == DT_ANDROID_RELASZ) android_packed_size = value;
-        else if (tag == DT_ANDROID_RELA && value != 0) android_packed_size = 1;
+        else if (tag == DT_ANDROID_RELASZ) {
+            android_packed_size = value;
+            packed_size_seen = true;
+        } else if (tag == DT_ANDROID_RELA) {
+            android_packed_addr = value;
+            packed_addr_seen = true;
+        }
     }
 
-    if ((!resolver && (plt_size || plt_addr)) || android_packed_size || unsupported_rel)
+    if ((!resolver && (plt_size || plt_addr)) || unsupported_rel)
         return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                           "PLT, REL or Android packed symbols need the bionic linker.");
+                           "PLT or unsupported REL needs the bionic linker.");
+    if (packed_addr_seen != packed_size_seen ||
+        (packed_size_seen && (!android_packed_addr || !android_packed_size ||
+                              android_packed_size > ENGINE_STAGE_MAX_BYTES)))
+        return abort_stage(stage, ENGINE_STAGE_INVALID, "Malformed Android packed RELA tags.");
     if (android_relr && relr_size && relr_entry == 0)
         relr_entry = 8; // Older Android RELR tags omit DT_RELRENT.
     if ((rela_size && (rela_entry != 24 || rela_size % 24 != 0)) ||
@@ -334,13 +480,22 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
                                               (size_t)relr_size, true) : NULL;
     unsigned char *plt = plt_size ? load_at(stage, segments, segment_count, plt_addr,
                                              (size_t)plt_size, true) : NULL;
-    if ((rela_size && !rela) || (relr_size && !relr) || (plt_size && !plt))
+    unsigned char *packed = android_packed_size
+        ? load_at(stage, segments, segment_count, android_packed_addr,
+                  (size_t)android_packed_size, true) : NULL;
+    if ((rela_size && !rela) || (relr_size && !relr) || (plt_size && !plt) ||
+        (android_packed_size && !packed))
         return abort_stage(stage, ENGINE_STAGE_INVALID, "Relocation table is outside staged memory.");
 
     // These relocations are applied only to scratch RAM, which remains NX.
     // Unknown or versioned symbols fail closed instead of installing stubs.
     const uint64_t load_bias = (uint64_t)(uintptr_t)stage->image - low;
-    if ((rela_size && !apply_rela_table(stage, segments, segment_count, rela,
+    if ((android_packed_size && !apply_packed_rela(stage, segments, segment_count,
+                                                 packed, (size_t)android_packed_size,
+                                                 load_bias, symtab_address,
+                                                 sym_entry_size, strtab_address,
+                                                 strtab_size, versioned, resolver, context)) ||
+        (rela_size && !apply_rela_table(stage, segments, segment_count, rela,
                                        (size_t)rela_size, load_bias, symtab_address,
                                        sym_entry_size, strtab_address, strtab_size,
                                        versioned, resolver, context)) ||

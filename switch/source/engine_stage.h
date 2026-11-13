@@ -26,6 +26,7 @@ typedef struct {
     uint64_t lowest_virtual_address;
     unsigned rela_applied;
     unsigned relr_applied;
+    unsigned packed_applied;
     unsigned symbol_applied;
     char detail[120];
 } EngineStage;

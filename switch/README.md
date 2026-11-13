@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.7 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.8 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -84,6 +84,14 @@ libraries (including `libandroid.so`, `libmediandk.so`, `liblog.so`,
 `libGLESv2.so` and `libOpenMAXAL.so`). These are **user-reported hardware
 observations**; they establish neither APK authenticity nor engine startup.
 
+In subsequent v0.7 Switch Lite photographs, the read-only Loader reported a
+119.1 MiB virtual image span, 1 executable and 2 writable segments, 549 PLT
+relocations, 2,173,222 bytes of Android packed relocations, and versioned
+symbol metadata. The ten imported libraries were `libandroid.so`,
+`liblog.so`, `libOpenMAXAL.so`, `libmediandk.so`, `libGLESv2.so`, `libEGL.so`,
+`libOpenSLES.so`, `libdl.so`, `libm.so`, and `libc.so`. These are readouts of a
+user-supplied file; its authenticity has not been verified.
+
 The v0.7 **Loader** tab reads further dynamic metadata with bounded small
 reads; it does not load the file into RAM, resolve symbols, map executable
 pages or call any library function. This distinguishes the actual dependency
@@ -121,6 +129,14 @@ still fails closed on external imports. **This is a linker unit-test capability,
 not a working Android bionic linker**: it has no actual Android symbol
 providers, dependency loader, symbol version lookup, TLS or constructor support.
 No caller on Switch currently supplies a resolver or executes staged ELF code.
+
+Version 0.8 adds a bounded parser for Android's APS2 signed-LEB128 grouped
+RELA format, with tests for grouped and ungrouped addends and malformed inputs.
+It applies supported relocations only to non-executable scratch RAM and
+explicitly rejects unresolved imports, malformed data, unsupported REL
+records and symbol version lookups. **This does not mean the user-supplied
+2.17 MB relocation section has been successfully decoded or linked:** testing
+uses synthetic ELF images, and the Switch UI does not invoke the stager.
 
 The native CI runs these tests, which you can also execute locally:
 
