@@ -24,6 +24,7 @@
 #include "android_thread_attr_compat.h"
 #include "android_thread_lifecycle_compat.h"
 #include "elf_probe.h"
+#include "engine_entry_probe.h"
 #include "engine_memory_plan.h"
 #include "engine_stage.h"
 #include "engine_tls_scratch.h"
@@ -42,6 +43,17 @@ static const char *reserve_status_name(HorizonCodeReserveStatus status)
     case HORIZON_RESERVE_NO_FREE_SPAN: return "no_contiguous_code_address_span";
     case HORIZON_RESERVE_NO_RESERVATION_MEMORY: return "reservation_allocation_failed";
     case HORIZON_RESERVE_INVALID_STATE: return "reservation_already_active";
+    }
+    return "unknown";
+}
+
+static const char *entry_status_name(EngineEntryProbeStatus status)
+{
+    switch (status) {
+    case ENGINE_ENTRY_INVALID: return "invalid_elf_metadata";
+    case ENGINE_ENTRY_IO_ERROR: return "io_error";
+    case ENGINE_ENTRY_NO_DYNAMIC_SYMBOLS: return "export_symbols_unknown";
+    case ENGINE_ENTRY_INSPECTED: return "export_symbols_inspected";
     }
     return "unknown";
 }
@@ -217,7 +229,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.33 real-engine entry readiness attempt");
+    log_line(log, "# Cordial Switched v0.34 real-engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
@@ -256,6 +268,32 @@ void horizon_real_link_run(RealLinkResult *result)
     log_line(log, "tls_segment=%s", probe.has_tls_segment ? "present" : "absent");
     audit_thread_tls(file, &probe, log);
 
+    EngineEntryProbe entry = {0};
+    engine_entry_probe_stream(file, &entry);
+    log_line(log, "entry_probe_status=%d", entry.status);
+    log_line(log, "entry_probe_status_name=%s", entry_status_name(entry.status));
+    char entry_detail[sizeof(entry.detail)];
+    printable(entry_detail, sizeof(entry_detail), entry.detail);
+    log_line(log, "entry_probe_detail=%s", entry_detail);
+    log_line(log, "jni_onload_exported=%s",
+             entry.status != ENGINE_ENTRY_INSPECTED ? "unknown" :
+             entry.has_jni_onload ? "yes" : "no");
+    if (entry.status == ENGINE_ENTRY_INSPECTED && entry.has_jni_onload)
+        log_line(log, "jni_onload_virtual_address=0x%llx",
+                 (unsigned long long)entry.jni_onload_virtual_address);
+    log_line(log, "native_activity_exported=%s",
+             entry.status != ENGINE_ENTRY_INSPECTED ? "unknown" :
+             entry.has_native_activity_oncreate ? "yes" : "no");
+    if (entry.status == ENGINE_ENTRY_INSPECTED && entry.has_native_activity_oncreate)
+        log_line(log, "native_activity_virtual_address=0x%llx",
+                 (unsigned long long)entry.native_activity_virtual_address);
+    log_line(log, "elf_dt_init=%s", entry.has_init ? "present" : "absent");
+    if (entry.has_init)
+        log_line(log, "elf_dt_init_virtual_address=0x%llx",
+                 (unsigned long long)entry.init_virtual_address);
+    log_line(log, "elf_init_array_entries=%u", entry.init_array_entries);
+    log_line(log, "engine_initializer_called=no");
+
     EngineMemoryPlan plan = {0};
     if (!engine_memory_plan_from_probe(&probe, &plan)) {
         detail(result, "Cannot construct safe Horizon RX/R/RW plan.");
@@ -284,6 +322,17 @@ void horizon_real_link_run(RealLinkResult *result)
         log_line(log, "event=final_address_reserved");
         log_line(log, "reserved_code_address_phase=%zu",
                  (size_t)((uintptr_t)reservation.mapped % plan.alignment_bytes));
+        // These are address calculations only; reservation.mapped has not
+        // been mapped RX and none of these function pointers are callable.
+        if (entry.status == ENGINE_ENTRY_INSPECTED && entry.has_jni_onload &&
+            entry.jni_onload_virtual_address >= plan.virtual_page_base) {
+            const uint64_t delta = entry.jni_onload_virtual_address -
+                                   plan.virtual_page_base;
+            if (delta < plan.image_bytes && delta <= UINTPTR_MAX -
+                (uintptr_t)reservation.mapped)
+                log_line(log, "jni_onload_unmapped_candidate_address=0x%llx",
+                         (unsigned long long)((uintptr_t)reservation.mapped + delta));
+        }
         EngineStage stage = {0};
         ImportDiagnostics missing = {0};
         log_line(log, "event=strict_final_base_relocation_started");

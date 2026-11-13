@@ -124,6 +124,13 @@ then check:
    explicitly; per-thread `dlerror` retains useful errors and `dladdr`
    refuses to fabricate a guest DSO base. This does **not** load arbitrary
    Android binaries or replace the missing GameActivity/JNI/graphics runtime.
+   v0.34 inspects the real ELF's exported `JNI_OnLoad` and
+   `ANativeActivity_onCreate` functions plus `DT_INIT` and constructor-array
+   metadata. The new `entry_probe_*`, `jni_onload_*`, `native_activity_*`, and
+   `elf_init_array_entries` fields appear in the same numbered L3 report.
+   Stripped section headers are reported as *unknown*, not as proof that an
+   initializer is absent. All discovery is **read-only**: it does not execute
+   the initializers or resolve the remaining Android JNI/graphics dependencies.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
