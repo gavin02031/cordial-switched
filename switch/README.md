@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.19 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.20 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -220,6 +220,15 @@ keys and provider-version rejection. This does **not** add the rest of Bionic
 thread-local state, a native `pthread_create`/`pthread_self` bridge, or any
 ability to execute Roblox: JNI, graphics and live engine loading remain
 unimplemented. Real Switch behaviour needs another ZR stage trace.
+
+Version 0.20 adds another provider-checked piece of Bionic pthread support:
+the real **56-byte ARM64 `pthread_attr_t` layout**, with stack size, guard size,
+detach-state and attribute lifetime handling. The attribute storage is
+independent of libnx/newlib types, follows documented Bionic offsets and
+minimum stack sizes, and is checked by host tests with canary bytes and
+wrong-provider rejection. Unsupported custom stacks, scheduling and actual
+thread creation remain deliberately unresolved; this adds ABI compatibility
+to the loader preflight, **not Roblox execution**.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
