@@ -66,6 +66,17 @@ static char *fortify_strcpy(char *dest, const char *source, size_t dest_len)
     return memcpy(dest, source, len + 1);
 }
 
+// A destination without a terminator is not a string, even if the source fits.
+// Check the existing destination before considering the appended bytes.
+static char *fortify_strcat(char *dest, const char *source, size_t dest_len)
+{
+    const size_t used = fortify_strlen(dest, dest_len);
+    const size_t added = strlen(source);
+    if (added >= dest_len - used) bad_bound("strcat");
+    memcpy(dest + used, source, added + 1);
+    return dest;
+}
+
 static char *fortify_strncpy(char *dest, const char *source, size_t count,
                              size_t dest_len)
 {
@@ -123,6 +134,7 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
     MAP_FORTIFY("__memset_chk", &fortify_memset)
     MAP_FORTIFY("__strlen_chk", &fortify_strlen)
     MAP_FORTIFY("__strcpy_chk", &fortify_strcpy)
+    MAP_FORTIFY("__strcat_chk", &fortify_strcat)
     MAP_FORTIFY("__strncpy_chk", &fortify_strncpy)
     MAP_FORTIFY("__strncpy_chk2", &fortify_strncpy2)
     MAP_FORTIFY("__errno", &fortify_errno)
