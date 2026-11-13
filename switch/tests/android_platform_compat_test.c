@@ -109,6 +109,16 @@ int main(void)
     assert(checked_strcpy(copied, short_source, 3) == copied);
     assert(!android_fortify_compat_resolve("__strcpy_chk", "LIBC_N", "libc.so", &address));
     assert(!android_fortify_compat_resolve("__strcpy_chk", "LIBC", "libm.so", &address));
+    assert(android_fortify_compat_resolve("__strcat_chk", "LIBC", "libc.so", &address));
+    char *(*checked_strcat)(char *, const char *, size_t) =
+        (char *(*)(char *, const char *, size_t))(uintptr_t)address;
+    char appended[12] = "ab";
+    assert(checked_strcat(appended, "cd", sizeof(appended)) == appended);
+    assert(strcmp(appended, "abcd") == 0);
+    assert(checked_strcat(appended, "1234567", sizeof(appended)) == appended);
+    assert(strcmp(appended, "abcd1234567") == 0);
+    assert(!android_fortify_compat_resolve("__strcat_chk", "LIBC_N", "libc.so", &address));
+    assert(!android_fortify_compat_resolve("__strcat_chk", "LIBC", "libm.so", &address));
     assert(android_fortify_compat_resolve("__strncpy_chk2", "LIBC", "libc.so", &address));
     char *(*checked_strncpy2)(char *, const char *, size_t, size_t, size_t) =
         (char *(*)(char *, const char *, size_t, size_t, size_t))(uintptr_t)address;
@@ -159,6 +169,25 @@ int main(void)
     assert(child >= 0);
     if (child == 0) {
         checked_strcpy(copied, "overflow", 3);
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        checked_strcat(appended, "x", sizeof(appended));
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        char unterminated[4] = {'a', 'b', 'c', 'd'};
+        checked_strcat(unterminated, "", sizeof(unterminated));
         _exit(99);
     }
     assert(waitpid(child, &status, 0) == child);
