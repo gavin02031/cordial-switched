@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.18 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.19 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -208,6 +208,18 @@ pthread services (`pthread_create`, TLS keys, rwlocks, timed waits, etc.) still
 threads run on the Switch Lite. JNI/GameActivity, graphics, assets, Android
 dependency loading and executable engine startup are still missing. A fresh
 **ZR stage log** is needed to measure the remaining imports on your hardware.
+
+Version 0.19 adds a provider/version-checked **Bionic pthread TLS key bridge**.
+Android provides at least 128 user TLS keys while native Switch pthread key
+resources may be scarcer. The bridge multiplexes 128 Bionic-compatible
+32-bit key IDs onto one native pthread TLS key, isolates values by thread,
+invalidates stale values on key deletion/recreation, and invokes destructors
+on thread exit with up to four POSIX iterations. Host tests confirm all 128
+keys, multiple simultaneous threads, repeated destructor callbacks, invalid
+keys and provider-version rejection. This does **not** add the rest of Bionic
+thread-local state, a native `pthread_create`/`pthread_self` bridge, or any
+ability to execute Roblox: JNI, graphics and live engine loading remain
+unimplemented. Real Switch behaviour needs another ZR stage trace.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

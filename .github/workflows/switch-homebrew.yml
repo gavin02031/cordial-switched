@@ -31,7 +31,8 @@ jobs:
             switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
             switch/source/android_log_compat.c switch/source/android_math_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
-            switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c -lm -pthread \
+            switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
+            switch/source/android_tls_compat.c -lm -pthread \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
       - name: Test strict Android liblog providers
@@ -60,6 +61,12 @@ jobs:
             switch/tests/android_pthread_compat_test.c switch/source/android_pthread_compat.c -pthread \
             -o /tmp/cordial-android-pthread-test
           timeout 30s /tmp/cordial-android-pthread-test
+      - name: Test Android Bionic pthread TLS key multiplexing
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_tls_compat_test.c switch/source/android_tls_compat.c -pthread \
+            -o /tmp/cordial-android-tls-test
+          timeout 30s /tmp/cordial-android-tls-test
 
   build:
     runs-on: ubuntu-latest
