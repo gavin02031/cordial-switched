@@ -119,6 +119,17 @@ int main(void)
     assert(strcmp(appended, "abcd1234567") == 0);
     assert(!android_fortify_compat_resolve("__strcat_chk", "LIBC_N", "libc.so", &address));
     assert(!android_fortify_compat_resolve("__strcat_chk", "LIBC", "libm.so", &address));
+    assert(android_fortify_compat_resolve("__strncat_chk", "LIBC", "libc.so", &address));
+    char *(*checked_strncat)(char *, const char *, size_t, size_t) =
+        (char *(*)(char *, const char *, size_t, size_t))(uintptr_t)address;
+    char limited[8] = "ab";
+    assert(checked_strncat(limited, "cdef", 2, sizeof(limited)) == limited);
+    assert(strcmp(limited, "abcd") == 0);
+    assert(checked_strncat(limited, "efg", 3, sizeof(limited)) == limited);
+    assert(strcmp(limited, "abcdefg") == 0);
+    assert(checked_strncat(limited, "ignored", 0, sizeof(limited)) == limited);
+    assert(!android_fortify_compat_resolve("__strncat_chk", "LIBC_N", "libc.so", &address));
+    assert(!android_fortify_compat_resolve("__strncat_chk", "LIBC", "libm.so", &address));
     assert(android_fortify_compat_resolve("__strncpy_chk2", "LIBC", "libc.so", &address));
     char *(*checked_strncpy2)(char *, const char *, size_t, size_t, size_t) =
         (char *(*)(char *, const char *, size_t, size_t, size_t))(uintptr_t)address;
@@ -188,6 +199,15 @@ int main(void)
     if (child == 0) {
         char unterminated[4] = {'a', 'b', 'c', 'd'};
         checked_strcat(unterminated, "", sizeof(unterminated));
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        checked_strncat(limited, "x", 1, sizeof(limited));
         _exit(99);
     }
     assert(waitpid(child, &status, 0) == child);
