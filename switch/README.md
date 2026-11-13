@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.15 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.16 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -161,10 +161,28 @@ symbol still prevents a prepared/usable image; no Android code executes.
 Version 0.15 adds real, provider- and version-checked native math bindings for
 the plain AArch64 float/double signatures in Android `libm.so` (`LIBC` symbol
 version), such as `sinf`, `cosf`, `pow`, and `log`. These are actual compiled
-math routines, not address placeholders. Android's `stderr`, JNI, pthread
-runtime and long-double routines remain intentionally unresolved, because a
-wrong ABI binding could crash the console. The new host suite validates a
+math routines, not address placeholders. Android's JNI, pthread runtime and
+long-double routines remain intentionally unresolved, because a wrong ABI
+binding could crash the console. The host suite validates a
 versioned math binding without ever executing the Roblox library itself.
+
+Version 0.16 adds provider/version-checked Bionic `libc.so` adapters using
+the Android-to-Switch wrapper approach demonstrated by Max Payne NX, Adventures
+of Mana NX and Angry Birds 2 NX. `stdin`, `stdout` and `stderr` now resolve
+as Android-facing `FILE *` data symbols with opaque handles; stdio calls
+through those handles are translated by dedicated adapters. The resolver also
+exposes ABI-identical plain C routines and translates Android's numeric
+`clock_gettime` IDs. Neither native `FILE` layouts nor pthread state are passed
+to Android as if they were Bionic objects. The new host suite checks the
+`stderr@LIBC` resolution that blocked the v0.13 hardware trace, but a fresh
+device stage log is required to establish the next real blocker. This is a
+partial compatibility layer: `__errno`, Bionic pthread/fortify functions,
+JNI/GameActivity, graphics, assets, dependency loading and executable memory
+mapping are **not** implemented. The library is still never executed, and the
+Switch Lite's unsuccessful title takeover may also prevent full-memory tests.
+See [Angry Birds 2 NX](https://github.com/NaGaa95/angrybirds2_nx) for the
+stdio/clock reference and [Adventures of Mana NX](https://github.com/NaGaa95/aom_nx)
+for a working native ARM64 executable loader architecture.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

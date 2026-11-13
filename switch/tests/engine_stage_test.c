@@ -574,6 +574,20 @@ int main(void)
     assert(strstr(math_trace, "supported_imports=1"));
     assert(strstr(math_trace, "engine_executed=no"));
 
+    // The first missing import in the real Switch Lite v0.13 log was
+    // stderr@LIBC. Resolve it through the genuine Bionic FILE* data adapter,
+    // rather than pointing the relocation at newlib's incompatible FILE.
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 14);
+    memcpy(bytes + 0x301, "stderr", 7);
+    char stdio_trace[4096];
+    EngineBootReport stdio_boot;
+    boot_fixture(bytes, sizeof(bytes), &stdio_boot, stdio_trace, sizeof(stdio_trace));
+    assert(stdio_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(stdio_trace, "supported_imports=1"));
+    assert(strstr(stdio_trace, "missing_import_lookups=0"));
+    assert(strstr(stdio_trace, "engine_executed=no"));
+
     // A real provider address can be bound in scratch memory. It is never
     // called by the test or from executable pages, and unknown APIs fail.
     symbol_fixture(bytes, 1025, false);

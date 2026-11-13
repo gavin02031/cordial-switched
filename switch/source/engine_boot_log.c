@@ -6,6 +6,8 @@
 
 #include "android_log_compat.h"
 #include "android_math_compat.h"
+#include "android_libc_compat.h"
+#include "android_stdio_compat.h"
 
 typedef struct {
     unsigned requested;
@@ -49,11 +51,13 @@ static bool resolve_compatible_import(const char *name, const char *version,
 {
     ImportTrace *imports = context;
     imports->requested++;
-    // Bind only provider/version-verified, ABI-compatible functions. Android
-    // libc FILE objects and pthread internals must never alias newlib data.
+    // Bind only provider/version-verified functions. Bionic FILE data symbols
+    // require opaque wrappers; pthread internals must never alias newlib.
     const bool supported = ((!version && !library &&
                              android_log_compat_resolve(name, address, NULL)) ||
-                            android_math_compat_resolve(name, version, library, address));
+                            android_math_compat_resolve(name, version, library, address) ||
+                            android_libc_compat_resolve(name, version, library, address) ||
+                            android_stdio_compat_resolve(name, version, library, address));
     if (supported) {
         imports->supported++;
         return true;
@@ -111,7 +115,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     if (!report)
         return;
     memset(report, 0, sizeof(*report));
-    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.15");
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.16");
     trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
     trace_line(trace, "event=preflight_started");
 
@@ -155,6 +159,8 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "apk_signature_verified=no");
     trace_line(trace, "platform_bionic_jni_gameactivity=not_connected");
     trace_line(trace, "platform_egl_gles=not_connected");
+    trace_line(trace, "provider_bionic_stdio=partial_wrapped");
+    trace_line(trace, "provider_bionic_libc=partial_abi_checked");
     trace_line(trace, "event=scratch_link_started");
     trace_line(trace, "audit_mode=continue_on_unresolved_imports_without_binding");
 

@@ -29,7 +29,8 @@ jobs:
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
-            switch/source/android_log_compat.c switch/source/android_math_compat.c -lm \
+            switch/source/android_log_compat.c switch/source/android_math_compat.c \
+            switch/source/android_stdio_compat.c switch/source/android_libc_compat.c -lm \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
       - name: Test strict Android liblog providers
@@ -44,6 +45,13 @@ jobs:
             switch/tests/android_math_compat_test.c switch/source/android_math_compat.c -lm \
             -o /tmp/cordial-android-math-test
           /tmp/cordial-android-math-test
+      - name: Test Android Bionic libc and stdio adapters
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_platform_compat_test.c \
+            switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
+            -o /tmp/cordial-android-platform-test
+          /tmp/cordial-android-platform-test
 
   build:
     runs-on: ubuntu-latest
