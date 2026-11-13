@@ -29,6 +29,8 @@ enum {
     DT_JMPREL = 23,
     DT_PLTREL = 20,
     DT_VERSYM = 0x6ffffff0,
+    DT_VERNEED = 0x6ffffffe,
+    DT_VERNEEDNUM = 0x6fffffff,
     DT_ANDROID_RELA = 0x60000011,
     DT_ANDROID_RELASZ = 0x60000012,
     DT_ANDROID_REL = 0x6000000f,
@@ -46,6 +48,8 @@ enum {
     APS2_GROUPED_BY_ADDEND = 4,
     APS2_HAS_ADDEND = 8,
     APS2_MAX_RELOCATIONS = 8 * 1024 * 1024,
+    MAX_VERSION_LIBRARIES = 128,
+    MAX_VERSIONS_PER_LIBRARY = 512,
 };
 
 typedef struct {
@@ -146,12 +150,90 @@ void engine_stage_release(EngineStage *stage)
     memset(stage, 0, sizeof(*stage));
 }
 
+typedef struct {
+    uint64_t versym_address;
+    uint64_t verneed_address;
+    uint64_t verneed_count;
+} VersionInfo;
+
+// ELF symbol version indices refer to DT_VERNEED / Elf64_Vernaux, not to
+// names in the PLT. Resolve the recorded provider as well as the version so a
+// libc import cannot be silently bound to a same-named incompatible function.
+static bool resolve_import_version(const EngineStage *stage,
+                                   const Segment *segments, unsigned count,
+                                   const VersionInfo *versions, uint32_t index,
+                                   const unsigned char *strings, size_t strtab_size,
+                                   const char **version, const char **library)
+{
+    *version = NULL;
+    *library = NULL;
+    if (!versions->versym_address)
+        return true;
+    if ((uint64_t)index > (UINT64_MAX - versions->versym_address) / 2)
+        return false;
+    const unsigned char *versym = load_at(stage, segments, count,
+                                         versions->versym_address + (uint64_t)index * 2,
+                                         2, true);
+    if (!versym)
+        return false;
+    const uint16_t wanted = u16le(versym) & 0x7fff;
+    if (wanted < 2)
+        return true;
+    if (!versions->verneed_address || !versions->verneed_count ||
+        versions->verneed_count > MAX_VERSION_LIBRARIES)
+        return false;
+
+    uint64_t next = versions->verneed_address;
+    for (uint64_t lib = 0; lib < versions->verneed_count; lib++) {
+        const unsigned char *need = load_at(stage, segments, count, next, 16, true);
+        if (!need || u16le(need) != 1 || !u16le(need + 2) ||
+            u16le(need + 2) > MAX_VERSIONS_PER_LIBRARY)
+            return false;
+        const uint32_t file_offset = u32le(need + 4);
+        const uint32_t aux_delta = u32le(need + 8);
+        const uint32_t next_delta = u32le(need + 12);
+        if (!aux_delta || !file_offset || file_offset >= strtab_size ||
+            !strings[file_offset] ||
+            !memchr(strings + file_offset, 0, strtab_size - file_offset) ||
+            next > UINT64_MAX - aux_delta)
+            return false;
+        uint64_t aux_address = next + aux_delta;
+        for (unsigned i = 0; i < u16le(need + 2); i++) {
+            const unsigned char *aux = load_at(stage, segments, count, aux_address,
+                                               16, true);
+            if (!aux)
+                return false;
+            const uint32_t name_offset = u32le(aux + 8);
+            const uint32_t aux_next = u32le(aux + 12);
+            if (!name_offset || name_offset >= strtab_size || !strings[name_offset] ||
+                !memchr(strings + name_offset, 0, strtab_size - name_offset))
+                return false;
+            if ((u16le(aux + 6) & 0x7fff) == wanted) {
+                *library = (const char *)strings + file_offset;
+                *version = (const char *)strings + name_offset;
+                return true;
+            }
+            if (i + 1 < u16le(need + 2)) {
+                if (!aux_next || aux_address > UINT64_MAX - aux_next)
+                    return false;
+                aux_address += aux_next;
+            }
+        }
+        if (lib + 1 < versions->verneed_count) {
+            if (!next_delta || next > UINT64_MAX - next_delta)
+                return false;
+            next += next_delta;
+        }
+    }
+    return false;
+}
+
 static bool apply_rela(EngineStage *stage, const Segment *segments,
                        unsigned count, uint64_t destination, uint64_t info,
                        uint64_t addend, uint64_t load_bias,
                        uint64_t symtab_address, uint64_t sym_entry_size,
                        uint64_t strtab_address, uint64_t strtab_size,
-                       bool versioned, EngineSymbolResolver resolver,
+                       const VersionInfo *versions, EngineSymbolResolver resolver,
                        void *context, bool packed)
 {
     const uint32_t type = (uint32_t)info;
@@ -175,9 +257,6 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
     if (!resolver)
         return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
                            "External-symbol relocation needs a symbol resolver.");
-    if (versioned)
-        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                           "Versioned symbols need the full Android linker.");
     if (!sym_index || sym_entry_size != 24 || !symtab_address || !strtab_address ||
         !strtab_size || (uint64_t)sym_index * 24 > UINT64_MAX - symtab_address)
         return abort_stage(stage, ENGINE_STAGE_INVALID,
@@ -198,10 +277,19 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
         return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid import symbol name.");
 
     const char *name = (const char *)strings + name_offset;
+    const char *version = NULL;
+    const char *library = NULL;
+    if (!resolve_import_version(stage, segments, count, versions, sym_index,
+                                strings, (size_t)strtab_size, &version, &library))
+        return abort_stage(stage, ENGINE_STAGE_INVALID,
+                           "Malformed or missing Android symbol version metadata.");
     uint64_t symbol_address = 0;
-    if (!resolver(name, &symbol_address, context) || !symbol_address) {
+    if (!resolver(name, version, library, &symbol_address, context) || !symbol_address) {
         char message[120];
-        snprintf(message, sizeof(message), "Unresolved import: %.96s", name);
+        if (version)
+            snprintf(message, sizeof(message), "Unresolved: %.60s@%.45s", name, version);
+        else
+            snprintf(message, sizeof(message), "Unresolved import: %.96s", name);
         return abort_stage(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, message);
     }
     write64(target, symbol_address + addend);
@@ -215,14 +303,14 @@ static bool apply_rela_table(EngineStage *stage, const Segment *segments,
                              size_t length, uint64_t load_bias,
                              uint64_t symtab_address, uint64_t sym_entry_size,
                              uint64_t strtab_address, uint64_t strtab_size,
-                             bool versioned, EngineSymbolResolver resolver,
+                             const VersionInfo *versions, EngineSymbolResolver resolver,
                              void *context)
 {
     for (size_t i = 0; i < length; i += 24) {
         if (!apply_rela(stage, segments, count, u64le(rela + i),
                         u64le(rela + i + 8), u64le(rela + i + 16), load_bias,
                         symtab_address, sym_entry_size, strtab_address,
-                        strtab_size, versioned, resolver, context, false))
+                        strtab_size, versions, resolver, context, false))
             return false;
     }
     return true;
@@ -267,7 +355,7 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
                               size_t length, uint64_t load_bias,
                               uint64_t symtab_address, uint64_t sym_entry_size,
                               uint64_t strtab_address, uint64_t strtab_size,
-                              bool versioned, EngineSymbolResolver resolver,
+                              const VersionInfo *versions, EngineSymbolResolver resolver,
                               void *context)
 {
     if (length < 4 || memcmp(data, "APS2", 4) != 0)
@@ -331,7 +419,7 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
             }
             if (!apply_rela(stage, segments, count, offset, info, addend,
                             load_bias, symtab_address, sym_entry_size,
-                            strtab_address, strtab_size, versioned,
+                            strtab_address, strtab_size, versions,
                             resolver, context, true))
                 return false;
         }
@@ -382,6 +470,7 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
             dynamic_size = file_bytes;
         } else if (type == PT_LOAD) {
             if (segment_count == MAX_LOAD_SEGMENTS ||
+                file_bytes > memory_bytes ||
                 memory_bytes > UINT64_MAX - virtual_address)
                 return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid PT_LOAD address range.");
             segments[segment_count++] = (Segment){offset, virtual_address, file_bytes, memory_bytes};
@@ -414,6 +503,8 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
         // calloc already supplied the zero-filled .bss region.
     }
 
+    if (!dynamic_size || dynamic_size % 16)
+        return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid PT_DYNAMIC table size.");
     unsigned char *dynamic = load_at(stage, segments, segment_count, dynamic_vaddr,
                                      (size_t)dynamic_size, true);
     if (!dynamic)
@@ -425,7 +516,7 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
     uint64_t symtab_address = 0, sym_entry_size = 0, strtab_address = 0, strtab_size = 0;
     uint64_t android_packed_addr = 0, android_packed_size = 0, unsupported_rel = 0;
     bool packed_addr_seen = false, packed_size_seen = false;
-    bool versioned = false;
+    VersionInfo versions = {0};
     bool android_relr = false;
     for (size_t i = 0; i < (size_t)dynamic_size; i += 16) {
         const uint64_t tag = u64le(dynamic + i);
@@ -448,7 +539,9 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
         else if (tag == DT_PLTRELSZ) plt_size = value;
         else if (tag == DT_JMPREL) plt_addr = value;
         else if (tag == DT_PLTREL) plt_format = value;
-        else if (tag == DT_VERSYM && value != 0) versioned = true;
+        else if (tag == DT_VERSYM) versions.versym_address = value;
+        else if (tag == DT_VERNEED) versions.verneed_address = value;
+        else if (tag == DT_VERNEEDNUM) versions.verneed_count = value;
         else if ((tag == DT_REL || tag == DT_RELSZ || tag == DT_ANDROID_REL ||
                   tag == DT_ANDROID_RELSZ) && value != 0) unsupported_rel = 1;
         else if (tag == DT_ANDROID_RELASZ) {
@@ -488,21 +581,21 @@ bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
         return abort_stage(stage, ENGINE_STAGE_INVALID, "Relocation table is outside staged memory.");
 
     // These relocations are applied only to scratch RAM, which remains NX.
-    // Unknown or versioned symbols fail closed instead of installing stubs.
+    // Unknown symbols and mismatched version requirements fail closed.
     const uint64_t load_bias = (uint64_t)(uintptr_t)stage->image - low;
     if ((android_packed_size && !apply_packed_rela(stage, segments, segment_count,
                                                  packed, (size_t)android_packed_size,
                                                  load_bias, symtab_address,
                                                  sym_entry_size, strtab_address,
-                                                 strtab_size, versioned, resolver, context)) ||
+                                                 strtab_size, &versions, resolver, context)) ||
         (rela_size && !apply_rela_table(stage, segments, segment_count, rela,
                                        (size_t)rela_size, load_bias, symtab_address,
                                        sym_entry_size, strtab_address, strtab_size,
-                                       versioned, resolver, context)) ||
+                                       &versions, resolver, context)) ||
         (plt_size && !apply_rela_table(stage, segments, segment_count, plt,
                                       (size_t)plt_size, load_bias, symtab_address,
                                       sym_entry_size, strtab_address, strtab_size,
-                                      versioned, resolver, context)))
+                                      &versions, resolver, context)))
         return false;
 
     // RELR encodes one direct address per even word, then a bitmap of the next

@@ -184,12 +184,52 @@ static void ungrouped_packed_fixture(unsigned char *bytes)
     add_dynamic(bytes + 0x180, 5, 0, 0);
 }
 
-static bool fake_resolver(const char *name, uint64_t *address, void *context)
+static bool fake_resolver(const char *name, const char *version,
+                          const char *library, uint64_t *address, void *context)
 {
-    if (strcmp(name, "sample_symbol") != 0 || !context)
+    if (strcmp(name, "sample_symbol") != 0 || version || library || !context)
         return false;
     *address = *(uint64_t *)context;
     return true;
+}
+
+static bool log_resolver(const char *name, const char *version,
+                         const char *library, uint64_t *address, void *context)
+{
+    if (version || library)
+        return false;
+    return android_log_compat_resolve(name, address, context);
+}
+
+static bool versioned_resolver(const char *name, const char *version,
+                               const char *library, uint64_t *address,
+                               void *context)
+{
+    if (strcmp(name, "sample_symbol") != 0 || !version || !library ||
+        strcmp(version, "LIBC") != 0 || strcmp(library, "libc.so") != 0 || !context)
+        return false;
+    *address = *(uint64_t *)context;
+    return true;
+}
+
+static void version_fixture(unsigned char *bytes)
+{
+    symbol_fixture(bytes, 1025, false);
+    put64(bytes + 64 + 56 + 32, 11 * 16); // PT_DYNAMIC file size.
+    put64(bytes + 64 + 56 + 40, 11 * 16); // PT_DYNAMIC memory size.
+    add_dynamic(bytes + 0x180, 1, 10, 48); // Complete dynstr.
+    add_dynamic(bytes + 0x180, 7, 0x6ffffff0, 0x1334); // DT_VERSYM.
+    add_dynamic(bytes + 0x180, 8, 0x6ffffffe, 0x1370); // DT_VERNEED.
+    add_dynamic(bytes + 0x180, 9, 0x6fffffff, 1); // DT_VERNEEDNUM.
+    add_dynamic(bytes + 0x180, 10, 0, 0);
+    memcpy(bytes + 0x30f, "libc.so\0LIBC", 13);
+    put16(bytes + 0x336, 3); // Dynsym #1 requires version index 3.
+    put16(bytes + 0x370, 1); // Elf64_Verneed vn_version.
+    put16(bytes + 0x372, 1); // vn_cnt.
+    put32(bytes + 0x374, 15); // vn_file -> libc.so.
+    put32(bytes + 0x378, 16); // vn_aux relative to this Verneed.
+    put16(bytes + 0x386, 3); // vna_other -> version index 3.
+    put32(bytes + 0x388, 23); // vna_name -> LIBC.
 }
 
 static bool stage_fixture(const unsigned char *bytes, size_t length, EngineStage *stage)
@@ -420,24 +460,44 @@ int main(void)
     assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
     assert(stage.status == ENGINE_STAGE_INVALID);
 
-    symbol_fixture(bytes, 1025, false);
-    add_dynamic(bytes + 0x180, 7, 0x6ffffff0, 0x1320); // Versioned symbol table.
-    add_dynamic(bytes + 0x180, 8, 0, 0);
+    version_fixture(bytes);
+    assert(resolve_fixture(bytes, &stage, versioned_resolver, (void *)&address));
+    assert(stage.symbol_applied == 1);
+    assert(get64(stage.image + 0x340) == address + 8);
+    engine_stage_release(&stage);
+
+    version_fixture(bytes);
     assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
-    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+    assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+    assert(strstr(stage.detail, "@LIBC"));
+
+    version_fixture(bytes);
+    put32(bytes + 0x388, 47); // Missing NUL after version name.
+    assert(!resolve_fixture(bytes, &stage, versioned_resolver, (void *)&address));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+
+    version_fixture(bytes);
+    put16(bytes + 0x386, 4); // Index 3 must not bind index 4's version.
+    assert(!resolve_fixture(bytes, &stage, versioned_resolver, (void *)&address));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+
+    version_fixture(bytes);
+    put16(bytes + 0x336, 1); // A plain import has no provider/version.
+    assert(resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
+    engine_stage_release(&stage);
 
     // A real provider address can be bound in scratch memory. It is never
     // called by the test or from executable pages, and unknown APIs fail.
     symbol_fixture(bytes, 1025, false);
     memset(bytes + 0x301, 0, 23);
     memcpy(bytes + 0x301, "__android_log_write", 20);
-    assert(resolve_fixture(bytes, &stage, android_log_compat_resolve, NULL));
+    assert(resolve_fixture(bytes, &stage, log_resolver, NULL));
     uint64_t log_address = 0;
     assert(android_log_compat_resolve("__android_log_write", &log_address, NULL));
     assert(stage.symbol_applied == 1);
     assert(get64(stage.image + 0x340) == log_address + 8);
     engine_stage_release(&stage);
 
-    puts("engine_stage_test: 36 checks passed");
+    puts("engine_stage_test: 41 checks passed");
     return 0;
 }

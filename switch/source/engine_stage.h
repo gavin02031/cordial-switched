@@ -34,7 +34,12 @@ typedef struct {
 bool engine_stage_stream(FILE *file, EngineStage *stage);
 // Resolver must only return real, ABI-compatible symbol addresses. This is a
 // non-executable scratch-stage experiment, not a replacement for bionic.
-typedef bool (*EngineSymbolResolver)(const char *name, uint64_t *address, void *context);
+// The provider and version must be checked together. Android's libc and
+// libdl imports share some names but their symbol versions are not optional.
+// NULL version/library means an unversioned import.
+typedef bool (*EngineSymbolResolver)(const char *name, const char *version,
+                                     const char *library, uint64_t *address,
+                                     void *context);
 bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
                                   EngineSymbolResolver resolver, void *context);
 void engine_stage_release(EngineStage *stage);

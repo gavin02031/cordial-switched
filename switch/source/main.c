@@ -6,6 +6,40 @@
 #include <switch.h>
 
 #include "ui.h"
+#include "android_log_compat.h"
+
+static bool resolve_available_android_import(const char *name, const char *version,
+                                             const char *library, uint64_t *address,
+                                             void *context)
+{
+    // Only these four liblog functions currently have Android-compatible
+    // implementations. Passing libnx/newlib POSIX symbols to bionic callers
+    // would misrepresent their ABI and make faults harder to diagnose.
+    if (version || library)
+        return false;
+    return android_log_compat_resolve(name, address, context);
+}
+
+static void try_engine_stage(UiState *state)
+{
+    state->stage_attempted = true;
+    FILE *engine = fopen(ENGINE_LIBRARY_PATH, "rb");
+    if (!engine) {
+        state->stage_status = ENGINE_STAGE_IO_ERROR;
+        snprintf(state->stage_detail, sizeof(state->stage_detail),
+                 "Could not open libroblox.so on the SD card.");
+        return;
+    }
+    EngineStage staged = {0};
+    // This uses the user's real Android ELF, not the synthetic fixtures. The
+    // image stays non-executable and the resolver rejects unsupported APIs.
+    engine_stage_stream_resolved(engine, &staged,
+                                 resolve_available_android_import, NULL);
+    fclose(engine);
+    state->stage_status = staged.status;
+    snprintf(state->stage_detail, sizeof(state->stage_detail), "%s", staged.detail);
+    engine_stage_release(&staged);
+}
 
 static int failure_screen(const char *reason)
 {
@@ -159,6 +193,8 @@ int main(void)
             state.report_saved = engine_probe_export_imports(
                 ENGINE_LIBRARY_PATH, state.report_path, sizeof(state.report_path));
         }
+        if (state.page == UI_LOADER && (pressed & HidNpadButton_ZR))
+            try_engine_stage(&state);
 
         HidTouchScreenState touch = {0};
         const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;

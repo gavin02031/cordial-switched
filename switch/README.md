@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.10 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.11 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -54,6 +54,9 @@ then check:
    Press **ZL** on Loader to save a numbered `imports-XX.txt` report in
    `sdmc:/switch/cordial-switched/`, with names and symbol version indices
    but no APK bytes or credentials. Old reports are never overwritten.
+   Press **ZR** for the first opt-in attempt to **copy and relocate your real
+   library into non-executable scratch RAM**. It reports the exact first
+   rejected import or relocation. It does not call any Roblox function.
 7. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
@@ -121,6 +124,17 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
 /tmp/cordial-android-log-test
 ```
 
+Version 0.11 adds a strict GNU symbol-version reader for Android's
+`DT_VERSYM` and `DT_VERNEED` tables. It passes the **name, version and
+provider library** to the resolver and rejects unmatched imports; it does
+not misbind versioned libc routines to unrelated Switch/newlib functions.
+The **ZR** action on the Loader profile now runs the existing scratch linker
+against the user's actual `libroblox.so` and the four implemented `liblog`
+adapters. This is the first **on-device relocation attempt with real input**,
+not an engine boot: unsupported imports, graphics and JNI still stop the
+linker, and no library memory becomes executable. The actual result requires
+a user hardware test; host CI cannot access their SD card or attest their APK.
+
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
 
@@ -131,7 +145,7 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
 /tmp/cordial-elf-probe-test
 ```
 
-### Segment staging experiments (host tests only)
+### Segment staging experiments
 
 Version 0.4 and later also compile `engine_stage.c` into the homebrew build. It can
 construct a **bounded, non-executable scratch image** from an inspected ARM64
@@ -140,8 +154,8 @@ ELF: copy file-backed `PT_LOAD` bytes, zero-fill BSS, and apply the
 each relocation destination against a real loaded segment and fails closed on
 unknown relocations. Version 0.8 adds synthetic APS2 packed-RELA support. This prepares data
 only; it does not map executable memory, perform bionic symbol resolution,
-verify an APK signature or start Roblox. **The Switch UI does not invoke the
-stager yet**; the validation is against synthetic ELF fixtures, not an actual
+verify an APK signature or start Roblox. **Before v0.11 the Switch UI did not
+invoke the stager**; the validation used synthetic ELF fixtures, not an actual
 Roblox engine or a Switch Lite hardware run.
 
 Version 0.6 extends that scratch-only layer with an optional, strict
@@ -149,19 +163,22 @@ Version 0.6 extends that scratch-only layer with an optional, strict
 `R_AARCH64_ABS64`, `R_AARCH64_GLOB_DAT`, and `R_AARCH64_JUMP_SLOT` from ordinary
 RELA and PLT (`DT_JMPREL`) tables. It validates dynamic symbol/string names,
 never fabricates a success address, and rejects unresolved, malformed,
-versioned, or unsupported relocation formats. The original no-resolver API
+or unsupported relocation formats. Versioned symbols require a matching
+version and provider via the callback. The original no-resolver API
 still fails closed on external imports. **This is a linker unit-test capability,
-not a working Android bionic linker**: it has no actual Android symbol
-providers, dependency loader, symbol version lookup, TLS or constructor support.
-No caller on Switch currently supplies a resolver or executes staged ELF code.
+not a working Android bionic linker**: it lacks most actual Android symbol
+providers, dependency loading, TLS and constructors. Version resolution was
+added in v0.11; the Switch now passes its four liblog adapters to the bounded
+scratch linker on demand, but never executes staged ELF code.
 
 Version 0.8 adds a bounded parser for Android's APS2 signed-LEB128 grouped
 RELA format, with tests for grouped and ungrouped addends and malformed inputs.
 It applies supported relocations only to non-executable scratch RAM and
-explicitly rejects unresolved imports, malformed data, unsupported REL
-records and symbol version lookups. **This does not mean the user-supplied
-2.17 MB relocation section has been successfully decoded or linked:** testing
-uses synthetic ELF images, and the Switch UI does not invoke the stager.
+explicitly rejects unresolved imports, malformed data and unsupported REL
+records. **This does not mean the user-supplied 2.17 MB relocation section
+has been successfully decoded or linked:** host tests use synthetic ELF
+images. Version 0.11 adds an opt-in real-library scratch stage on Switch;
+its hardware outcome remains unverified until the user runs it.
 
 The native CI runs these tests, which you can also execute locally:
 

@@ -479,7 +479,7 @@ static void engine(SDL_Renderer *renderer, const UiState *state)
 
 static void loader(SDL_Renderer *renderer, const UiState *state)
 {
-    topbar(renderer, "Loader readiness.", "Read-only ARM64 requirements from your own library");
+    topbar(renderer, "Loader readiness.", "ARM64 ELF inspection and isolated scratch-link test");
     panel(renderer, 306, 142, 921, 496, PANEL);
     if (state->engine.status != ENGINE_PROBE_INSPECTED) {
         badge(renderer, 337, 170, 190, "NO ENGINE PROFILE",
@@ -602,15 +602,22 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
     label(renderer, 341, 508, FONT_SMALL,
           state->engine.android_packed_bytes ? PINK : MUTED,
           state->engine.android_packed_bytes
-              ? "Android packed: PRESENT / synthetic scratch parser only"
+              ? "Android packed: PRESENT / scratch relocation support"
               : "Android packed relocations: not declared in this ELF");
     label(renderer, 341, 539, FONT_SMALL,
           state->engine.has_symbol_versions ? PINK : MUTED,
           state->engine.has_symbol_versions
-              ? "Versioned symbols: PRESENT / NOT RESOLVED"
+              ? "Versioned symbols: PRESENT / GNU version reader available"
               : "Versioned symbols: not declared in this ELF");
-    label(renderer, 341, 584, FONT_SMALL, PINK,
-          "APK signature not verified. Real engine execution remains disabled.");
+    if (state->stage_attempted) {
+        char result[140];
+        snprintf(result, sizeof(result), "ZR scratch load: %.102s", state->stage_detail);
+        label(renderer, 341, 584, FONT_SMALL,
+              state->stage_status == ENGINE_STAGE_PREPARED ? MINT : PINK, result);
+    } else {
+        label(renderer, 341, 584, FONT_SMALL, PINK,
+              "ZR: attempt real ELF scratch-link (no execution; APK not verified)");
+    }
 }
 
 void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)

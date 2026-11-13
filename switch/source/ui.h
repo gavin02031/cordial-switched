@@ -6,6 +6,7 @@
 #include <SDL.h>
 
 #include "elf_probe.h"
+#include "engine_stage.h"
 #include "jit_probe.h"
 
 #define UI_WIDTH 1280
@@ -27,6 +28,9 @@ typedef struct {
     bool report_attempted;
     bool report_saved;
     char report_path[112];
+    bool stage_attempted;
+    EngineStageStatus stage_status;
+    char stage_detail[120];
     bool accelerated;
     bool vsync;
     double fps;
