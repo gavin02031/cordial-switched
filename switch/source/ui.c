@@ -255,7 +255,7 @@ static void sidebar(SDL_Renderer *renderer, const UiState *state)
     label(renderer, 112, 81, FONT_SMALL, LAVENDER, "SWITCHED");
 
     label(renderer, 49, 155, FONT_SMALL, MUTED, "NAVIGATION");
-    const char *items[] = {"Overview", "Performance", "Roadmap"};
+    const char *items[] = {"Overview", "Performance", "Roadmap", "Engine"};
     for (unsigned i = 0; i < UI_PAGE_COUNT; i++) {
         const int y = 229 + (int)i * 69;
         const bool active = state->page == (UiPage)i;
@@ -279,7 +279,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.2", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.3", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -406,6 +406,62 @@ static void roadmap(SDL_Renderer *renderer)
                 "Only if Roblox accepts the unofficial runtime", false);
 }
 
+static void engine(SDL_Renderer *renderer, const UiState *state)
+{
+    topbar(renderer, "Engine inspection.", "Read-only metadata for a user-supplied Android ARM64 library");
+    panel(renderer, 306, 142, 921, 496, PANEL);
+
+    const bool inspected = state->engine.status == ENGINE_PROBE_INSPECTED;
+    const SDL_Color accent = inspected ? MINT : PINK;
+    const char *status = "NOT FOUND";
+    switch (state->engine.status) {
+    case ENGINE_PROBE_INSPECTED: status = "ELF STRUCTURE OK"; break;
+    case ENGINE_PROBE_WRONG_ARCH: status = "WRONG CPU"; break;
+    case ENGINE_PROBE_INVALID_ELF: status = "INVALID ELF"; break;
+    case ENGINE_PROBE_IO_ERROR: status = "READ ERROR"; break;
+    default: break;
+    }
+
+    badge(renderer, 337, 169, 191, status,
+          inspected ? (SDL_Color){41, 82, 79, 255}
+                    : (SDL_Color){77, 46, 68, 255}, accent);
+    label(renderer, 339, 226, FONT_MEDIUM, WHITE, "libroblox.so");
+    label(renderer, 340, 267, FONT_SMALL, MUTED, state->engine.detail);
+    label(renderer, 339, 313, FONT_SMALL, LAVENDER,
+          "sdmc:/switch/cordial-switched/libroblox.so");
+
+    fill(renderer, 337, 356, 852, 1, (SDL_Color){144, 150, 204, 38});
+    if (inspected) {
+        char info[90];
+        snprintf(info, sizeof(info), "File: %.1f MiB   |   Load segments: %u",
+                 (double)state->engine.file_bytes / (1024.0 * 1024.0),
+                 state->engine.load_segments);
+        label(renderer, 339, 370, FONT_BODY, WHITE, info);
+        snprintf(info, sizeof(info), "Largest segment alignment: %llu bytes",
+                 (unsigned long long)state->engine.max_segment_alignment);
+        label(renderer, 339, 408, FONT_SMALL, MUTED, info);
+        snprintf(info, sizeof(info), "Android dependencies: %u (first %u shown)",
+                 state->engine.needed_count,
+                 (unsigned)ENGINE_PROBE_MAX_NEEDED);
+        label(renderer, 339, 448, FONT_SMALL, MUTED, info);
+
+        const unsigned visible = state->engine.needed_count < ENGINE_PROBE_MAX_NEEDED
+            ? state->engine.needed_count : ENGINE_PROBE_MAX_NEEDED;
+        for (unsigned i = 0; i < visible; i++) {
+            label(renderer, 340 + (int)(i % 3) * 269,
+                  482 + (int)(i / 3) * 36, FONT_SMALL, LAVENDER,
+                  state->engine.needed[i]);
+        }
+    } else {
+        label(renderer, 339, 382, FONT_BODY, WHITE, "Provide the ARM64 library from your own official APK.");
+        label(renderer, 340, 425, FONT_SMALL, MUTED,
+              "This scanner never downloads or executes Roblox code.");
+    }
+    label(renderer, 339, 568, FONT_SMALL, PINK,
+          "Inspection is not loading, signature verification or login.");
+    label(renderer, 340, 598, FONT_SMALL, MUTED, "Press Y to rescan after adding a library.");
+}
+
 void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 {
     SDL_SetRenderDrawColor(renderer, 10, 13, 30, 255);
@@ -426,11 +482,14 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
     case UI_ROADMAP:
         roadmap(renderer);
         break;
+    case UI_ENGINE:
+        engine(renderer, state);
+        break;
     default:
         break;
     }
 
     label(renderer, 312, 666, FONT_SMALL, MUTED,
-          "L/R or A/B: pages   |   X: animations   |   PLUS: exit");
+          "L/R or A/B: pages   |   X: animations   |   Y: rescan   |   PLUS: exit");
     label(renderer, 1050, 666, FONT_SMALL, LAVENDER, "60 Hz UI target");
 }

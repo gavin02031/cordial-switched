@@ -55,8 +55,8 @@ Credit to sober for making android Roblox runtimes possible
 Experimental. Full table in [`docs/status.md`](docs/status.md).
 
 This fork also has an [early Nintendo Switch homebrew target](switch/README.md)
-with a 720p graphical dashboard and UI performance diagnostics. It **does not
-run Roblox** yet.
+with a 720p graphical dashboard, UI performance diagnostics, and read-only
+Android ARM64 engine inspection. It **does not run Roblox** yet.
 
 **Works:** loading an experience, sign-in, keyboard and mouse, camera, text
 entry with IME preedit, audio, voice chat, pointer capture, fullscreen, two

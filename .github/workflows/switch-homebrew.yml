@@ -15,6 +15,17 @@ permissions:
   contents: read
 
 jobs:
+  elf-probe-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test read-only ARM64 ELF inspector
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/elf_probe_test.c switch/source/elf_probe.c \
+            -o /tmp/cordial-elf-probe-test
+          /tmp/cordial-elf-probe-test
+
   build:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest

@@ -48,6 +48,8 @@ static void handle_touch(UiState *state, unsigned x, unsigned y)
             state->page = UI_PERFORMANCE;
         else if (y >= 367 && y < 427)
             state->page = UI_ROADMAP;
+        else if (y >= 436 && y < 496)
+            state->page = UI_ENGINE;
     } else if (state->page == UI_PERFORMANCE &&
                x >= 731 && x < 1176 && y >= 492 && y < 586) {
         state->animations = !state->animations;
@@ -108,6 +110,7 @@ int main(void)
     };
     snprintf(state.renderer_name, sizeof(state.renderer_name), "%s",
              info.name ? info.name : "unknown");
+    engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
 
     bool quit = false;
     bool was_touching = false;
@@ -134,6 +137,8 @@ int main(void)
             page_back(&state);
         if (state.page == UI_PERFORMANCE && (pressed & HidNpadButton_X))
             state.animations = !state.animations;
+        if (state.page == UI_ENGINE && (pressed & HidNpadButton_Y))
+            engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
 
         HidTouchScreenState touch = {0};
         const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;
