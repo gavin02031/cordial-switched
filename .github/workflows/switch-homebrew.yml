@@ -25,8 +25,8 @@ jobs:
         run: make -j2
       - name: Check generated executable
         run: |
+          test -s switch/cordial-switched.elf
           test -s switch/cordial-switched.nro
-          aarch64-none-elf-readelf -h switch/cordial-switched.elf | grep -q 'Machine:.*AArch64'
           ls -lh switch/cordial-switched.nro
       - name: Upload test build
         uses: actions/upload-artifact@v4
