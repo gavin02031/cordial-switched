@@ -31,6 +31,9 @@ typedef struct {
     bool stage_attempted;
     EngineStageStatus stage_status;
     char stage_detail[120];
+    bool boot_log_attempted;
+    bool boot_log_saved;
+    char boot_log_path[112];
     bool accelerated;
     bool vsync;
     double fps;

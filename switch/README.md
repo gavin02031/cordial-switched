@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.12 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.13 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -54,9 +54,13 @@ then check:
    Press **ZL** on Loader to save a numbered `imports-XX.txt` report in
    `sdmc:/switch/cordial-switched/`, with names and symbol version indices
    but no APK bytes or credentials. Old reports are never overwritten.
-   Press **ZR** for the first opt-in attempt to **copy and relocate your real
-   library into non-executable scratch RAM**. It reports the exact first
-   rejected import or relocation. It does not call any Roblox function.
+   Press **ZR** to run the opt-in **engine bootstrap preflight** against your
+   real library, including copying/relocating it into non-executable scratch
+   RAM. It reports the first rejected import or relocation and automatically
+   saves `sdmc:/switch/cordial-switched/stage-XX.txt`. The file records
+   inspected dependencies, relocation requirements, stage status and the first
+   blocker. It never includes engine bytes or credentials, and does **not**
+   call a Roblox function. Logs are numbered and previous reports are kept.
 7. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
@@ -139,6 +143,14 @@ The parser now accepts signed APS2 offset deltas with bounds checks, matching
 Android's linker format. This change passed synthetic host tests, but **has
 not yet been verified against the user's library on Switch hardware**. Host
 CI cannot access their SD card or attest their APK.
+Version 0.13 adds an **opt-in, automatically saved engine-startup preflight
+trace**. It flushes the inspection and dependency results before attempting
+the potentially memory-intensive scratch link, so a failed stage leaves a
+useful partial report. If staging completes, the test still records
+`engine_executed=no`: bionic, JNI/GameActivity, EGL/GLES and APK signature
+verification are not connected. This is a readiness test, **not** a playable
+Roblox launch or a claim that Roblox's entry point was called. Hardware logs
+have not been collected with this version yet.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

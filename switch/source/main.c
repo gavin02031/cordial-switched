@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -6,34 +7,30 @@
 #include <switch.h>
 
 #include "ui.h"
-#include "android_log_compat.h"
+#include "engine_boot_log.h"
 
-static bool resolve_available_android_import(const char *name, const char *version,
-                                             const char *library, uint64_t *address,
-                                             void *context)
+// Keep the existing stage-XX naming while recording a fuller preflight trace.
+static FILE *open_stage_log(char *path, size_t length)
 {
-    // Only these four liblog functions currently have Android-compatible
-    // implementations. Passing libnx/newlib POSIX symbols to bionic callers
-    // would misrepresent their ABI and make faults harder to diagnose.
-    if (version || library)
-        return false;
-    return android_log_compat_resolve(name, address, context);
-}
-
-// Numbered logs preserve earlier Switch results and never contain ELF bytes.
-static FILE *open_stage_log(char *path, size_t size)
-{
-    for (unsigned i = 1; i <= 99; i++) {
-        snprintf(path, size, "sdmc:/switch/cordial-switched/stage-%02u.txt", i);
-        FILE *existing = fopen(path, "rb");
+    path[0] = 0;
+    for (unsigned number = 1; number <= 99; number++) {
+        char candidate[112];
+        const int written = snprintf(candidate, sizeof(candidate),
+                                     ENGINE_REPORT_DIR "/stage-%02u.txt", number);
+        if (written <= 0 || (size_t)written >= sizeof(candidate))
+            return NULL;
+        FILE *existing = fopen(candidate, "rb");
         if (existing) {
             fclose(existing);
             continue;
         }
-        FILE *log = fopen(path, "wb");
-        if (log)
-            return log;
-        return NULL;
+        if (errno != ENOENT)
+            return NULL;
+        FILE *trace = fopen(candidate, "wb");
+        if (!trace)
+            return NULL;
+        snprintf(path, length, "%s", candidate);
+        return trace;
     }
     return NULL;
 }
@@ -41,48 +38,23 @@ static FILE *open_stage_log(char *path, size_t size)
 static void try_engine_stage(UiState *state)
 {
     state->stage_attempted = true;
-    char log_path[128] = {0};
-    FILE *log = open_stage_log(log_path, sizeof(log_path));
-    if (log) {
-        fprintf(log, "Cordial Switched 0.12\\n");
-        fprintf(log, "Probe: non-executable ARM64 ELF staging; engine execution: NO\\n");
-        fprintf(log, "Source: sdmc:/switch/cordial-switched/libroblox.so\\n");
-        fprintf(log, "Status: started\\n");
-        fflush(log);
-    }
+    state->boot_log_attempted = true;
+    state->boot_log_saved = false;
+    FILE *trace = open_stage_log(state->boot_log_path,
+                                 sizeof(state->boot_log_path));
     FILE *engine = fopen(ENGINE_LIBRARY_PATH, "rb");
-    if (!engine) {
-        state->stage_status = ENGINE_STAGE_IO_ERROR;
-        snprintf(state->stage_detail, sizeof(state->stage_detail),
-                 "Could not open libroblox.so on the SD card.");
-    } else {
-        EngineStage staged = {0};
-        // Only the user's ELF data is staged; no imported engine code runs.
-        engine_stage_stream_resolved(engine, &staged,
-                                     resolve_available_android_import, NULL);
+    EngineBootReport result;
+    engine_boot_preflight(engine, trace, &result);
+    if (engine)
         fclose(engine);
-        state->stage_status = staged.status;
-        snprintf(state->stage_detail, sizeof(state->stage_detail), "%s", staged.detail);
-        if (log) {
-            fprintf(log, "RELA applied: %llu\\nRELR applied: %llu\\nAPS2 applied: %llu\\nSymbols resolved: %llu\\n",
-                    (unsigned long long)staged.rela_applied,
-                    (unsigned long long)staged.relr_applied,
-                    (unsigned long long)staged.packed_applied,
-                    (unsigned long long)staged.symbol_applied);
-        }
-        engine_stage_release(&staged);
-    }
-    if (log) {
-        fprintf(log, "Stage status: %d\\nDetail: %s\\nEngine execution: NO\\n",
-                (int)state->stage_status, state->stage_detail);
-        if (fclose(log) == 0) {
-            // The filename is short enough to fit the on-screen detail.
-            const char *name = strrchr(log_path, '/');
-            char detail[sizeof(state->stage_detail)];
-            snprintf(detail, sizeof(detail), "%.75s [log: %.20s]",
-                     state->stage_detail, name ? name + 1 : log_path);
-            snprintf(state->stage_detail, sizeof(state->stage_detail), "%s", detail);
-        }
+    state->stage_status = result.stage_attempted ? result.stage_status
+                                                : (engine ? ENGINE_STAGE_INVALID : ENGINE_STAGE_IO_ERROR);
+    snprintf(state->stage_detail, sizeof(state->stage_detail), "%s", result.detail);
+    if (trace) {
+        const bool written = !ferror(trace);
+        state->boot_log_saved = written && fclose(trace) == 0;
+        if (!written)
+            fclose(trace);
     }
 }
 
@@ -228,6 +200,8 @@ int main(void)
             (pressed & HidNpadButton_Y)) {
             engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
             state.report_attempted = false;
+            state.stage_attempted = false;
+            state.boot_log_attempted = false;
         }
         if (state.page == UI_ENGINE && (pressed & HidNpadButton_X))
             jit_probe_run(&state.jit);

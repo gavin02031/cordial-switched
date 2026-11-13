@@ -281,7 +281,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.12", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.13", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -496,7 +496,18 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
           state->loader_view == 0 ? "X: LIBRARIES" :
           state->loader_view == 1 ? "X: IMPORTS" : "X: PROFILE",
           (SDL_Color){54, 46, 83, 220}, LAVENDER);
-    if (state->report_attempted) {
+    if (state->boot_log_attempted) {
+        if (state->boot_log_saved) {
+            const char *base = strrchr(state->boot_log_path, '/');
+            char report[112];
+            snprintf(report, sizeof(report), "ZR: saved %.80s / engine not executed",
+                     base ? base + 1 : state->boot_log_path);
+            label(renderer, 341, 617, FONT_SMALL, MINT, report);
+        } else {
+            label(renderer, 341, 617, FONT_SMALL, PINK,
+                  "ZR: could not save log (check SD space and folder permissions)");
+        }
+    } else if (state->report_attempted) {
         if (state->report_saved) {
             const char *base = strrchr(state->report_path, '/');
             char report[112];
@@ -611,12 +622,12 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
               : "Versioned symbols: not declared in this ELF");
     if (state->stage_attempted) {
         char result[140];
-        snprintf(result, sizeof(result), "ZR scratch load: %.102s", state->stage_detail);
+        snprintf(result, sizeof(result), "ZR boot preflight: %.100s", state->stage_detail);
         label(renderer, 341, 584, FONT_SMALL,
               state->stage_status == ENGINE_STAGE_PREPARED ? MINT : PINK, result);
     } else {
         label(renderer, 341, 584, FONT_SMALL, PINK,
-              "ZR: attempt real ELF scratch-link (no execution; APK not verified)");
+              "ZR: boot preflight + save log (no execution; APK not verified)");
     }
 }
 

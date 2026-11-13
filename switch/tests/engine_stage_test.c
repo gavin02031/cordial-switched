@@ -1,4 +1,5 @@
 #include "engine_stage.h"
+#include "engine_boot_log.h"
 #include "android_log_compat.h"
 
 #include <assert.h>
@@ -259,6 +260,21 @@ static bool resolve_fixture(const unsigned char *bytes, EngineStage *stage,
     const bool ok = engine_stage_stream_resolved(file, stage, lookup, context);
     fclose(file);
     return ok;
+}
+
+static void boot_fixture(const unsigned char *bytes, size_t length,
+                         EngineBootReport *result, char *log, size_t log_bytes)
+{
+    FILE *source = tmpfile();
+    FILE *trace = tmpfile();
+    assert(source && trace && log_bytes);
+    assert(fwrite(bytes, 1, length, source) == length);
+    engine_boot_preflight(source, trace, result);
+    assert(fseek(trace, 0, SEEK_SET) == 0);
+    const size_t read = fread(log, 1, log_bytes - 1, trace);
+    log[read] = 0;
+    fclose(source);
+    fclose(trace);
 }
 
 int main(void)
@@ -526,6 +542,37 @@ int main(void)
     assert(get64(stage.image + 0x340) == log_address + 8);
     engine_stage_release(&stage);
 
-    puts("engine_stage_test: 41 checks passed");
+    char log[4096];
+    EngineBootReport boot;
+    FILE *trace = tmpfile();
+    assert(trace);
+    engine_boot_preflight(NULL, trace, &boot);
+    assert(boot.probe_status == ENGINE_PROBE_NOT_FOUND);
+    assert(!boot.stage_attempted && !boot.engine_executed);
+    fclose(trace);
+
+    fixture(bytes);
+    boot_fixture(bytes, sizeof(bytes), &boot, log, sizeof(log));
+    assert(boot.probe_status == ENGINE_PROBE_INSPECTED);
+    assert(boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(boot.stage_attempted && !boot.engine_executed);
+    assert(strstr(log, "scratch_link=SCRATCH_STAGED"));
+    assert(strstr(log, "engine_executed=no"));
+    assert(strstr(log, "ANDROID_RUNTIME_AND_SIGNATURE_VERIFICATION_MISSING"));
+
+    symbol_fixture(bytes, 1025, false);
+    boot_fixture(bytes, sizeof(bytes), &boot, log, sizeof(log));
+    assert(boot.stage_status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+    assert(strstr(log, "first_missing_import=sample_symbol"));
+    assert(strstr(log, "engine_executed=no"));
+
+    fixture(bytes);
+    bytes[4] = 1; // Invalid ELF should leave an actionable trace.
+    boot_fixture(bytes, sizeof(bytes), &boot, log, sizeof(log));
+    assert(boot.probe_status != ENGINE_PROBE_INSPECTED);
+    assert(!boot.stage_attempted);
+    assert(strstr(log, "blocker=INSPECTION_FAILED"));
+
+    puts("engine_stage_test: 45 scenarios passed");
     return 0;
 }

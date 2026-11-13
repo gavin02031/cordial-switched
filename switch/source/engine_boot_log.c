@@ -1,0 +1,171 @@
+#include "engine_boot_log.h"
+
+#include <stdarg.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "android_log_compat.h"
+
+typedef struct {
+    unsigned requested;
+    unsigned supported;
+    char first_missing[120];
+} ImportTrace;
+
+static void trace_line(FILE *trace, const char *format, ...)
+{
+    if (!trace)
+        return;
+    va_list args;
+    va_start(args, format);
+    vfprintf(trace, format, args);
+    va_end(args);
+    fputc('\n', trace);
+    fflush(trace);
+}
+
+// Names originate in an untrusted ELF. Keep control bytes and newlines out
+// of the report, which users will paste into issue trackers.
+static void printable(char *out, size_t size, const char *value)
+{
+    if (!size)
+        return;
+    size_t i = 0;
+    if (value) {
+        for (; value[i] && i + 1 < size; i++) {
+            const unsigned char ch = (unsigned char)value[i];
+            out[i] = (ch >= 32 && ch <= 126) ? (char)ch : '?';
+        }
+    }
+    out[i] = 0;
+}
+
+static bool resolve_compatible_import(const char *name, const char *version,
+                                      const char *library, uint64_t *address,
+                                      void *context)
+{
+    ImportTrace *imports = context;
+    imports->requested++;
+    // Only four liblog calls have an ABI-compatible implementation. Binding
+    // bionic libc to similarly named newlib routines would be unsafe.
+    const bool supported = !version && !library &&
+        android_log_compat_resolve(name, address, NULL);
+    if (supported) {
+        imports->supported++;
+        return true;
+    }
+    if (!imports->first_missing[0]) {
+        char safe_name[64], safe_version[36], safe_library[36];
+        printable(safe_name, sizeof(safe_name), name);
+        printable(safe_version, sizeof(safe_version), version);
+        printable(safe_library, sizeof(safe_library), library);
+        snprintf(imports->first_missing, sizeof(imports->first_missing),
+                 "%.50s @ %.20s from %.20s", safe_name,
+                 version ? safe_version : "unversioned",
+                 library ? safe_library : "unspecified");
+    }
+    return false;
+}
+
+static const char *probe_status_name(EngineProbeStatus status)
+{
+    switch (status) {
+    case ENGINE_PROBE_INSPECTED: return "INSPECTED";
+    case ENGINE_PROBE_NOT_FOUND: return "NOT_FOUND";
+    case ENGINE_PROBE_WRONG_ARCH: return "WRONG_ARCH";
+    case ENGINE_PROBE_IO_ERROR: return "IO_ERROR";
+    default: return "INVALID_ELF";
+    }
+}
+
+static const char *stage_status_name(EngineStageStatus status)
+{
+    switch (status) {
+    case ENGINE_STAGE_PREPARED: return "SCRATCH_STAGED";
+    case ENGINE_STAGE_UNRESOLVED_SYMBOL: return "UNRESOLVED_SYMBOL";
+    case ENGINE_STAGE_UNSUPPORTED_RELOCATION: return "UNSUPPORTED_RELOCATION";
+    case ENGINE_STAGE_TOO_LARGE: return "TOO_LARGE";
+    case ENGINE_STAGE_IO_ERROR: return "IO_ERROR";
+    default: return "INVALID_ELF";
+    }
+}
+
+void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
+{
+    if (!report)
+        return;
+    memset(report, 0, sizeof(*report));
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap preflight v0.13");
+    trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
+    trace_line(trace, "event=preflight_started");
+
+    if (!source) {
+        report->probe_status = ENGINE_PROBE_NOT_FOUND;
+        snprintf(report->detail, sizeof(report->detail), "Engine file not found on SD card.");
+        trace_line(trace, "inspect=NOT_FOUND");
+        trace_line(trace, "blocker=ENGINE_FILE_MISSING");
+        trace_line(trace, "engine_executed=no");
+        return;
+    }
+
+    EngineProbeResult profile;
+    engine_probe_stream(source, &profile);
+    report->probe_status = profile.status;
+    char safe[120];
+    printable(safe, sizeof(safe), profile.detail);
+    trace_line(trace, "inspect=%s", probe_status_name(profile.status));
+    trace_line(trace, "inspect_detail=%s", safe);
+    if (profile.status != ENGINE_PROBE_INSPECTED) {
+        snprintf(report->detail, sizeof(report->detail), "%s", profile.detail);
+        trace_line(trace, "blocker=INSPECTION_FAILED");
+        trace_line(trace, "engine_executed=no");
+        return;
+    }
+
+    trace_line(trace, "file_bytes=%llu", (unsigned long long)profile.file_bytes);
+    trace_line(trace, "virtual_image_bytes=%llu",
+               (unsigned long long)profile.virtual_image_bytes);
+    trace_line(trace, "load_segments=%u", profile.load_segments);
+    trace_line(trace, "android_dependencies=%u", profile.needed_count);
+    for (unsigned i = 0; i < profile.needed_count && i < ENGINE_PROBE_MAX_NEEDED; i++) {
+        char library[64];
+        printable(library, sizeof(library), profile.needed[i]);
+        trace_line(trace, "required_library_%u=%s", i + 1, library);
+    }
+    trace_line(trace, "aps2_bytes=%llu", (unsigned long long)profile.android_packed_bytes);
+    trace_line(trace, "plt_relocations=%llu", (unsigned long long)profile.plt_records);
+    trace_line(trace, "versioned_plt_imports=%llu",
+               (unsigned long long)profile.plt_versioned_imports);
+    trace_line(trace, "apk_signature_verified=no");
+    trace_line(trace, "platform_bionic_jni_gameactivity=not_connected");
+    trace_line(trace, "platform_egl_gles=not_connected");
+    trace_line(trace, "event=scratch_link_started");
+
+    // The real file is read again, but never mapped as executable memory.
+    EngineStage stage = {0};
+    ImportTrace imports = {0};
+    report->stage_attempted = true;
+    engine_stage_stream_resolved(source, &stage, resolve_compatible_import, &imports);
+    report->stage_status = stage.status;
+    snprintf(report->detail, sizeof(report->detail), "%s", stage.detail);
+    printable(safe, sizeof(safe), stage.detail);
+    trace_line(trace, "scratch_link=%s", stage_status_name(stage.status));
+    trace_line(trace, "scratch_link_detail=%s", safe);
+    trace_line(trace, "import_lookups=%u", imports.requested);
+    trace_line(trace, "supported_imports=%u", imports.supported);
+    if (imports.first_missing[0])
+        trace_line(trace, "first_missing_import=%s", imports.first_missing);
+    if (stage.status == ENGINE_STAGE_PREPARED) {
+        trace_line(trace, "relative_relocations=%u", stage.rela_applied);
+        trace_line(trace, "relr_relocations=%u", stage.relr_applied);
+        trace_line(trace, "aps2_relocations=%u", stage.packed_applied);
+        trace_line(trace, "symbol_relocations=%u", stage.symbol_applied);
+    }
+    // Do not turn a successful scratch link into an engine boot. Missing
+    // Android runtime services make calling into this image unsafe.
+    trace_line(trace, "blocker=%s", stage.status == ENGINE_STAGE_PREPARED
+               ? "ANDROID_RUNTIME_AND_SIGNATURE_VERIFICATION_MISSING"
+               : "SCRATCH_LINK_INCOMPLETE");
+    trace_line(trace, "engine_executed=no");
+    engine_stage_release(&stage);
+}
