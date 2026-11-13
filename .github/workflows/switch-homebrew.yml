@@ -1,4 +1,4 @@
-name: Switch homebrew smoke build
+name: Cordial Switched - Horizon preview
 
 on:
   push:
@@ -24,10 +24,13 @@ jobs:
         working-directory: switch
         run: make -j2
       - name: Check generated executable
-        run: test -s switch/cordial-switched.nro
+        run: |
+          test -s switch/cordial-switched.nro
+          aarch64-none-elf-readelf -h switch/cordial-switched.elf | grep -q 'Machine:.*AArch64'
+          ls -lh switch/cordial-switched.nro
       - name: Upload test build
         uses: actions/upload-artifact@v4
         with:
-          name: cordial-switched-nro-smoke-test
+          name: cordial-switched-switch-preview
           path: switch/cordial-switched.nro
           if-no-files-found: error

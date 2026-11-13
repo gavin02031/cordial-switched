@@ -18,9 +18,9 @@ Switch Lite's 1280x720 handheld display.
 
 ## Build
 
-The [Switch homebrew smoke build](../.github/workflows/switch-homebrew.yml)
+The [Cordial Switched Horizon preview](../.github/workflows/switch-homebrew.yml)
 GitHub Actions workflow uses the `devkitpro/devkita64` toolchain container.
-Download the resulting `cordial-switched-nro-smoke-test` artifact from the
+Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 For a local build, install devkitPro with `devkitA64`, `libnx`,
