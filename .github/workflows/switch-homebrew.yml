@@ -95,6 +95,12 @@ jobs:
             switch/tests/engine_tls_scratch_test.c switch/source/engine_tls_scratch.c \
             -o /tmp/cordial-android-elf-tls-scratch-test
           /tmp/cordial-android-elf-tls-scratch-test
+      - name: Test native Horizon code-memory segment permission planning
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_memory_plan_test.c switch/source/engine_memory_plan.c \
+            -o /tmp/cordial-memory-plan-test
+          /tmp/cordial-memory-plan-test
 
   build:
     runs-on: ubuntu-latest

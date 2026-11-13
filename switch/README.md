@@ -378,6 +378,33 @@ The actual engine port must establish, in order:
 
 This sequence is **INFERRED**, not a demonstrated Switch engine boot. No APK,
 engine binaries, account tokens, or proprietary Roblox files belong in Git.
+
+### Native ARM64 wrapper references (in progress; after v0.24)
+
+The MIT-licensed [Adventures of Mana Switch wrapper](https://github.com/NaGaa95/aom_nx),
+[Half-Life 2 Switch wrapper](https://github.com/NaGaa95/hl2_nx), and
+[Pocket Camp Switch wrapper](https://github.com/NaGaa95/acpc_nx) demonstrate
+real ARM64 Android-library execution on Horizon. Their working game-specific
+adapters are **not** general-purpose Roblox or Android runtimes.
+
+The next native-loader foundation uses the same separation of concerns as
+Adventures of Mana's `so_finalize`: build a per-page RX/R/RW permission plan,
+reject W+X page conflicts, map a separately prepared aligned source with
+`svcMapProcessCodeMemory`, and set RX runs **before** writable data pages.
+`engine_memory_plan.c` now builds and validates that bounded plan on the host;
+`horizon_code_memory.c` contains the corresponding Horizon mapping and cleanup
+primitive. The latter compiles into the Switch target but is **not invoked**
+by the UI or linked to the Roblox ELF at this stage.
+
+Critically, relocations in the eventual live loader must be calculated against
+the **final executable address**, not the old scratch address. All imports,
+PT_TLS/DTV thread state, JNI/GameActivity, callbacks and ownership checks must
+be established before any Roblox initializer can be called. Half-Life 2's
+`dl_emu.c` illustrates module-scoped `dlopen`/`dlsym` and Mesa EGL/GLES symbol
+lookup; Pocket Camp's `android_native_unity.c` demonstrates an `NWindow` and
+per-thread `ALooper` adapter. These will require Roblox-specific ABI
+validation rather than copying arbitrary stubs or hooks. This is runtime
+groundwork, **not a runnable Roblox release**.
 The first testable deliverable is deliberately labelled a smoke test so it
 cannot be mistaken for a playable Roblox client.
 
