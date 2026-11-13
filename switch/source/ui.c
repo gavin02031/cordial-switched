@@ -500,7 +500,8 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
         if (state->report_saved) {
             const char *base = strrchr(state->report_path, '/');
             char report[112];
-            snprintf(report, sizeof(report), "ZL: saved %s", base ? base + 1 : state->report_path);
+            snprintf(report, sizeof(report), "ZL: saved %.90s",
+                     base ? base + 1 : state->report_path);
             label(renderer, 341, 617, FONT_SMALL, MINT, report);
         } else {
             label(renderer, 341, 617, FONT_SMALL, PINK,
