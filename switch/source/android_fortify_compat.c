@@ -58,8 +58,12 @@ static size_t fortify_strlen(const char *text, size_t source_len)
 
 static char *fortify_strcpy(char *dest, const char *source, size_t dest_len)
 {
-    const size_t len = fortify_strlen(source, dest_len) + 1;
-    return memcpy(dest, source, len);
+    // The bound belongs to the destination, not the source. Scanning the
+    // source for dest_len bytes could read beyond a short source object.
+    // Include the NUL byte in the destination check without overflowing.
+    const size_t len = strlen(source);
+    if (len >= dest_len) bad_bound("strcpy");
+    return memcpy(dest, source, len + 1);
 }
 
 static char *fortify_strncpy(char *dest, const char *source, size_t count,
