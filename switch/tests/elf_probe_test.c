@@ -182,6 +182,28 @@ int main(void)
     assert(result.has_tls_segment && result.tls_initial_image_bytes == 0);
     assert(result.tls_memory_bytes == 64);
 
+    // A valid initializer is not enough if its zero-filled TLS tail
+    // extends beyond the PT_LOAD memory mapping.
+    make_valid_elf(bytes);
+    put16(bytes + 56, 3);
+    tls = bytes + 64 + 2 * 56;
+    put32(tls, 7);
+    put64(tls + 8, 0x780);
+    put64(tls + 16, 0x1780);
+    put64(tls + 32, 16);
+    put64(tls + 40, 0x181); // Load ends at 0x1900; TLS ends at 0x1901.
+    put64(tls + 48, 16);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 40, 0x180); // Exactly reaches the load end.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    put64(tls + 32, 0); // Zero-initialized TLS still needs mapped memory.
+    put64(tls + 16, 0x1900);
+    put64(tls + 40, 1);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
     make_auditable_elf(bytes);
     result = inspect(bytes, sizeof(bytes));
     assert(result.status == ENGINE_PROBE_INSPECTED);
