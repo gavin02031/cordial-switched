@@ -117,6 +117,34 @@ static int android_attr_getstack(const void *address, void **stack_base,
     return 0;
 }
 
+int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *native)
+{
+    if (!address || !native)
+        return EINVAL;
+    const AndroidPthreadAttr *attr = address;
+    // Bionic's user-owned stacks and non-default schedulers require further
+    // runtime work. Handing them to the host pthread ABI would be unsafe.
+    if (!valid(attr) || attr->stack_base || attr->stack_size < ANDROID_STACK_MINIMUM ||
+        attr->sched_policy || attr->sched_priority)
+        return ENOTSUP;
+    for (size_t i = 0; i < sizeof(attr->reserved); i++) {
+        if (attr->reserved[i])
+            return ENOTSUP;
+    }
+    int result = pthread_attr_init(native);
+    if (result)
+        return result;
+    result = pthread_attr_setdetachstate(native,
+              (attr->flags & ANDROID_ATTR_DETACHED) ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE);
+    if (!result)
+        result = pthread_attr_setstacksize(native, attr->stack_size);
+    if (!result)
+        result = pthread_attr_setguardsize(native, attr->guard_size);
+    if (result)
+        pthread_attr_destroy(native);
+    return result;
+}
+
 bool android_thread_attr_compat_resolve(const char *name, const char *version,
                                         const char *library, uint64_t *address)
 {

@@ -32,7 +32,8 @@ jobs:
             switch/source/android_log_compat.c switch/source/android_math_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
-            switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c -lm -pthread \
+            switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
+            switch/source/android_thread_lifecycle_compat.c -lm -pthread \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
       - name: Test strict Android liblog providers
@@ -70,9 +71,16 @@ jobs:
       - name: Test Android Bionic LP64 thread attributes
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
-            switch/tests/android_thread_attr_compat_test.c switch/source/android_thread_attr_compat.c \
+            switch/tests/android_thread_attr_compat_test.c switch/source/android_thread_attr_compat.c -pthread \
             -o /tmp/cordial-android-thread-attr-test
           /tmp/cordial-android-thread-attr-test
+      - name: Test bounded Android thread lifecycle bridge
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_thread_lifecycle_compat_test.c \
+            switch/source/android_thread_lifecycle_compat.c switch/source/android_thread_attr_compat.c -pthread \
+            -o /tmp/cordial-android-thread-lifecycle-test
+          timeout 30s /tmp/cordial-android-thread-lifecycle-test
 
   build:
     runs-on: ubuntu-latest

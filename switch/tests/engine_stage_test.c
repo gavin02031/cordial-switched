@@ -609,6 +609,17 @@ int main(void)
     assert(strstr(pthread_trace, "supported_imports=1"));
     assert(strstr(pthread_trace, "engine_executed=no"));
 
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 14);
+    memcpy(bytes + 0x301, "pthread_self", 13);
+    char lifecycle_trace[4096];
+    EngineBootReport lifecycle_boot;
+    boot_fixture(bytes, sizeof(bytes), &lifecycle_boot, lifecycle_trace, sizeof(lifecycle_trace));
+    assert(lifecycle_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(lifecycle_trace, "provider_bionic_thread_lifecycle=opaque_native_threads_no_bionic_tcb"));
+    assert(strstr(lifecycle_trace, "supported_imports=1"));
+    assert(strstr(lifecycle_trace, "engine_executed=no"));
+
     // A real provider address can be bound in scratch memory. It is never
     // called by the test or from executable pages, and unknown APIs fail.
     symbol_fixture(bytes, 1025, false);
@@ -652,6 +663,6 @@ int main(void)
     assert(!boot.stage_attempted);
     assert(strstr(log, "blocker=INSPECTION_FAILED"));
 
-    puts("engine_stage_test: 50 scenarios passed");
+    puts("engine_stage_test: 51 scenarios passed");
     return 0;
 }

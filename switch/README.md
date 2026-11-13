@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.20 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.21 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -229,6 +229,18 @@ minimum stack sizes, and is checked by host tests with canary bytes and
 wrong-provider rejection. Unsupported custom stacks, scheduling and actual
 thread creation remain deliberately unresolved; this adds ABI compatibility
 to the loader preflight, **not Roblox execution**.
+
+Version 0.21 adds an **experimental, bounded pthread lifecycle bridge** for
+`pthread_create`, `pthread_self`, `pthread_join`, `pthread_detach` and
+`pthread_equal`. Native thread handles are hidden behind stable Bionic-sized
+tokens. It translates supported stack, guard and detach attributes, rejects
+custom stacks and scheduling requests, and prevents unknown, stale and
+double-consumed handles from reaching native pthread functions. Host tests
+cover 64 worker joins, detached threads and invalid-handle behaviour. The
+bridge **does not create Bionic TCB/TLS, implement the complete Android
+runtime, or run Roblox**; its provider mappings are used only in the existing
+non-executable loader audit until those blockers are solved. The next on-device
+stage trace is needed to check real symbol coverage.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

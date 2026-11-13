@@ -12,6 +12,7 @@
 #include "android_pthread_compat.h"
 #include "android_tls_compat.h"
 #include "android_thread_attr_compat.h"
+#include "android_thread_lifecycle_compat.h"
 
 typedef struct {
     unsigned requested;
@@ -65,7 +66,8 @@ static bool resolve_compatible_import(const char *name, const char *version,
                             android_fortify_compat_resolve(name, version, library, address) ||
                             android_pthread_compat_resolve(name, version, library, address) ||
                             android_tls_compat_resolve(name, version, library, address) ||
-                            android_thread_attr_compat_resolve(name, version, library, address));
+                            android_thread_attr_compat_resolve(name, version, library, address) ||
+                            android_thread_lifecycle_compat_resolve(name, version, library, address));
     if (supported) {
         imports->supported++;
         return true;
@@ -123,7 +125,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     if (!report)
         return;
     memset(report, 0, sizeof(*report));
-    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.20");
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.21");
     trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
     trace_line(trace, "event=preflight_started");
 
@@ -173,6 +175,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "provider_bionic_pthread=mutex_cond_once_partial");
     trace_line(trace, "provider_bionic_tls=pthread_keys_multiplexed_partial");
     trace_line(trace, "provider_bionic_thread_attr=lp64_stack_detach_guard_partial");
+    trace_line(trace, "provider_bionic_thread_lifecycle=opaque_native_threads_no_bionic_tcb");
     trace_line(trace, "event=scratch_link_started");
     trace_line(trace, "audit_mode=continue_on_unresolved_imports_without_binding");
 
