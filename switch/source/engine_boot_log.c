@@ -125,7 +125,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     if (!report)
         return;
     memset(report, 0, sizeof(*report));
-    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.21");
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.22");
     trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
     trace_line(trace, "event=preflight_started");
 
@@ -157,6 +157,16 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
                (unsigned long long)profile.virtual_image_bytes);
     trace_line(trace, "load_segments=%u", profile.load_segments);
     trace_line(trace, "android_dependencies=%u", profile.needed_count);
+    trace_line(trace, "tls_segment=%s", profile.has_tls_segment ? "present" : "absent");
+    if (profile.has_tls_segment) {
+        trace_line(trace, "tls_initial_image_bytes=%llu",
+                   (unsigned long long)profile.tls_initial_image_bytes);
+        trace_line(trace, "tls_memory_bytes=%llu",
+                   (unsigned long long)profile.tls_memory_bytes);
+        trace_line(trace, "tls_alignment_bytes=%llu",
+                   (unsigned long long)profile.tls_alignment);
+    }
+    trace_line(trace, "tls_thread_pointer_installed=no");
     for (unsigned i = 0; i < profile.needed_count && i < ENGINE_PROBE_MAX_NEEDED; i++) {
         char library[64];
         printable(library, sizeof(library), profile.needed[i]);
@@ -176,6 +186,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "provider_bionic_tls=pthread_keys_multiplexed_partial");
     trace_line(trace, "provider_bionic_thread_attr=lp64_stack_detach_guard_partial");
     trace_line(trace, "provider_bionic_thread_lifecycle=opaque_native_threads_no_bionic_tcb");
+    trace_line(trace, "provider_bionic_arm64_tcb_shadow=prepared_not_installed");
     trace_line(trace, "event=scratch_link_started");
     trace_line(trace, "audit_mode=continue_on_unresolved_imports_without_binding");
 

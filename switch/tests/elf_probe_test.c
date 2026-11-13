@@ -129,6 +129,55 @@ int main(void)
     assert(result.needed_count == 2);
     assert(strcmp(result.needed[0], "liblog.so") == 0);
     assert(strcmp(result.needed[1], "libc.so") == 0);
+    assert(!result.has_tls_segment);
+
+    // AArch64 ELF PT_TLS describes the initialization image and per-thread
+    // memory size. The diagnostic must report it without allocating TLS.
+    make_valid_elf(bytes);
+    put16(bytes + 56, 3);
+    unsigned char *tls = bytes + 64 + 2 * 56;
+    put32(tls, 7); // PT_TLS
+    put64(tls + 8, 0x380);
+    put64(tls + 16, 0x1380);
+    put64(tls + 32, 32);
+    put64(tls + 40, 80);
+    put64(tls + 48, 16);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.has_tls_segment);
+    assert(result.tls_initial_image_bytes == 32);
+    assert(result.tls_memory_bytes == 80);
+    assert(result.tls_alignment == 16);
+
+    put64(tls + 40, 16); // PT_TLS initializer exceeds its memory size.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 40, 80);
+    put64(tls + 48, 24); // Not a power of two.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 48, 16);
+    put64(tls + 16, 0x3000); // Not backed by any PT_LOAD.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 16, 0x1380);
+    put16(bytes + 56, 4);
+    unsigned char *second_tls = bytes + 64 + 3 * 56;
+    memcpy(second_tls, tls, 56); // Ambiguous second initializer.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put16(bytes + 56, 3);
+    tls = bytes + 64 + 2 * 56;
+    put32(tls, 7);
+    put64(tls + 16, 0x1380);
+    put64(tls + 40, 64); // Zero-filled TLS needs no file initializer.
+    put64(tls + 48, 16);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.has_tls_segment && result.tls_initial_image_bytes == 0);
+    assert(result.tls_memory_bytes == 64);
 
     make_auditable_elf(bytes);
     result = inspect(bytes, sizeof(bytes));
@@ -294,6 +343,6 @@ int main(void)
     engine_probe_file("/a/file/that/does/not/exist", &result);
     assert(result.status == ENGINE_PROBE_NOT_FOUND);
 
-    puts("elf_probe_test: 23 checks passed");
+    puts("elf_probe_test: 29 checks passed");
     return 0;
 }

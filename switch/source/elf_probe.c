@@ -15,6 +15,7 @@ enum {
     ELF_TYPE_SHARED_OBJECT = 3,
     PT_LOAD = 1,
     PT_DYNAMIC = 2,
+    PT_TLS = 7,
     MAX_PROGRAM_HEADERS = 128,
     MAX_DYNAMIC_BYTES = 1024 * 1024,
     MAX_NEEDED_OFFSETS = 128,
@@ -269,6 +270,7 @@ static void engine_probe_stream_to(FILE *file, EngineProbeResult *result,
     uint64_t highest_load = 0;
     uint64_t dynamic_offset = 0;
     uint64_t dynamic_size = 0;
+    uint64_t tls_virtual_address = 0;
     unsigned char ph[PROGRAM_HEADER_BYTES];
     for (unsigned i = 0; i < ph_count; i++) {
         if (!read_at(file, ph_offset + (uint64_t)i * ph_size, ph, sizeof(ph))) {
@@ -282,6 +284,27 @@ static void engine_probe_stream_to(FILE *file, EngineProbeResult *result,
         const uint64_t file_bytes = read64(ph + 32);
         const uint64_t memory_bytes = read64(ph + 40);
         const uint64_t alignment = read64(ph + 48);
+
+        if (type == PT_TLS) {
+            // PT_TLS is a template for each thread, not executable memory.
+            // Never accept a second header that could replace its metadata.
+            if (result->has_tls_segment ||
+                !inside(file_offset, file_bytes, result->file_bytes) ||
+                memory_bytes < file_bytes ||
+                virtual_address > UINT64_MAX - memory_bytes ||
+                (alignment > 1 &&
+                 ((alignment & (alignment - 1)) != 0 ||
+                  file_offset % alignment != virtual_address % alignment))) {
+                failure(result, ENGINE_PROBE_INVALID_ELF, "Malformed PT_TLS segment.");
+                return;
+            }
+            result->has_tls_segment = true;
+            result->tls_initial_image_bytes = file_bytes;
+            result->tls_memory_bytes = memory_bytes;
+            result->tls_alignment = alignment;
+            tls_virtual_address = virtual_address;
+            continue;
+        }
 
         if (type != PT_LOAD && type != PT_DYNAMIC)
             continue;
@@ -319,6 +342,16 @@ static void engine_probe_stream_to(FILE *file, EngineProbeResult *result,
     }
 
     result->load_segments = segments_count;
+    if (result->has_tls_segment && result->tls_initial_image_bytes) {
+        // A TLS initializer outside the file-backed load segments would be
+        // unrepresentable to a future linker even if it were readable.
+        uint64_t initializer = 0;
+        if (!virtual_to_file(segments, segments_count, tls_virtual_address,
+                             result->tls_initial_image_bytes, &initializer)) {
+            failure(result, ENGINE_PROBE_INVALID_ELF, "PT_TLS initializer is outside PT_LOAD.");
+            return;
+        }
+    }
     if (segments_count)
         result->virtual_image_bytes = highest_load - lowest_load;
     if (segments_count == 0 || dynamic_size == 0 ||

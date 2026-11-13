@@ -33,7 +33,7 @@ jobs:
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
             switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
-            switch/source/android_thread_lifecycle_compat.c -lm -pthread \
+            switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c -lm -pthread \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
       - name: Test strict Android liblog providers
@@ -78,9 +78,16 @@ jobs:
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/android_thread_lifecycle_compat_test.c \
-            switch/source/android_thread_lifecycle_compat.c switch/source/android_thread_attr_compat.c -pthread \
+            switch/source/android_thread_lifecycle_compat.c switch/source/android_thread_attr_compat.c \
+            switch/source/android_arm64_tcb_shadow.c -pthread \
             -o /tmp/cordial-android-thread-lifecycle-test
           timeout 30s /tmp/cordial-android-thread-lifecycle-test
+      - name: Test Android ARM64 TCB shadow slot layout
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_arm64_tcb_shadow_test.c switch/source/android_arm64_tcb_shadow.c \
+            -o /tmp/cordial-android-arm64-tcb-shadow-test
+          /tmp/cordial-android-arm64-tcb-shadow-test
 
   build:
     runs-on: ubuntu-latest

@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "android_thread_attr_compat.h"
+#include "android_arm64_tcb_shadow.h"
 
 // Bionic's pthread_t is a 64-bit pointer to its own thread structure, not a
 // libnx/newlib pthread_t. Stable, non-reused registry addresses keep an old
@@ -23,6 +24,7 @@ typedef struct {
     bool joinable;
     bool joining;
     bool consumed;
+    AndroidArm64TcbShadow tcb_shadow;
 } ThreadEntry;
 
 static ThreadEntry entries[MAX_BRIDGED_THREADS];
@@ -58,7 +60,16 @@ static ThreadEntry *reserve_entry(void)
         return NULL;
     ThreadEntry *entry = &entries[entry_count++];
     entry->occupied = true;
+    android_arm64_tcb_shadow_init(&entry->tcb_shadow, entry);
     return entry;
+}
+
+const void *const *android_thread_lifecycle_compat_shadow_current(void)
+{
+    if (ensure_identity() != 0)
+        return NULL;
+    ThreadEntry *entry = pthread_getspecific(identity_key);
+    return entry ? android_arm64_tcb_shadow_pointer(&entry->tcb_shadow) : NULL;
 }
 
 static void *native_start(void *opaque)

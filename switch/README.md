@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.21 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.22 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -241,6 +241,15 @@ bridge **does not create Bionic TCB/TLS, implement the complete Android
 runtime, or run Roblox**; its provider mappings are used only in the existing
 non-executable loader audit until those blockers are solved. The next on-device
 stage trace is needed to check real symbol coverage.
+
+Version 0.22 adds read-only `PT_TLS` inspection (initializer size, per-thread
+memory size and alignment) and a tested **ARM64 Bionic TCB shadow** with slots
+`-1` through `7`. Each bridged thread now has a distinct diagnostic TCB
+layout, separate from the host pthread identity. These bytes are **not**
+installed into the CPU's thread-pointer register, and the ELF DTV, Bionic TLS
+object, stack guard and real Bionic thread record remain uninitialized. This
+is an architectural check and helps diagnose the next loader trace; it does
+not let the engine execute or join Roblox games.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

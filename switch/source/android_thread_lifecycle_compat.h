@@ -9,4 +9,7 @@
 bool android_thread_lifecycle_compat_resolve(const char *name, const char *version,
                                              const char *library, uint64_t *address);
 
+// Read-only diagnostic shadow; it is not the CPU's live ARM64 thread pointer.
+const void *const *android_thread_lifecycle_compat_shadow_current(void);
+
 #endif

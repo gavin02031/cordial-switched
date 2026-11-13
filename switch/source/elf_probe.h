@@ -33,6 +33,9 @@ typedef struct {
     uint64_t plt_log_compat_imports;
     uint64_t relr_words;
     uint64_t android_packed_bytes;
+    uint64_t tls_initial_image_bytes;
+    uint64_t tls_memory_bytes;
+    uint64_t tls_alignment;
     unsigned load_segments;
     unsigned executable_segments;
     unsigned writable_segments;
@@ -41,6 +44,7 @@ typedef struct {
     // Sizes/counts come from dynamic ELF tags, not from executing a loader.
     bool has_symbol_versions;
     bool has_unsupported_plt_format;
+    bool has_tls_segment;
     char needed[ENGINE_PROBE_MAX_NEEDED][64];
     char import_names[ENGINE_PROBE_MAX_IMPORT_NAMES][64];
     char detail[112];
