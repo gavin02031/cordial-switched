@@ -139,8 +139,9 @@ typedef struct {
 
 // Three relative relocations into 0x1340, 0x1350 and 0x1360, with
 // Android APS2 grouped offset/info/addend flags. No proprietary code.
-static PackedFixture packed_fixture(unsigned char *bytes, int64_t info,
-                                    int64_t offset_delta, int64_t addend)
+static PackedFixture packed_fixture_from(unsigned char *bytes, int64_t info,
+                                         int64_t offset_delta, int64_t addend,
+                                         int64_t base_offset)
 {
     fixture(bytes);
     unsigned char *dyn = bytes + 0x180;
@@ -148,7 +149,7 @@ static PackedFixture packed_fixture(unsigned char *bytes, int64_t info,
     memcpy(packed, "APS2", 4);
     size_t at = 4;
     at = append_sleb(packed, at, 3); // Total relocations
-    at = append_sleb(packed, at, 0x1330); // Starting virtual offset
+    at = append_sleb(packed, at, base_offset); // Starting virtual offset
     const size_t group_size_at = at;
     at = append_sleb(packed, at, 3); // One group of three
     const size_t flags_at = at;
@@ -163,18 +164,25 @@ static PackedFixture packed_fixture(unsigned char *bytes, int64_t info,
     return (PackedFixture){at, group_size_at, flags_at};
 }
 
-static void ungrouped_packed_fixture(unsigned char *bytes)
+static PackedFixture packed_fixture(unsigned char *bytes, int64_t info,
+                                    int64_t offset_delta, int64_t addend)
+{
+    return packed_fixture_from(bytes, info, offset_delta, addend, 0x1330);
+}
+
+static void ungrouped_packed_fixture(unsigned char *bytes, int64_t base_offset,
+                                     int64_t offset_delta)
 {
     fixture(bytes);
     unsigned char *packed = bytes + 0x2b0;
     memcpy(packed, "APS2", 4);
     size_t at = 4;
     at = append_sleb(packed, at, 3);
-    at = append_sleb(packed, at, 0x1330);
+    at = append_sleb(packed, at, base_offset);
     at = append_sleb(packed, at, 3);
     at = append_sleb(packed, at, 8); // HAS_ADDEND, everything else ungrouped.
     for (unsigned i = 0; i < 3; i++) {
-        at = append_sleb(packed, at, 16); // Offset delta.
+        at = append_sleb(packed, at, offset_delta);
         at = append_sleb(packed, at, 1027); // R_AARCH64_RELATIVE.
         at = append_sleb(packed, at, i == 0 ? -8 : i == 1 ? 8 : 16);
     }
@@ -289,13 +297,32 @@ int main(void)
     assert(get64(stage.image + 0x340) == (uint64_t)(uintptr_t)stage.image - 0x1020);
     engine_stage_release(&stage);
 
-    ungrouped_packed_fixture(bytes);
+    ungrouped_packed_fixture(bytes, 0x1330, 16);
     assert(stage_fixture(bytes, sizeof(bytes), &stage));
     assert(stage.packed_applied == 3);
     const uint64_t bias = (uint64_t)(uintptr_t)stage.image - 0x1000;
     assert(get64(stage.image + 0x340) == bias - 8);
     assert(get64(stage.image + 0x350) == bias);
     assert(get64(stage.image + 0x360) == bias + 16);
+    engine_stage_release(&stage);
+
+    // Bionic accepts signed deltas in both grouped and ungrouped APS2 records.
+    // Keep the test destinations in an actual PT_LOAD segment.
+    packed_fixture_from(bytes, 1027, -16, 0x1380, 0x13d0);
+    assert(stage_fixture(bytes, sizeof(bytes), &stage));
+    assert(stage.packed_applied == 3);
+    for (unsigned i = 0; i < 3; i++)
+        assert(get64(stage.image + 0x3c0 - i * 16) ==
+               (uint64_t)(uintptr_t)(stage.image + 0x380));
+    engine_stage_release(&stage);
+
+    ungrouped_packed_fixture(bytes, 0x13d0, -16);
+    assert(stage_fixture(bytes, sizeof(bytes), &stage));
+    assert(stage.packed_applied == 3);
+    const uint64_t negative_bias = (uint64_t)(uintptr_t)stage.image - 0x1000;
+    assert(get64(stage.image + 0x3c0) == negative_bias - 8);
+    assert(get64(stage.image + 0x3b0) == negative_bias);
+    assert(get64(stage.image + 0x3a0) == negative_bias + 16);
     engine_stage_release(&stage);
 
     packed_fixture(bytes, 1025, 16, 0); // Imported symbol, no resolver.
@@ -334,9 +361,10 @@ int main(void)
     assert(!stage_fixture(bytes, sizeof(bytes), &stage));
     assert(stage.status == ENGINE_STAGE_INVALID);
 
-    packed_fixture(bytes, 1027, -16, 0x1380); // Signed negative offset delta.
+    packed_fixture(bytes, 1027, -0x1400, 0x1380); // Signed delta underflows.
     assert(!stage_fixture(bytes, sizeof(bytes), &stage));
     assert(stage.status == ENGINE_STAGE_INVALID);
+    assert(strstr(stage.detail, "offset overflow"));
 
     packed_fixture(bytes, 1027, 0x1000, 0x1380); // Target beyond PT_LOAD.
     assert(!stage_fixture(bytes, sizeof(bytes), &stage));

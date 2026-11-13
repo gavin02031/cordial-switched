@@ -348,6 +348,24 @@ static bool packed_read(PackedReader *reader, int64_t *value)
     return false;
 }
 
+// APS2 offset deltas are SLEB128 values, including negative deltas. Bionic
+// adds their bit patterns as unsigned offsets; reject wrapping destinations
+// here so the scratch linker never accepts an address outside the ELF image.
+static bool packed_advance_offset(uint64_t *offset, int64_t delta)
+{
+    if (delta < 0) {
+        const uint64_t magnitude = 0 - (uint64_t)delta;
+        if (*offset < magnitude)
+            return false;
+        *offset -= magnitude;
+    } else {
+        if (*offset > UINT64_MAX - (uint64_t)delta)
+            return false;
+        *offset += (uint64_t)delta;
+    }
+    return true;
+}
+
 // Android's bionic APS2 grouped-RELA encoding (linker_reloc_iterators.h).
 // This works ONLY on the non-executable scratch image, never on live code.
 static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
@@ -379,11 +397,11 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
             ((flags & APS2_GROUPED_BY_ADDEND) && !(flags & APS2_HAS_ADDEND)))
             return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 relocation group.");
 
-        uint64_t offset_delta = 0;
+        int64_t offset_delta = 0;
         if (flags & APS2_GROUPED_BY_OFFSET) {
-            if (!packed_read(&reader, &value) || value < 0)
+            if (!packed_read(&reader, &value))
                 return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 offset delta.");
-            offset_delta = (uint64_t)value;
+            offset_delta = value;
         }
         if (flags & APS2_GROUPED_BY_INFO) {
             if (!packed_read(&reader, &value) || value < 0)
@@ -400,13 +418,12 @@ static bool apply_packed_rela(EngineStage *stage, const Segment *segments,
 
         for (uint64_t i = 0; i < (uint64_t)size; i++) {
             if (!(flags & APS2_GROUPED_BY_OFFSET)) {
-                if (!packed_read(&reader, &value) || value < 0)
+                if (!packed_read(&reader, &value))
                     return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 offset delta.");
-                offset_delta = (uint64_t)value;
+                offset_delta = value;
             }
-            if (offset > UINT64_MAX - offset_delta)
+            if (!packed_advance_offset(&offset, offset_delta))
                 return abort_stage(stage, ENGINE_STAGE_INVALID, "APS2 offset overflow.");
-            offset += offset_delta;
             if (!(flags & APS2_GROUPED_BY_INFO)) {
                 if (!packed_read(&reader, &value) || value < 0)
                     return abort_stage(stage, ENGINE_STAGE_INVALID, "Invalid APS2 relocation info.");

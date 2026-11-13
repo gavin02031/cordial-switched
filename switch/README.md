@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.11 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.12 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -132,8 +132,13 @@ The **ZR** action on the Loader profile now runs the existing scratch linker
 against the user's actual `libroblox.so` and the four implemented `liblog`
 adapters. This is the first **on-device relocation attempt with real input**,
 not an engine boot: unsupported imports, graphics and JNI still stop the
-linker, and no library memory becomes executable. The actual result requires
-a user hardware test; host CI cannot access their SD card or attest their APK.
+linker, and no library memory becomes executable. In actual Switch Lite tests,
+the first attempt failed to allocate scratch memory in Album mode; a later
+attempt reached APS2 decoding but reported `Invalid APS2 offset delta`.
+The parser now accepts signed APS2 offset deltas with bounds checks, matching
+Android's linker format. This change passed synthetic host tests, but **has
+not yet been verified against the user's library on Switch hardware**. Host
+CI cannot access their SD card or attest their APK.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:
