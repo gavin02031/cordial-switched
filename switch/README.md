@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.3 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.4 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, and an ARM64 ELF inspection screen. It reads handheld controls and
@@ -74,6 +74,28 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
 /tmp/cordial-elf-probe-test
 ```
 
+### Segment staging experiments (host tests only)
+
+Version 0.4 also compiles `engine_stage.c` into the homebrew build. It can
+construct a **bounded, non-executable scratch image** from an inspected ARM64
+ELF: copy file-backed `PT_LOAD` bytes, zero-fill BSS, and apply the
+`R_AARCH64_RELATIVE` RELA and ELF/Android RELR relative relocations. It checks
+each relocation destination against a real loaded segment and fails closed on
+unknown, symbol-binding, PLT or Android packed relocations. This prepares data
+only; it does not map executable memory, perform bionic symbol resolution,
+verify an APK signature or start Roblox. **The Switch UI does not invoke the
+stager yet**; the validation is against synthetic ELF fixtures, not an actual
+Roblox engine or a Switch Lite hardware run.
+
+The native CI runs these tests, which you can also execute locally:
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+  switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/elf_probe.c \
+  -o /tmp/cordial-engine-stage-test
+/tmp/cordial-engine-stage-test
+```
+
 Do not enter Roblox credentials into this build. It has no login functionality.
 
 ## What needs porting next
@@ -88,9 +110,11 @@ The actual engine port must establish, in order:
 
 1. A working Horizon platform abstraction for memory, threads, TLS and files.
 2. Loading and relocating an **unmodified, user-provided** Android ARM64 ELF
-   library with bionic-compatible symbols. The new `elf_probe.c` only inspects
-   its ELF metadata. `native/` and `third_party/mcpelauncher-linker/` are
-   reference implementations, not yet compiled into this `.nro`.
+   library with bionic-compatible symbols. `elf_probe.c` inspects its ELF
+   metadata; `engine_stage.c` prepares only relative relocations in scratch
+   memory under synthetic tests. `native/` and
+   `third_party/mcpelauncher-linker/` are reference implementations, not yet
+   compiled into this `.nro`.
 3. Working JNI and GameActivity services without Android itself.
 4. A graphics path for the engine's GLES/EGL or Vulkan calls, plus audio,
    inputs and networking.
