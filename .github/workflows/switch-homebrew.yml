@@ -123,6 +123,12 @@ jobs:
             switch/tests/engine_memory_plan_test.c switch/source/engine_memory_plan.c \
             -o /tmp/cordial-memory-plan-test
           /tmp/cordial-memory-plan-test
+      - name: Test phased Horizon code-address reservations
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/horizon_code_address_test.c switch/source/horizon_code_address.c \
+            -o /tmp/cordial-code-address-test
+          /tmp/cordial-code-address-test
       - name: Test final-base ELF image mapping sequence and rollback
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

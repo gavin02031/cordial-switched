@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "horizon_code_address.h"
+
 static bool supported(void)
 {
     return envIsSyscallHinted(0x77) && envIsSyscallHinted(0x78) &&
@@ -13,25 +15,45 @@ static bool supported(void)
 bool horizon_code_memory_reserve(const EngineMemoryPlan *plan,
                                  HorizonCodeMemory *mapping)
 {
+    return horizon_code_memory_reserve_detailed(plan, mapping, NULL);
+}
+
+bool horizon_code_memory_reserve_detailed(const EngineMemoryPlan *plan,
+                                          HorizonCodeMemory *mapping,
+                                          HorizonCodeReserveStatus *status)
+{
+    if (status) *status = HORIZON_RESERVE_INVALID_STATE;
     if (!mapping || mapping->active || mapping->reservation) return false;
     memset(mapping, 0, sizeof(*mapping));
-    if (!engine_memory_plan_validate(plan) || !supported())
+    if (status) *status = HORIZON_RESERVE_INVALID_PLAN;
+    size_t search_bytes;
+    if (!engine_memory_plan_validate(plan) ||
+        !horizon_code_address_search_size(plan, &search_bytes))
         return false;
 
+    if (status) *status = HORIZON_RESERVE_SYSCALL_UNAVAILABLE;
+    if (!supported()) return false;
+
     virtmemLock();
-    void *target = virtmemFindCodeMemory(plan->image_bytes, plan->alignment_bytes);
-    // A misphased load bias violates ELF p_align even when each page is 4 KiB.
-    // Current libnx address finding cannot request a nonzero alignment phase.
-    if (target && (uintptr_t)target % plan->alignment_bytes !=
-                  plan->virtual_page_base % plan->alignment_bytes)
-        target = NULL;
+    // libnx's second argument is guard size. A normal random 4 KiB page is
+    // only 16 KiB phased one quarter of the time for the user's ELF. Search
+    // an extra alignment-minus-page span, then select its correct load bias.
+    void *free_span = virtmemFindCodeMemory(search_bytes, ENGINE_MEMORY_PAGE_BYTES);
+    uintptr_t chosen = 0;
+    void *target = free_span && horizon_code_address_select(
+        plan, (uintptr_t)free_span, search_bytes, &chosen)
+        ? (void *)chosen : NULL;
     void *reservation = target ? virtmemAddReservation(target, plan->image_bytes) : NULL;
     virtmemUnlock();
-    if (!reservation)
+    if (!reservation) {
+        if (status) *status = target ? HORIZON_RESERVE_NO_RESERVATION_MEMORY
+                                     : HORIZON_RESERVE_NO_FREE_SPAN;
         return false;
+    }
 
     *mapping = (HorizonCodeMemory){NULL, target, reservation,
                                    plan->image_bytes, false};
+    if (status) *status = HORIZON_RESERVE_OK;
     return true;
 }
 

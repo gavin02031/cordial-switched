@@ -25,9 +25,23 @@
 #include "engine_stage.h"
 #include "engine_tls_scratch.h"
 #include "engine_tls_thread.h"
+#include "horizon_code_address.h"
 #include "horizon_code_memory.h"
 
 static HorizonCodeMemory reservation;
+
+static const char *reserve_status_name(HorizonCodeReserveStatus status)
+{
+    switch (status) {
+    case HORIZON_RESERVE_OK: return "ok";
+    case HORIZON_RESERVE_INVALID_PLAN: return "invalid_memory_plan";
+    case HORIZON_RESERVE_SYSCALL_UNAVAILABLE: return "required_syscall_unavailable";
+    case HORIZON_RESERVE_NO_FREE_SPAN: return "no_contiguous_code_address_span";
+    case HORIZON_RESERVE_NO_RESERVATION_MEMORY: return "reservation_allocation_failed";
+    case HORIZON_RESERVE_INVALID_STATE: return "reservation_already_active";
+    }
+    return "unknown";
+}
 
 typedef struct {
     char name[80];
@@ -154,7 +168,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.28 final-base real ELF preflight");
+    log_line(log, "# Cordial Switched v0.29 final-base real ELF preflight");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     log_line(log, "event=preflight_started");
@@ -200,12 +214,26 @@ void horizon_real_link_run(RealLinkResult *result)
         goto done;
     }
     log_line(log, "virtual_image_bytes=%zu", plan.image_bytes);
+    size_t search_bytes = 0;
+    if (horizon_code_address_search_size(&plan, &search_bytes))
+        log_line(log, "code_address_search_bytes=%zu", search_bytes);
+    log_line(log, "code_address_alignment_phase=%llu",
+             (unsigned long long)(plan.virtual_page_base % plan.alignment_bytes));
     log_line(log, "event=reserve_final_address");
-    if (!horizon_code_memory_reserve(&plan, &reservation)) {
-        detail(result, "Horizon could not reserve a final code address.");
+    HorizonCodeReserveStatus reserve_status = HORIZON_RESERVE_INVALID_STATE;
+    if (!horizon_code_memory_reserve_detailed(&plan, &reservation, &reserve_status)) {
+        if (reserve_status == HORIZON_RESERVE_NO_FREE_SPAN)
+            detail(result, "No contiguous code address found. Try title override / restart.");
+        else if (reserve_status == HORIZON_RESERVE_SYSCALL_UNAVAILABLE)
+            detail(result, "Horizon code-memory syscalls unavailable in this launch mode.");
+        else
+            detail(result, "Horizon could not reserve a final code address.");
+        log_line(log, "reserve_failure_reason=%s", reserve_status_name(reserve_status));
         log_line(log, "blocker=final_address_reservation_failed");
     } else {
         log_line(log, "event=final_address_reserved");
+        log_line(log, "reserved_code_address_phase=%zu",
+                 (size_t)((uintptr_t)reservation.mapped % plan.alignment_bytes));
         EngineStage stage = {0};
         MissingImport missing = {0};
         log_line(log, "event=strict_final_base_relocation_started");

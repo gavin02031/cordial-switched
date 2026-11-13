@@ -89,6 +89,12 @@ then check:
    encode any media or invent a successful codec handle.
    The log now includes the first missing import's version and provider so a
    correctly rejected API can be distinguished from an absent implementation.
+   v0.29 fixes intermittent Horizon reservation failures: libnx's
+   `virtmemFindCodeMemory` takes a **guard size** as its second argument,
+   not the ELF alignment. The native loader now searches a slightly larger
+   free span and selects the correct 16 KiB load-bias phase within it.
+   Remaining allocation failures are recorded with a specific reason in
+   the numbered `link-XX.txt` report.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

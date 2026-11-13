@@ -15,12 +15,24 @@ typedef struct {
     bool active;
 } HorizonCodeMemory;
 
+typedef enum {
+    HORIZON_RESERVE_OK = 0,
+    HORIZON_RESERVE_INVALID_PLAN,
+    HORIZON_RESERVE_SYSCALL_UNAVAILABLE,
+    HORIZON_RESERVE_NO_FREE_SPAN,
+    HORIZON_RESERVE_NO_RESERVATION_MEMORY,
+    HORIZON_RESERVE_INVALID_STATE
+} HorizonCodeReserveStatus;
+
 // Reserve the final code address BEFORE applying address-sensitive ELF
 // relocations. The caller can then stage the ELF against mapping->mapped,
 // copy the staged bytes to an aligned source, and map the prepared image.
 // A reservation is held until unmap, whether or not a mapping is active.
 bool horizon_code_memory_reserve(const EngineMemoryPlan *plan,
                                  HorizonCodeMemory *mapping);
+bool horizon_code_memory_reserve_detailed(const EngineMemoryPlan *plan,
+                                          HorizonCodeMemory *mapping,
+                                          HorizonCodeReserveStatus *status);
 bool horizon_code_memory_map_reserved(const EngineMemoryPlan *plan,
                                       void *aligned_source,
                                       HorizonCodeMemory *mapping, Result *error);
