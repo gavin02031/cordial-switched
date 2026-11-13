@@ -51,7 +51,7 @@ static void trace_line(FILE *file, const char *format, ...)
 static void fail(LoaderSmokeResult *result, const char *message)
 {
     result->status = LOADER_SMOKE_FAILED;
-    snprintf(result->detail, sizeof(result->detail), "%s", message);
+    snprintf(result->detail, sizeof(result->detail), "%.110s", message);
 }
 
 void horizon_loader_smoke_run(LoaderSmokeResult *result)
