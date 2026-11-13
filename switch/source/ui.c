@@ -51,13 +51,6 @@ static void fill(SDL_Renderer *renderer, int x, int y, int w, int h, SDL_Color c
     SDL_RenderFillRect(renderer, &rect);
 }
 
-static void outline(SDL_Renderer *renderer, int x, int y, int w, int h, SDL_Color colour)
-{
-    SDL_SetRenderDrawColor(renderer, colour.r, colour.g, colour.b, colour.a);
-    SDL_Rect rect = {x, y, w, h};
-    SDL_RenderDrawRect(renderer, &rect);
-}
-
 static void rounded(SDL_Renderer *renderer, int x, int y, int w, int h,
                     int radius, SDL_Color colour)
 {
