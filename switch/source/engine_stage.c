@@ -42,6 +42,10 @@ enum {
     R_AARCH64_ABS64 = 257,
     R_AARCH64_GLOB_DAT = 1025,
     R_AARCH64_JUMP_SLOT = 1026,
+    R_AARCH64_TLS_DTPMOD = 1028,
+    R_AARCH64_TLS_DTPREL = 1029,
+    R_AARCH64_TLS_TPREL = 1030,
+    R_AARCH64_TLSDESC = 1031,
     PAGE_SIZE = 4096,
     APS2_GROUPED_BY_INFO = 1,
     APS2_GROUPED_BY_OFFSET = 2,
@@ -239,7 +243,11 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
 {
     const uint32_t type = (uint32_t)info;
     const uint32_t sym_index = (uint32_t)(info >> 32);
-    unsigned char *target = load_at(stage, segments, count, destination, 8, false);
+    const bool tls = type >= R_AARCH64_TLS_DTPMOD && type <= R_AARCH64_TLSDESC;
+    // A TLSDESC stores two pointer-sized words. Even in NX audit mode its
+    // complete destination must be backed by a real PT_LOAD segment.
+    const size_t target_bytes = type == R_AARCH64_TLSDESC ? 16 : 8;
+    unsigned char *target = load_at(stage, segments, count, destination, target_bytes, false);
     if ((destination & 7) || !target)
         return abort_stage(stage, ENGINE_STAGE_INVALID,
                            "RELA target is outside PT_LOAD or unaligned.");
@@ -252,9 +260,23 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
     }
 
     if (type != R_AARCH64_ABS64 && type != R_AARCH64_GLOB_DAT &&
-        type != R_AARCH64_JUMP_SLOT)
-        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                           "Relocation needs the full Android linker.");
+        type != R_AARCH64_JUMP_SLOT) {
+        if (audit_missing) {
+            // Do not invent a DTV, TLS descriptor resolver or any other ABI
+            // state. The scratch memory is NX and discarded, so it is safe to
+            // retain the unmodified relocation bytes for diagnostic counts.
+            if (stage->unsupported_relocations_seen != UINT_MAX)
+                stage->unsupported_relocations_seen++;
+            if (tls && stage->tls_relocations_seen != UINT_MAX)
+                stage->tls_relocations_seen++;
+            if (type == R_AARCH64_TLSDESC && stage->tlsdesc_relocations_seen != UINT_MAX)
+                stage->tlsdesc_relocations_seen++;
+            return true;
+        }
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION, tls
+                           ? "Android TLS relocation requires Bionic DTV/TLS runtime."
+                           : "Relocation needs the full Android linker.");
+    }
     if (!resolver)
         return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
                            "External-symbol relocation needs a symbol resolver.");
@@ -669,6 +691,14 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
         }
     }
 
+    if (stage->unsupported_relocations_seen) {
+        char detail[120];
+        snprintf(detail, sizeof(detail),
+                 "%u unsupported relocations (%u TLS, %u TLSDESC); %u missing imports.",
+                 stage->unsupported_relocations_seen, stage->tls_relocations_seen,
+                 stage->tlsdesc_relocations_seen, missing_count);
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION, detail);
+    }
     if (missing_count) {
         char detail[120];
         snprintf(detail, sizeof(detail), "%u unresolved imports; scratch audit only.",

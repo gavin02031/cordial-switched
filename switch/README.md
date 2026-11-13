@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.23 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.24 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -259,6 +259,16 @@ tests, along with bad alignment, truncation and size limits. The copy is
 discarded after the read-only diagnostic. It is **not** registered with a
 dynamic thread vector or the CPU thread pointer: actual Bionic TLS, relocations
 and Roblox startup remain blocked.
+
+Version 0.24 improves the **non-executable AArch64 relocation audit**: it
+recognizes Android's four DTPMOD, DTPREL, TPREL and TLSDESC relocation kinds,
+validates their target ranges (including the TLSDESC two-word slot), and
+records counts without modifying their target bytes or fabricating a Bionic
+thread vector. The read-only scan now continues after unsupported relocations
+so a later missing import or TLS blocker is not hidden by the first failure.
+Loader → ZR exports `unsupported_relocations_seen`, `tls_relocations_seen`
+and `tlsdesc_relocations_seen`; the result remains a failed preflight whenever
+unsupported types occur. This **does not execute Roblox**.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

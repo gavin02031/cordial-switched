@@ -138,7 +138,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     if (!report)
         return;
     memset(report, 0, sizeof(*report));
-    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.23");
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.24");
     trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
     trace_line(trace, "event=preflight_started");
 
@@ -207,7 +207,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "provider_bionic_thread_lifecycle=opaque_native_threads_no_bionic_tcb");
     trace_line(trace, "provider_bionic_arm64_tcb_shadow=prepared_not_installed");
     trace_line(trace, "event=scratch_link_started");
-    trace_line(trace, "audit_mode=continue_on_unresolved_imports_without_binding");
+    trace_line(trace, "audit_mode=continue_on_unresolved_imports_and_unsupported_relocations_nx");
 
     // The real file is read again, but never mapped as executable memory.
     EngineStage stage = {0};
@@ -219,6 +219,9 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     printable(safe, sizeof(safe), stage.detail);
     trace_line(trace, "scratch_link=%s", stage_status_name(stage.status));
     trace_line(trace, "scratch_link_detail=%s", safe);
+    trace_line(trace, "unsupported_relocations_seen=%u", stage.unsupported_relocations_seen);
+    trace_line(trace, "tls_relocations_seen=%u", stage.tls_relocations_seen);
+    trace_line(trace, "tlsdesc_relocations_seen=%u", stage.tlsdesc_relocations_seen);
     trace_line(trace, "import_lookups=%u", imports.requested);
     trace_line(trace, "supported_imports=%u", imports.supported);
     trace_line(trace, "missing_import_lookups=%u", imports.missing);

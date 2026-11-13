@@ -28,6 +28,10 @@ typedef struct {
     unsigned relr_applied;
     unsigned packed_applied;
     unsigned symbol_applied;
+    // Counts may be partial if malformed input stops the read-only scan.
+    unsigned unsupported_relocations_seen;
+    unsigned tls_relocations_seen;
+    unsigned tlsdesc_relocations_seen;
     char detail[120];
 } EngineStage;
 
@@ -42,9 +46,10 @@ typedef bool (*EngineSymbolResolver)(const char *name, const char *version,
                                      void *context);
 bool engine_stage_stream_resolved(FILE *file, EngineStage *stage,
                                   EngineSymbolResolver resolver, void *context);
-// Audit mode continues past missing imports in non-executable scratch memory,
-// recording each resolver failure without inventing ABI-compatible addresses.
-// It always reports UNRESOLVED_SYMBOL when any import was unavailable.
+// Audit mode continues past missing imports and unsupported relocations in
+// non-executable scratch memory, without fabricating ABI-compatible addresses
+// or Android TLS. It reports UNSUPPORTED_RELOCATION if any unsupported types
+// were seen, otherwise UNRESOLVED_SYMBOL if any import was unavailable.
 bool engine_stage_stream_audit(FILE *file, EngineStage *stage,
                                EngineSymbolResolver resolver, void *context);
 void engine_stage_release(EngineStage *stage);

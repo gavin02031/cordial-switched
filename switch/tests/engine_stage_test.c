@@ -408,6 +408,50 @@ int main(void)
     assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
     assert(stage.image == NULL);
 
+    // AArch64 TLS relocations require an actual Bionic module ID, DTV and
+    // thread-pointer setup; the scratch stager must never pretend to bind.
+    const uint32_t tls_kinds[] = {1028, 1029, 1030, 1031};
+    for (unsigned kind = 0; kind < sizeof(tls_kinds) / sizeof(tls_kinds[0]); kind++) {
+        fixture(bytes);
+        put64(bytes + 0x248, tls_kinds[kind]);
+        assert(!stage_fixture(bytes, sizeof(bytes), &stage));
+        assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+        assert(strstr(stage.detail, "Bionic DTV/TLS"));
+
+        assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
+        assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+        assert(stage.unsupported_relocations_seen == 1);
+        assert(stage.tls_relocations_seen == 1);
+        assert(stage.tlsdesc_relocations_seen == (tls_kinds[kind] == 1031));
+        assert(stage.image == NULL);
+        assert(strstr(stage.detail, "1 unsupported relocations"));
+    }
+
+    packed_fixture(bytes, 1028, 16, 0); // 3 APS2 TLS module relocations.
+    assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+    assert(stage.unsupported_relocations_seen == 3);
+    assert(stage.tls_relocations_seen == 3);
+    assert(stage.tlsdesc_relocations_seen == 0);
+    assert(stage.image == NULL);
+
+    // An unknown non-TLS relocation is still counted, never mislabeled TLS.
+    fixture(bytes);
+    put64(bytes + 0x248, 9999);
+    assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+    assert(stage.unsupported_relocations_seen == 1);
+    assert(stage.tls_relocations_seen == 0);
+
+    // TLSDESC is two pointers, so a target spanning the PT_LOAD boundary
+    // must fail even if its first eight bytes are inside the segment.
+    fixture(bytes);
+    put64(bytes + 0x240, 0x15f8);
+    put64(bytes + 0x248, 1031);
+    assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+    assert(stage.unsupported_relocations_seen == 0);
+
     fixture(bytes);
     put64(bytes + 0x240, 0x5000); // Relocation destination outside image.
     assert(!stage_fixture(bytes, sizeof(bytes), &stage));
@@ -523,6 +567,33 @@ int main(void)
     boot_fixture(bytes, sizeof(bytes), &audited_boot, audited_log, sizeof(audited_log));
     assert(strstr(audited_log, "missing_import_lookups=2"));
     assert(strstr(audited_log, "missing_import_2=sample_symbol"));
+    assert(strstr(audited_log, "engine_executed=no"));
+
+    // One missing imported function must not hide a later TLS relocation.
+    // Audit both, reject the stage, and preserve the actionable counts.
+    symbol_fixture(bytes, 1025, false);
+    add_dynamic(bytes + 0x180, 4, 8, 48);
+    put64(bytes + 0x258, 0x1378);
+    put64(bytes + 0x260, 1030);
+    put64(bytes + 0x268, 0);
+    assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
+    assert(stage.unsupported_relocations_seen == 1);
+    assert(stage.tls_relocations_seen == 1);
+    assert(strstr(stage.detail, "1 missing imports"));
+    boot_fixture(bytes, sizeof(bytes), &audited_boot, audited_log, sizeof(audited_log));
+    assert(strstr(audited_log, "missing_import_lookups=1"));
+    assert(strstr(audited_log, "unsupported_relocations_seen=1"));
+    assert(strstr(audited_log, "tls_relocations_seen=1"));
+    assert(strstr(audited_log, "tlsdesc_relocations_seen=0"));
+    assert(strstr(audited_log, "engine_executed=no"));
+
+    fixture(bytes);
+    put64(bytes + 0x248, 1031);
+    boot_fixture(bytes, sizeof(bytes), &audited_boot, audited_log, sizeof(audited_log));
+    assert(strstr(audited_log, "tls_relocations_seen=1"));
+    assert(strstr(audited_log, "tlsdesc_relocations_seen=1"));
+    assert(strstr(audited_log, "scratch_link=UNSUPPORTED_RELOCATION"));
     assert(strstr(audited_log, "engine_executed=no"));
 
     symbol_fixture(bytes, 1025, false);
@@ -683,6 +754,6 @@ int main(void)
     assert(!boot.stage_attempted);
     assert(strstr(log, "blocker=INSPECTION_FAILED"));
 
-    puts("engine_stage_test: 52 scenarios passed");
+    puts("engine_stage_test: all assertions passed");
     return 0;
 }
