@@ -6,6 +6,7 @@
 #include <SDL.h>
 
 #include "elf_probe.h"
+#include "jit_probe.h"
 
 #define UI_WIDTH 1280
 #define UI_HEIGHT 720
@@ -27,6 +28,7 @@ typedef struct {
     double frame_ms;
     char renderer_name[48];
     EngineProbeResult engine;
+    JitProbeResult jit;
 } UiState;
 
 bool ui_init(SDL_Renderer *renderer);

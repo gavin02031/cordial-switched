@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.4 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.5 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, and an ARM64 ELF inspection screen. It reads handheld controls and
@@ -42,7 +42,10 @@ then check:
    turns the ambient movement on and off.
 4. Check the Performance page after a few seconds. Report the renderer type,
    average UI frame rate and any stutters; do not treat it as Roblox FPS.
-5. **Plus** returns to the Homebrew Menu without a crash.
+5. On the Engine tab, press **X** (or tap **X: TEST JIT**) to try the optional
+   isolated executable-memory check described below. It does **not** require
+   a Roblox library, and it does **not** launch Roblox.
+6. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
 
@@ -76,7 +79,7 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
 
 ### Segment staging experiments (host tests only)
 
-Version 0.4 also compiles `engine_stage.c` into the homebrew build. It can
+Version 0.4 and later also compile `engine_stage.c` into the homebrew build. It can
 construct a **bounded, non-executable scratch image** from an inspected ARM64
 ELF: copy file-backed `PT_LOAD` bytes, zero-fill BSS, and apply the
 `R_AARCH64_RELATIVE` RELA and ELF/Android RELR relative relocations. It checks
@@ -95,6 +98,30 @@ cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
   -o /tmp/cordial-engine-stage-test
 /tmp/cordial-engine-stage-test
 ```
+
+### Executable-memory capability check (v0.5)
+
+Version 0.5 adds an **opt-in hardware JIT check** on the Engine page, using
+libnx's `jitCreate`, `jitTransitionToExecutable`, and `jitClose` API. After
+pressing **X**, it allocates a single 4 KiB JIT page, copies **only two
+hard-coded instructions** (`movz w0, #42; ret`) into the writable alias,
+flushes the data cache, transitions to RX, invalidates the instruction cache,
+calls this small function, checks that it returns 42, and releases the page.
+The result is shown on screen, including the libnx error code on failure.
+The check is never triggered automatically at launch.
+
+The memory capability can legitimately be unavailable depending on Horizon
+homebrew permissions, launch mode, firmware or system configuration. **A
+successful compilation on GitHub Actions is not a successful hardware test.**
+Until an actual Switch Lite run reports `JIT execution: VERIFIED` and
+`ARM64 test returned 42`, execution is unverified; even a successful result
+would prove only a tiny native test, not the Android/Roblox engine.
+
+This probe **never loads or executes `libroblox.so` or any external code**.
+The staged ELF image remains non-executable and disconnected from the probe.
+Running the full engine will additionally require executable pages with the
+correct memory permissions, relocations against the final code addresses,
+Android-compatible dynamic linking, JNI, graphics, services and more.
 
 Do not enter Roblox credentials into this build. It has no login functionality.
 

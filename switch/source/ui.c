@@ -279,7 +279,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.4", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.5", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -457,9 +457,22 @@ static void engine(SDL_Renderer *renderer, const UiState *state)
         label(renderer, 340, 425, FONT_SMALL, MUTED,
               "This scanner never downloads or executes Roblox code.");
     }
-    label(renderer, 339, 568, FONT_SMALL, PINK,
-          "Inspection is not loading, signature verification or login.");
-    label(renderer, 340, 598, FONT_SMALL, MUTED, "Press Y to rescan after adding a library.");
+    const char *jit_status = "NOT TESTED";
+    switch (state->jit.status) {
+    case JIT_PROBE_VERIFIED: jit_status = "VERIFIED"; break;
+    case JIT_PROBE_NOT_RUN: break;
+    default: jit_status = "UNAVAILABLE / FAILED"; break;
+    }
+    char jit_line[80];
+    snprintf(jit_line, sizeof(jit_line), "JIT execution: %s", jit_status);
+    label(renderer, 339, 559, FONT_SMALL,
+          state->jit.status == JIT_PROBE_VERIFIED ? MINT : LAVENDER, jit_line);
+    if (state->jit.status != JIT_PROBE_NOT_RUN)
+        label(renderer, 339, 588, FONT_SMALL, MUTED, state->jit.detail);
+    badge(renderer, 982, 568, 204, "X: TEST JIT",
+          (SDL_Color){54, 46, 83, 220}, LAVENDER);
+    label(renderer, 339, 613, FONT_SMALL, PINK,
+          "Only our tiny ARM64 test runs. Roblox stays offline. Y: rescan.");
 }
 
 void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
@@ -490,6 +503,6 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
     }
 
     label(renderer, 312, 666, FONT_SMALL, MUTED,
-          "L/R or A/B: pages   |   X: animations   |   Y: rescan   |   PLUS: exit");
+          "L/R or A/B: pages   |   X: context action   |   Y: rescan   |   PLUS: exit");
     label(renderer, 1050, 666, FONT_SMALL, LAVENDER, "60 Hz UI target");
 }
