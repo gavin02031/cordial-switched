@@ -13,6 +13,7 @@
 #include "android_tls_compat.h"
 #include "android_thread_attr_compat.h"
 #include "android_thread_lifecycle_compat.h"
+#include "engine_tls_scratch.h"
 
 typedef struct {
     unsigned requested;
@@ -120,12 +121,24 @@ static const char *stage_status_name(EngineStageStatus status)
     }
 }
 
+static const char *tls_status_name(EngineTlsScratchStatus status)
+{
+    switch (status) {
+    case ENGINE_TLS_ABSENT: return "ABSENT";
+    case ENGINE_TLS_PREPARED: return "SCRATCH_COPIED";
+    case ENGINE_TLS_TOO_LARGE: return "TOO_LARGE";
+    case ENGINE_TLS_IO_ERROR: return "IO_ERROR";
+    case ENGINE_TLS_NO_MEMORY: return "NO_MEMORY";
+    default: return "INVALID_TEMPLATE";
+    }
+}
+
 void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
 {
     if (!report)
         return;
     memset(report, 0, sizeof(*report));
-    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.22");
+    trace_line(trace, "# Cordial Switched ARM64 engine bootstrap audit v0.23");
     trace_line(trace, "# Engine instructions are NEVER executed by this diagnostic.");
     trace_line(trace, "event=preflight_started");
 
@@ -167,6 +180,12 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
                    (unsigned long long)profile.tls_alignment);
     }
     trace_line(trace, "tls_thread_pointer_installed=no");
+    EngineTlsScratch tls_scratch = {0};
+    EngineTlsScratchStatus tls_status = engine_tls_scratch_prepare(source, &profile,
+                                                                   &tls_scratch);
+    trace_line(trace, "tls_scratch_copy=%s", tls_status_name(tls_status));
+    trace_line(trace, "tls_scratch_active=no");
+    engine_tls_scratch_release(&tls_scratch);
     for (unsigned i = 0; i < profile.needed_count && i < ENGINE_PROBE_MAX_NEEDED; i++) {
         char library[64];
         printable(library, sizeof(library), profile.needed[i]);

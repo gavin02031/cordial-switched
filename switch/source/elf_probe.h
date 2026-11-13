@@ -36,6 +36,7 @@ typedef struct {
     uint64_t tls_initial_image_bytes;
     uint64_t tls_memory_bytes;
     uint64_t tls_alignment;
+    uint64_t tls_file_offset;
     unsigned load_segments;
     unsigned executable_segments;
     unsigned writable_segments;

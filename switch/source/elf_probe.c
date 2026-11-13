@@ -302,6 +302,7 @@ static void engine_probe_stream_to(FILE *file, EngineProbeResult *result,
             result->tls_initial_image_bytes = file_bytes;
             result->tls_memory_bytes = memory_bytes;
             result->tls_alignment = alignment;
+            result->tls_file_offset = file_offset;
             tls_virtual_address = virtual_address;
             continue;
         }

@@ -33,7 +33,8 @@ jobs:
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
             switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
-            switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c -lm -pthread \
+            switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c \
+            switch/source/engine_tls_scratch.c -lm -pthread \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
       - name: Test strict Android liblog providers
@@ -88,6 +89,12 @@ jobs:
             switch/tests/android_arm64_tcb_shadow_test.c switch/source/android_arm64_tcb_shadow.c \
             -o /tmp/cordial-android-arm64-tcb-shadow-test
           /tmp/cordial-android-arm64-tcb-shadow-test
+      - name: Test Android ELF TLS scratch templates
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_tls_scratch_test.c switch/source/engine_tls_scratch.c \
+            -o /tmp/cordial-android-elf-tls-scratch-test
+          /tmp/cordial-android-elf-tls-scratch-test
 
   build:
     runs-on: ubuntu-latest

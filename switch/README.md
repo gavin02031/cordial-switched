@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.22 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.23 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -250,6 +250,15 @@ installed into the CPU's thread-pointer register, and the ELF DTV, Bionic TLS
 object, stack guard and real Bionic thread record remain uninitialized. This
 is an architectural check and helps diagnose the next loader trace; it does
 not let the engine execute or join Roblox games.
+
+Version 0.23 adds a bounded **non-executable PT_TLS scratch-template copier**.
+Loader → ZR now reports whether it copied the file-backed initializer and
+zero-filled the remaining per-thread memory, respecting the ELF alignment and
+rejecting templates over 1 MiB. Two independent copies are verified by host
+tests, along with bad alignment, truncation and size limits. The copy is
+discarded after the read-only diagnostic. It is **not** registered with a
+dynamic thread vector or the CPU thread pointer: actual Bionic TLS, relocations
+and Roblox startup remain blocked.
 
 The inspector is independently tested on the development host using synthetic
 ELF images with no proprietary content:

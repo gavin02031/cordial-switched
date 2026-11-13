@@ -650,6 +650,26 @@ int main(void)
     assert(strstr(log, "engine_executed=no"));
     assert(strstr(log, "ANDROID_RUNTIME_AND_SIGNATURE_VERIFICATION_MISSING"));
 
+    fixture(bytes);
+    put16(bytes + 56, 3); // Add PT_TLS to an otherwise valid read-only fixture.
+    unsigned char *tls_ph = bytes + 64 + 2 * 56;
+    put32(tls_ph, 7);
+    put64(tls_ph + 8, 0x3c0);
+    put64(tls_ph + 16, 0x13c0);
+    put64(tls_ph + 32, 8);
+    put64(tls_ph + 40, 32);
+    put64(tls_ph + 48, 16);
+    for (unsigned i = 0; i < 8; i++)
+        bytes[0x3c0 + i] = (unsigned char)(0xa0 + i);
+    boot_fixture(bytes, sizeof(bytes), &boot, log, sizeof(log));
+    assert(boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(log, "tls_segment=present"));
+    assert(strstr(log, "tls_initial_image_bytes=8"));
+    assert(strstr(log, "tls_memory_bytes=32"));
+    assert(strstr(log, "tls_scratch_copy=SCRATCH_COPIED"));
+    assert(strstr(log, "tls_scratch_active=no"));
+    assert(strstr(log, "engine_executed=no"));
+
     symbol_fixture(bytes, 1025, false);
     boot_fixture(bytes, sizeof(bytes), &boot, log, sizeof(log));
     assert(boot.stage_status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
@@ -663,6 +683,6 @@ int main(void)
     assert(!boot.stage_attempted);
     assert(strstr(log, "blocker=INSPECTION_FAILED"));
 
-    puts("engine_stage_test: 51 scenarios passed");
+    puts("engine_stage_test: 52 scenarios passed");
     return 0;
 }
