@@ -1,4 +1,5 @@
 #include "engine_runtime_image.h"
+#include "engine_loader_fixture.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -92,6 +93,7 @@ static FILE *fixture_file(unsigned char *bytes)
 
 typedef struct {
     uint64_t chosen_base;
+    uint64_t expected_addend;
     unsigned reserves;
     unsigned maps;
     unsigned releases;
@@ -119,7 +121,8 @@ static bool fake_map(void *context, const EngineMemoryPlan *plan, void *source)
     assert(plan->image_bytes == 4096);
     assert(((uintptr_t)source & 4095u) == 0);
     fake->relocated_correctly =
-        get64((unsigned char *)source + 0x340) == fake->chosen_base + 0x380;
+        get64((unsigned char *)source + 0x340) == fake->chosen_base +
+            (fake->expected_addend ? fake->expected_addend : 0x380);
     return !fake->fail_map;
 }
 
@@ -157,6 +160,16 @@ int main(void)
     assert(!image.reserved && !image.aligned_source && !image.plan.runs);
     assert(fake.releases == 1);
     fclose(file);
+
+    // The same tiny ELF used on the Lite must link against the final address.
+    engine_loader_fixture_make(bytes);
+    fake = (FakeMemory){.chosen_base = 0x900000, .expected_addend = 0x300};
+    file = fixture_file(bytes);
+    assert(engine_runtime_image_prepare(file, NULL, NULL, &platform, &image));
+    assert(fake.relocated_correctly && image.mapped);
+    assert(engine_runtime_image_release(&platform, &image));
+    fclose(file);
+    fixture(bytes);
 
     // A reservation error must not call release, map, or stage an image.
     fake = (FakeMemory){.chosen_base = 0x900000, .fail_reserve = true};

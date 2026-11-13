@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.24 includes a 720p GPU-first
+Cordial's existing Linux binaries. Version 0.25 includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -62,7 +62,15 @@ then check:
    count and up to 24 missing-import examples. It never includes engine bytes
    or credentials, and does **not**
    call a Roblox function. Logs are numbered and previous reports are kept.
-7. **Plus** returns to the Homebrew Menu without a crash.
+7. On the **Loader** page, click **R3** (right stick) to run the opt-in
+   synthetic ARM64 ELF mapping check. It writes only an original 1 KiB
+   fixture, reserves and maps a 4 KiB page, verifies a relative relocation,
+   calls its two-instruction `movz w0,#42; ret` function and releases the page.
+   It saves a numbered `map-XX.txt` log under `sdmc:/switch/cordial-switched/`
+   and removes the temporary fixture. **It never reads or runs `libroblox.so`.**
+   This v0.25 test passed synthetic host checks; real Switch Lite execution
+   remains unverified until a device log is collected.
+8. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
 
