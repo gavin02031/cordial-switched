@@ -97,6 +97,18 @@ int main(void)
     size_t (*checked_strlen)(const char *, size_t) =
         (size_t (*)(const char *, size_t))(uintptr_t)address;
     assert(checked_strlen(destination, 5) == 4);
+    assert(android_fortify_compat_resolve("__strcpy_chk", "LIBC", "libc.so", &address));
+    char *(*checked_strcpy)(char *, const char *, size_t) =
+        (char *(*)(char *, const char *, size_t))(uintptr_t)address;
+    // Source is only three bytes long; a larger destination bound must not
+    // be used as a source scan limit (ASan catches that regression).
+    char short_source[3] = {'o', 'k', 0};
+    char copied[32] = {0};
+    assert(checked_strcpy(copied, short_source, sizeof(copied)) == copied);
+    assert(strcmp(copied, "ok") == 0);
+    assert(checked_strcpy(copied, short_source, 3) == copied);
+    assert(!android_fortify_compat_resolve("__strcpy_chk", "LIBC_N", "libc.so", &address));
+    assert(!android_fortify_compat_resolve("__strcpy_chk", "LIBC", "libm.so", &address));
     assert(android_fortify_compat_resolve("__strncpy_chk2", "LIBC", "libc.so", &address));
     char *(*checked_strncpy2)(char *, const char *, size_t, size_t, size_t) =
         (char *(*)(char *, const char *, size_t, size_t, size_t))(uintptr_t)address;
@@ -138,6 +150,15 @@ int main(void)
     assert(child >= 0);
     if (child == 0) {
         checked_mempcpy(destination, "unsafe", 7, 2);
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        checked_strcpy(copied, "overflow", 3);
         _exit(99);
     }
     assert(waitpid(child, &status, 0) == child);
