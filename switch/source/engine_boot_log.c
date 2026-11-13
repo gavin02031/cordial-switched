@@ -7,6 +7,7 @@
 #include "android_log_compat.h"
 #include "android_media_codec_compat.h"
 #include "android_cxa_compat.h"
+#include "android_looper_compat.h"
 #include "android_media_format_compat.h"
 #include "android_math_compat.h"
 #include "android_libc_compat.h"
@@ -67,6 +68,7 @@ static bool resolve_compatible_import(const char *name, const char *version,
                             android_media_codec_compat_resolve(name, version, library, address) ||
                             android_media_format_compat_resolve(name, version, library, address) ||
                             android_cxa_compat_resolve(name, version, library, address) ||
+                            android_looper_compat_resolve(name, version, library, address) ||
                             android_math_compat_resolve(name, version, library, address) ||
                             android_libc_compat_resolve(name, version, library, address) ||
                             android_stdio_compat_resolve(name, version, library, address) ||
@@ -204,6 +206,7 @@ void engine_boot_preflight(FILE *source, FILE *trace, EngineBootReport *report)
     trace_line(trace, "apk_signature_verified=no");
     trace_line(trace, "platform_bionic_jni_gameactivity=not_connected");
     trace_line(trace, "platform_egl_gles=not_connected");
+    trace_line(trace, "platform_android_looper=native_fd_poll_callbacks_no_gameactivity");
     trace_line(trace, "provider_bionic_stdio=partial_wrapped");
     trace_line(trace, "provider_bionic_libc=partial_abi_checked");
     trace_line(trace, "provider_bionic_fortify=checked_bounds_partial");

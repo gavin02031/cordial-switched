@@ -109,6 +109,14 @@ then check:
    `__register_atfork` import is **not** claimed as working: actual process-fork
    semantics are not implemented. This is a linker-runtime component, not
    evidence of successful Roblox engine execution.
+   v0.32 implements the seven imported Android NDK `ALooper_*` APIs
+   against native file-descriptor polling: thread-local loopers, bounded
+   registration/replacement/removal, correct timeout/error results, and
+   callback invocation without holding the registration mutex. Callbacks
+   returning zero are removed, and all observed callbacks in a poll batch run.
+   This is not a GameActivity or JNI implementation. The libnx socket/poll
+   backend has not been confirmed on the user's actual command-pipe fds, so
+   hardware startup remains **unverified**.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

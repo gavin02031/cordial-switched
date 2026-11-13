@@ -734,6 +734,18 @@ int main(void)
     assert(strstr(cxa_trace, "supported_imports=1"));
     assert(strstr(cxa_trace, "engine_executed=no"));
 
+    // ALooper imports have no LIBC version: the Android NDK owns their ABI,
+    // and the full staging audit binds the real poll/callback adapter.
+    symbol_fixture(bytes, 1025, false);
+    memset(bytes + 0x301, 0, 24);
+    memcpy(bytes + 0x301, "ALooper_addFd", 14);
+    EngineBootReport looper_boot;
+    char looper_trace[4096];
+    boot_fixture(bytes, sizeof(bytes), &looper_boot, looper_trace, sizeof(looper_trace));
+    assert(looper_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(looper_trace, "supported_imports=1"));
+    assert(strstr(looper_trace, "engine_executed=no"));
+
     // The first missing import in the real Switch Lite v0.13 log was
     // stderr@LIBC. Resolve it through the genuine Bionic FILE* data adapter,
     // rather than pointing the relocation at newlib's incompatible FILE.
