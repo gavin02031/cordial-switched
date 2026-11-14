@@ -19,6 +19,15 @@ typedef struct {
 
 static NativeWindow *windows[MAX_NATIVE_WINDOWS];
 static pthread_mutex_t windows_lock = PTHREAD_MUTEX_INITIALIZER;
+static AndroidNativeWindowJavaSameObject same_java_object;
+
+void android_native_window_compat_set_reference_matcher(
+    AndroidNativeWindowJavaSameObject matcher)
+{
+    pthread_mutex_lock(&windows_lock);
+    same_java_object = matcher;
+    pthread_mutex_unlock(&windows_lock);
+}
 
 static NativeWindow *find_surface(void *surface)
 {
@@ -126,6 +135,15 @@ static NativeWindow *window_from_surface(void *env, void *surface)
     if (!env || !surface) return NULL;
     pthread_mutex_lock(&windows_lock);
     NativeWindow *window = find_surface(surface);
+    if (!window && same_java_object) {
+        for (unsigned i = 0; i < MAX_NATIVE_WINDOWS; i++) {
+            if (!windows[i] || !windows[i]->bound) continue;
+            if (same_java_object(env, surface, windows[i]->java_surface)) {
+                window = windows[i];
+                break;
+            }
+        }
+    }
     if (window && window->references < UINT_MAX) window->references++;
     else window = NULL;
     pthread_mutex_unlock(&windows_lock);

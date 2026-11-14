@@ -79,9 +79,9 @@ public:
 std::shared_ptr<HorizonGameActivity> game_activity_owner;
 jobject game_activity_reference;
 
-bool same_java_asset_object(void *environment, void *candidate, void *bound)
+bool same_known_java_object(void *environment, void *candidate, void *bound)
 {
-    // This is called by the NDK bridge, which also serves non-JNI previews.
+    // Both NDK adapters also serve the non-JNI preview.
     // Do not give IsSameObject an arbitrary pointer. The pinned VM represents
     // references as Object*, so only objects in this thread's local frames or
     // the VM's global collection are safe to inspect.
@@ -162,7 +162,8 @@ extern "C" bool morrow_jni_runtime_start(void)
         // explicitly attach through the bridge before obtaining their env.
         attached_to_runtime = true;
         runtime = std::move(candidate);
-        android_asset_compat_set_reference_matcher(same_java_asset_object);
+        android_asset_compat_set_reference_matcher(same_known_java_object);
+        android_native_window_compat_set_reference_matcher(same_known_java_object);
         return true;
     } catch (...) {
         // An allocation or JNI exception cannot cross the C entry point.

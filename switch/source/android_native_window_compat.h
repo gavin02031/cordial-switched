@@ -23,6 +23,14 @@ bool android_native_window_compat_bind_horizon_surface(void *java_surface,
                                                         int32_t height);
 void android_native_window_compat_unbind_surface(void *java_surface);
 
+// A JNI-created alias can refer to the same Surface as the original global
+// handle. Only the VM may validate this with IsSameObject, after confirming
+// that the candidate is a known reference; raw pointers remain rejected.
+typedef bool (*AndroidNativeWindowJavaSameObject)(void *env, void *candidate,
+                                                  void *bound_reference);
+void android_native_window_compat_set_reference_matcher(
+    AndroidNativeWindowJavaSameObject matcher);
+
 // The guest handle must be obtained through ANativeWindow_fromSurface and
 // remain bound to its original Surface. Raw Java object pointers, arbitrary
 // addresses and dimension-only windows do not translate.

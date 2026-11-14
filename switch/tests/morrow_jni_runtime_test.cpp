@@ -156,14 +156,30 @@ int main()
     assert(guest && width(guest) == 1280 && height(guest) == 720);
     assert(android_native_window_compat_horizon_handle(guest, &actual_window));
     assert(actual_window == &horizon_window);
+    jobject surface_local_alias = main_env->NewLocalRef(static_cast<jobject>(surface));
+    jobject surface_global_alias = main_env->NewGlobalRef(static_cast<jobject>(surface));
+    assert(surface_local_alias && surface_global_alias);
+    assert(surface_local_alias != static_cast<jobject>(surface));
+    assert(surface_global_alias != static_cast<jobject>(surface));
+    assert(main_env->IsSameObject(surface_local_alias, static_cast<jobject>(surface)));
+    assert(main_env->IsSameObject(surface_global_alias, static_cast<jobject>(surface)));
+    void *local_guest = from_surface(main_env, surface_local_alias);
+    void *global_guest = from_surface(main_env, surface_global_alias);
+    assert(local_guest == guest && global_guest == guest);
     assert(!morrow_jni_runtime_bind_horizon_surface(&other_window, 1280, 720));
     assert(morrow_jni_runtime_bind_horizon_surface(&horizon_window, 960, 540) == surface);
     assert(width(guest) == 960 && height(guest) == 540);
     assert(morrow_jni_runtime_unbind_surface());
     assert(!morrow_jni_runtime_surface_bound());
+    assert(!from_surface(main_env, surface_local_alias));
+    assert(!from_surface(main_env, surface_global_alias));
     assert(!android_native_window_compat_horizon_handle(guest, &actual_window));
     assert(actual_window == nullptr);
+    release(local_guest);
+    release(global_guest);
     release(guest); // Borrowed references survive until their own release.
+    main_env->DeleteLocalRef(surface_local_alias);
+    main_env->DeleteGlobalRef(surface_global_alias);
     assert(morrow_jni_runtime_unbind_surface());
 
     auto from_java = asset_symbol<AssetFromJava>("AAssetManager_fromJava");

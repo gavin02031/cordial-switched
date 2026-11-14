@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.48 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.49 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,22 +26,23 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.48 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.49 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
 typed JNI `android/view/Surface` global reference with the host-owned Horizon
 window, optionally binds a typed JNI
 `android/content/res/AssetManager` to an existing read-only SD directory,
-and exposes it via GameActivity's `getAssets` JNI callback only if bound,
+exposes it via GameActivity's `getAssets` JNI callback only if bound,
 and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
 report records `jni_vm_provider_installed`, `jni_game_activity_object_registered`,
 `android_java_surface_registered`, and `android_java_asset_manager_registered`
 independently. **Two implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
-Only the original global reference is registered with the native-window
-adapter; other JNI references to the same object are not yet canonicalised.
+The Surface adapter now accepts valid local/global aliases to the same Java
+object after checking VM ownership; it does not accept arbitrary pointers,
+create an EGL context or render Roblox frames.
 For optional asset validation, place assets extracted from your own legitimate
 APK under `sdmc:/switch/cordial-switched/assets/`. Without that directory,
 asset registration correctly remains `no`; no APK or assets are downloaded by
@@ -254,6 +255,12 @@ then check:
    directory exists, the method returns null rather than inventing an owner.
    The real-VM host test exercises both identity paths and cleanup. Neither
    Activity bootstrap nor the Roblox engine is started by this preview.
+   v0.49 extends the same verified JNI alias resolution to the native Surface
+   adapter. The host test first reproduced an alias lookup failure, then
+   confirmed that both local and global Surface references resolve to the
+   same NWindow, retain their dimensions and fail new acquisitions after
+   unbinding. The native window and AddressSanitizer tests also pass. This
+   does not yet give the Roblox engine an EGL context or a first frame.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

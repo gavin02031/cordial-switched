@@ -251,6 +251,8 @@ void horizon_real_link_run(RealLinkResult *result)
 #endif
     log_line(log, "android_java_surface_registered=%s",
              java_surface_bound ? "yes" : "no");
+    log_line(log, "android_java_surface_alias_resolution=%s",
+             java_surface_bound ? "known_vm_references_only" : "unavailable");
     log_line(log, "android_java_surface_used_by_engine=no");
     bool java_assets_bound = false;
 #ifdef MORROW_HAS_JNIVM
