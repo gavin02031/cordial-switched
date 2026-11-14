@@ -18,7 +18,7 @@ ARCH         := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CXXFLAGS     := -std=gnu++14 -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) \
                 -Wno-error=unused-parameter -Wno-error=ignored-qualifiers \
                 -Wno-error=reorder -Wno-error=missing-field-initializers \
-                -Wno-error=unused-function -D__SWITCH__ $(INCLUDE)
+                -Wno-error=unused-function -D__SWITCH__ -DEnableJNIVMGC $(INCLUDE)
 LDFLAGS      := -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBJNIVM     ?= /tmp/morrow-jnivm-a64/libjnivm.a
 LIBS         := $(LIBJNIVM) -lnx -lm
@@ -36,7 +36,7 @@ CPPFILES        := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 export OFILES   := $(CPPFILES:.cpp=.o)
 export LD       := $(CXX)
 export INCLUDE  := $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
-                   -I$(CURDIR)/../../third_party/libjnivm/include -I$(CURDIR)/$(BUILD)
+                   -isystem $(CURDIR)/../../third_party/libjnivm/include -I$(CURDIR)/$(BUILD)
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 export NROFLAGS := --icon=$(DEVKITPRO)/libnx/default_icon.jpg --nacp=$(OUTPUT).nacp
 
