@@ -16,7 +16,9 @@ APP_VERSION  := 0.42.0
 
 ARCH         := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CXXFLAGS     := -std=gnu++14 -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) \
-                -D__SWITCH__ $(INCLUDE)
+                -Wno-error=unused-parameter -Wno-error=ignored-qualifiers \
+                -Wno-error=reorder -Wno-error=missing-field-initializers \
+                -Wno-error=unused-function -D__SWITCH__ $(INCLUDE)
 LDFLAGS      := -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBJNIVM     ?= /tmp/morrow-jnivm-a64/libjnivm.a
 LIBS         := $(LIBJNIVM) -lnx -lm
