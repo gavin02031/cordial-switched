@@ -157,6 +157,15 @@ then check:
    swap. The graphics test is not wired to Roblox's EGL imports and does **not**
    render any Roblox content. On-device success remains unverified until a
    Switch Lite test and photo/report are received.
+   v0.39 exposes 90 explicit, ABI-compatible EGL/GLES2 function addresses to
+   the ARM64 strict import resolver, using the same native Mesa libraries that
+   power the graphics test. Guest `dlopen`/`dlsym` can find only registered
+   symbols in `libEGL.so` and `libGLESv2.so`. One critical EGL import,
+   `eglCreateWindowSurface`, is intentionally **not** mapped yet: a guest
+   `ANativeWindow` is not a Horizon `NWindow`, and handing the former directly
+   to Mesa would be unsafe. The imported `eglGetProcAddress` is restricted to
+   registered symbols too. This narrows the import gap; it does not supply a
+   Java Surface, transition SDL to an engine surface or execute Roblox.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

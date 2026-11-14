@@ -13,6 +13,7 @@
 #include <GLES2/gl2.h>
 
 #include "elf_probe.h"
+#include "android_egl_gles_compat.h"
 
 static void report(FILE *out, const char *format, ...)
 {
@@ -118,6 +119,11 @@ void morrow_gles_smoke_run(void)
     report(log, "# Morrow v0.38 native Mesa EGL/GLES2 smoke test");
     report(log, "roblox_engine_executed=no");
     report(log, "roblox_frame_rendered=no");
+    uint64_t bridge_symbol = 0;
+    const bool bridge_gl = android_egl_gles_compat_resolve(
+        "glCreateShader", NULL, NULL, &bridge_symbol);
+    report(log, "native_guest_gl_symbol_resolved=%s", bridge_gl ? "yes" : "no");
+    report(log, "guest_egl_window_surface_bridge=no");
 
     EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     EGLContext context = EGL_NO_CONTEXT;

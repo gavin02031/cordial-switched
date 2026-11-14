@@ -11,6 +11,7 @@
 #include "android_native_window_compat.h"
 #include "android_asset_compat.h"
 #include "android_math_compat.h"
+#include "android_egl_gles_compat.h"
 
 typedef void *(*OpenLibrary)(const char *, int);
 typedef void *(*LookupSymbol)(void *, const char *);
@@ -55,6 +56,13 @@ int main(void)
     assert(!android_dl_compat_resolve("missing", "LIBC", "libdl.so", &invalid));
 
     assert(get_error() == NULL);
+    // The GLES/EGL modules are only advertised on Horizon builds linked to
+    // the real Mesa port; the host must not present fake success handles.
+    assert(!android_egl_gles_compat_has_backend());
+    assert(open_library("libEGL.so", 0) == NULL);
+    assert(strstr(get_error(), "not available"));
+    assert(open_library("libGLESv2.so", 0) == NULL);
+    assert(strstr(get_error(), "not available"));
     assert(open_library("libdoesnotexist.so", 0) == NULL);
     assert(strstr(get_error(), "not available"));
     assert(get_error() == NULL); // Android dlerror clears the pending error.

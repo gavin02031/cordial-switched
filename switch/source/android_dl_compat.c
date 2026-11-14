@@ -11,10 +11,12 @@
 #include "android_looper_compat.h"
 #include "android_native_window_compat.h"
 #include "android_asset_compat.h"
+#include "android_egl_gles_compat.h"
 #include "android_math_compat.h"
 
 enum { DL_ERROR_BYTES = 128 };
-enum { MODULE_LOG, MODULE_ANDROID, MODULE_MATH, MODULE_DL, MODULE_COUNT };
+enum { MODULE_LOG, MODULE_ANDROID, MODULE_MATH, MODULE_DL,
+       MODULE_EGL, MODULE_GLES2, MODULE_COUNT };
 
 typedef struct {
     const char *name;
@@ -24,6 +26,7 @@ typedef struct {
 static CompatModule modules[MODULE_COUNT] = {
     {"liblog.so", 0}, {"libandroid.so", 0},
     {"libm.so", 0}, {"libdl.so", 0},
+    {"libEGL.so", 0}, {"libGLESv2.so", 0},
 };
 static pthread_mutex_t module_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -100,6 +103,8 @@ static void *bionic_dlopen(const char *name, int flags)
     pthread_mutex_lock(&module_lock);
     for (unsigned i = 0; i < MODULE_COUNT; i++) {
         if (strcmp(basename, modules[i].name) == 0) {
+            if ((i == MODULE_EGL || i == MODULE_GLES2) &&
+                !android_egl_gles_compat_has_backend()) break;
             // Bionic RTLD_NOLOAD=4 only succeeds for already-open modules.
             if ((flags & 4) && modules[i].opens == 0) break;
             if (modules[i].opens == UINT32_MAX) break;
@@ -143,6 +148,9 @@ static void *bionic_dlsym(void *handle, const char *name)
         android_math_compat_resolve(name, "LIBC", "libm.so", &address);
     else if (module == &modules[MODULE_DL])
         android_dl_compat_resolve(name, "LIBC", "libdl.so", &address);
+    else if ((module == &modules[MODULE_EGL] && strncmp(name, "egl", 3) == 0) ||
+             (module == &modules[MODULE_GLES2] && strncmp(name, "gl", 2) == 0))
+        android_egl_gles_compat_resolve(name, NULL, NULL, &address);
     if (!address) {
         set_error("Requested Android symbol is not implemented");
         return NULL;

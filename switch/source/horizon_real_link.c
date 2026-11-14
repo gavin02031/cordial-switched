@@ -14,6 +14,7 @@
 #include "android_cxa_compat.h"
 #include "android_looper_compat.h"
 #include "android_asset_compat.h"
+#include "android_egl_gles_compat.h"
 #include "android_jni_vm_bridge.h"
 #include "android_native_window_compat.h"
 #include "android_dl_compat.h"
@@ -125,6 +126,7 @@ static bool resolve_compatible(const char *name, const char *version,
             android_looper_compat_resolve(name, version, library, address) ||
             android_native_window_compat_resolve(name, version, library, address) ||
             android_asset_compat_resolve(name, version, library, address) ||
+            android_egl_gles_compat_resolve(name, version, library, address) ||
             android_dl_compat_resolve(name, version, library, address) ||
             android_math_compat_resolve(name, version, library, address) ||
             android_libc_compat_resolve(name, version, library, address) ||
@@ -234,7 +236,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.38 real-engine entry readiness attempt");
+    log_line(log, "# Cordial Switched v0.39 real-engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
@@ -246,6 +248,12 @@ void horizon_real_link_run(RealLinkResult *result)
              android_jni_vm_bridge_has_provider() ? "yes" : "no");
     log_line(log, "jni_env_implemented=no");
     log_line(log, "jni_onload_call_eligible=no");
+    log_line(log, "native_egl_gles_symbols_linked=%s",
+             android_egl_gles_compat_has_backend() ? "yes" : "no");
+    log_line(log, "native_egl_gles_symbol_catalogue=%u",
+             android_egl_gles_compat_known_count());
+    log_line(log, "guest_egl_window_surface_bridge=no");
+    log_line(log, "guest_egl_context_current=no");
     log_line(log, "event=preflight_started");
 
     // On a rare release failure retain the reservation for the next L3.
