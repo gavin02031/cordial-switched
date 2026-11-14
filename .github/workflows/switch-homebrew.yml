@@ -196,8 +196,6 @@ jobs:
     container: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install native Switch Mesa graphics libraries
-        run: dkp-pacman -Sy --noconfirm --needed switch-mesa
       - name: Compile native Horizon target
         working-directory: switch
         run: make -j2
