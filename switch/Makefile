@@ -12,7 +12,7 @@ BUILD        := build
 SOURCES      := source
 APP_TITLE    := Cordial Switched
 APP_AUTHOR   := Cordial Switched contributors
-APP_VERSION  := 0.41.0
+APP_VERSION  := 0.44.0
 
 ARCH        := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS      := -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) -D__SWITCH__ $(INCLUDE) \
@@ -21,6 +21,20 @@ ASFLAGS     := -g $(ARCH)
 LDFLAGS     := -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBS        := `sdl2-config --libs` `$(PREFIX)pkg-config --libs SDL2_ttf` -lGLESv2 -lEGL -lglapi -ldrm_nouveau -lnx -lm
 LIBDIRS     := $(PORTLIBS) $(LIBNX)
+
+# The proven graphics preview remains unchanged by default. The JNI-enabled
+# build is a separate CI artifact until its runtime is checked on hardware.
+WITH_JNIVM  ?= 0
+export WITH_JNIVM
+ifeq ($(WITH_JNIVM),1)
+LIBJNIVM    ?= /tmp/morrow-jnivm-a64/libjnivm.a
+LIBS        := $(LIBJNIVM) $(LIBS)
+CFLAGS      += -DMORROW_HAS_JNIVM
+CXXFLAGS    := -std=gnu++14 -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) \
+               -Wno-error=unused-parameter -Wno-error=ignored-qualifiers \
+               -Wno-error=reorder -Wno-error=missing-field-initializers \
+               -Wno-error=unused-function -D__SWITCH__ -DEnableJNIVMGC $(INCLUDE)
+endif
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 
@@ -31,10 +45,18 @@ export DEPSDIR  := $(CURDIR)/$(BUILD)
 
 CFILES          := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 SFILES          := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
+ifeq ($(WITH_JNIVM),1)
+CPPFILES        := morrow_jni_runtime.cpp
+endif
 
-export OFILES   := $(CFILES:.c=.o) $(SFILES:.s=.o)
+export OFILES   := $(CFILES:.c=.o) $(SFILES:.s=.o) $(CPPFILES:.cpp=.o)
+ifeq ($(WITH_JNIVM),1)
+export LD       := $(CXX)
+else
 export LD       := $(CC)
-export INCLUDE  := $(foreach dir,$(LIBDIRS),-I$(dir)/include) -I$(CURDIR)/$(BUILD)
+endif
+export INCLUDE  := $(foreach dir,$(LIBDIRS),-I$(dir)/include) -I$(CURDIR)/$(BUILD) \
+                   $(if $(filter 1,$(WITH_JNIVM)),-isystem $(CURDIR)/../third_party/libjnivm/include)
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 export NROFLAGS := --icon=$(DEVKITPRO)/libnx/default_icon.jpg --nacp=$(OUTPUT).nacp
 

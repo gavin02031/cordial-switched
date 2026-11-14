@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // The JNI C ABI passes JavaVM* as a pointer to an invocation-function table.
 // Keep this independent of an Android NDK header so the same ABI can be tested
 // on Linux and compiled for Horizon. This is NOT a Java object model or ART.
@@ -38,5 +42,9 @@ AndroidJniVm *android_jni_vm_bridge_instance(void);
 bool android_jni_vm_bridge_install_provider(const AndroidJniVmProvider *provider,
                                              void *context);
 bool android_jni_vm_bridge_has_provider(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -238,7 +238,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.41 real-engine entry readiness attempt");
+    log_line(log, "# Morrow native engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
@@ -248,9 +248,11 @@ void horizon_real_link_run(RealLinkResult *result)
     log_line(log, "android_configuration_ndk_functions=9");
     log_line(log, "jni_vm_invocation_abi=%s",
              android_jni_vm_bridge_instance() ? "available" : "unavailable");
-    log_line(log, "jni_vm_provider_installed=%s",
-             android_jni_vm_bridge_has_provider() ? "yes" : "no");
-    log_line(log, "jni_env_implemented=no");
+    const bool jni_provider_ready = android_jni_vm_bridge_has_provider();
+    log_line(log, "jni_vm_provider_installed=%s", jni_provider_ready ? "yes" : "no");
+    log_line(log, "jni_env_provider_connected=%s", jni_provider_ready ? "yes" : "no");
+    log_line(log, "jni_runtime_hardware_verified=no");
+    log_line(log, "jni_engine_class_callbacks_registered=no");
     log_line(log, "jni_onload_call_eligible=no");
     log_line(log, "native_egl_gles_symbols_linked=%s",
              android_egl_gles_compat_has_backend() ? "yes" : "no");

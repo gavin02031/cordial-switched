@@ -227,6 +227,31 @@ jobs:
           path: switch/cordial-switched.nro
           if-no-files-found: error
 
+  jni-provider-host-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned JNI implementation
+        run: git submodule update --init third_party/libjnivm
+      - name: Build native JNI VM for provider tests
+        run: |
+          cmake -S third_party/libjnivm -B /tmp/morrow-jnivm-host \
+            -DCMAKE_CXX_FLAGS='-O2 -include string' \
+            -DJNIVM_ENABLE_TESTS=OFF -DJNIVM_ENABLE_DEBUG=OFF \
+            -DJNIVM_BUILD_EXAMPLES=OFF
+          cmake --build /tmp/morrow-jnivm-host --target jnivm --parallel 2
+      - name: Test real JNI VM through strict bridge
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            -c switch/source/android_jni_vm_bridge.c -o /tmp/morrow-bridge.o
+          c++ -std=gnu++14 -O2 -include string -DEnableJNIVMGC \
+            -Ithird_party/libjnivm/include -Iswitch/source \
+            switch/tests/morrow_jni_runtime_test.cpp \
+            switch/source/morrow_jni_runtime.cpp /tmp/morrow-bridge.o \
+            /tmp/morrow-jnivm-host/libjnivm.a -pthread -ldl \
+            -o /tmp/morrow-jni-provider-test
+          /tmp/morrow-jni-provider-test
+
   jni-crossbuild:
     runs-on: ubuntu-latest
     container: devkitpro/devkita64:latest
@@ -257,6 +282,9 @@ jobs:
       - name: Link standalone on-console JNI diagnostic
         working-directory: switch/jni_probe
         run: make -j2
+      - name: Link opt-in JNI runtime into main Morrow preview
+        working-directory: switch
+        run: make WITH_JNIVM=1 -j2
       - name: Check JNI diagnostic executable
         run: |
           test -s switch/jni_probe/morrow-jni-probe.elf
@@ -267,4 +295,10 @@ jobs:
         with:
           name: morrow-switch-jni-probe
           path: switch/jni_probe/morrow-jni-probe.nro
+          if-no-files-found: error
+      - name: Upload opt-in JNI runtime preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: morrow-switch-jni-runtime-preview
+          path: switch/cordial-switched.nro
           if-no-files-found: error

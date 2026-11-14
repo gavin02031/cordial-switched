@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.41 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.44 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -24,6 +24,13 @@ The [Cordial Switched Horizon preview](../.github/workflows/switch-homebrew.yml)
 GitHub Actions workflow uses the `devkitpro/devkita64` toolchain container.
 Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
+
+The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
+v0.44 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM
+before running the same non-executable ELF link diagnostic. Its `link-XX.txt`
+report records `jni_vm_provider_installed`; **yes means the provider was
+constructed, not that Roblox started or the Switch hardware test passed**.
+The normal graphics preview and its **Minus** triangle test are unchanged.
 
 For a local build, install devkitPro with `devkitA64`, `libnx`,
 `switch-sdl2`, and `switch-sdl2_ttf`, set `DEVKITPRO`, and run:
@@ -186,21 +193,25 @@ then check:
    Android resources subsystem or JNI environment.
    The native workflow also runs an **independent experimental cross-build**
    of Cordial's pinned `libjnivm` dependency for Switch ARM64. The result is
-   checked as a static library; it is not linked into the main preview `.nro` and
-   cannot establish a working Roblox JNI callback path by itself. This gate
-   tests whether we can reuse the desktop Java object model rather than
-   creating an unrelated, incomplete JNI implementation.
+   checked as a static library and linked into a **separate opt-in v0.44
+   preview**; the default `.nro` does not initialise the VM. This is a JNI
+   runtime component, not proof of a working Roblox callback path.
    A separate experimental **`morrow-jni-probe.nro`** is built from that
    library when the independent JNI job succeeds. Launch it in Homebrew Menu
    to construct a `jnivm::VM`, obtain the current thread's `JNIEnv`, and
    exercise the JNI 1.6 `JavaVM::GetEnv` callback. The v0.43 probe also
    attaches a worker pthread, checks it receives a distinct `JNIEnv`, tests
-   JavaVM lookup and detaches it. Core VM and worker results remain separate.
+   JavaVM lookup and detaches it. In v0.44 the overall PASS requires **both**
+   the core and worker tests, so a worker failure cannot be hidden.
    It prints PASS/FAIL and writes `sdmc:/switch/cordial-switched/jni-XX.txt`.
    This program cannot
    start Roblox: it does not load `libroblox.so`, register its Android
    GameActivity classes, or provide an EGL surface. The separate `.nro` must
    pass **on actual Switch hardware** before JNI can be claimed working.
+   The opt-in runtime also has a host test against the **real pinned libjnivm**
+   and a strict JNI bridge that returns `JNI_EDETACHED` for unbound threads.
+   It deliberately does not call `JNI_OnLoad`: Android Java classes and
+   GameActivity callbacks are still absent.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

@@ -153,7 +153,7 @@ int main()
 {
     consoleInit(nullptr);
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
-    puts("Morrow v0.43 — native JNI probe\n");
+    puts("Morrow v0.44 — native JNI probe\n");
     char report_path[128] = {};
     FILE *report = create_report(report_path, sizeof(report_path));
     if (report) {
@@ -202,6 +202,7 @@ int main()
                 fprintf(report, "worker_jni_pass=%s\n", worker_pass ? "yes" : "no");
                 fflush(report);
             }
+            success = worker_pass;
         } else {
             puts("Worker JNI: not tested (core VM failed)");
         }

@@ -11,6 +11,9 @@
 #include "horizon_loader_smoke.h"
 #include "horizon_real_link.h"
 #include "morrow_gles_smoke.h"
+#ifdef MORROW_HAS_JNIVM
+#include "morrow_jni_runtime.h"
+#endif
 
 // Keep the existing stage-XX naming while recording a fuller preflight trace.
 static FILE *open_stage_log(char *path, size_t length)
@@ -226,8 +229,14 @@ int main(void)
             try_engine_stage(&state);
         if (state.page == UI_LOADER && (pressed & HidNpadButton_StickR))
             horizon_loader_smoke_run(&state.loader_smoke);
-        if (state.page == UI_LOADER && (pressed & HidNpadButton_StickL))
+        if (state.page == UI_LOADER && (pressed & HidNpadButton_StickL)) {
+#ifdef MORROW_HAS_JNIVM
+            // Initialise the real JNI provider only for the opt-in loader
+            // diagnostic. The GLES triangle path stays independent of it.
+            morrow_jni_runtime_start();
+#endif
             horizon_real_link_run(&state.real_link);
+        }
 
         HidTouchScreenState touch = {0};
         const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;
