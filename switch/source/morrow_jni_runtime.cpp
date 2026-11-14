@@ -4,6 +4,7 @@
 
 #include "morrow_jni_runtime.h"
 #include "android_jni_vm_bridge.h"
+#include "android_native_window_compat.h"
 
 #include <memory>
 #include <mutex>
@@ -13,6 +14,11 @@ namespace {
 std::mutex start_mutex;
 std::unique_ptr<jnivm::VM> runtime;
 thread_local bool attached_to_runtime;
+
+class HorizonSurface : public jnivm::Object {};
+std::shared_ptr<HorizonSurface> surface_owner;
+jobject surface_reference;
+void *surface_window;
 
 int32_t get_env(void *context, void **environment, int32_t version)
 {
@@ -81,4 +87,70 @@ extern "C" void *morrow_jni_runtime_java_vm(void)
 {
     std::lock_guard<std::mutex> lock(start_mutex);
     return runtime ? runtime->GetJavaVM() : nullptr;
+}
+
+extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
+                                                          int32_t width, int32_t height)
+{
+    if (!horizon_window || width <= 0 || height <= 0)
+        return nullptr;
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!runtime || !attached_to_runtime)
+        return nullptr;
+    if (surface_reference) {
+        // A resize keeps Java identity. Switching displays requires an
+        // explicit unbind, so a borrowed guest ANativeWindow never wanders.
+        if (surface_window != horizon_window ||
+            !android_native_window_compat_bind_horizon_surface(
+                surface_reference, horizon_window, width, height))
+            return nullptr;
+        return surface_reference;
+    }
+    try {
+        jnivm::ENV *env = runtime->GetEnv().get();
+        env->GetClass<HorizonSurface>("android/view/Surface");
+        auto owner = std::make_shared<HorizonSurface>();
+        JNIEnv *jni = env->GetJNIEnv();
+        jobject local = jnivm::JNITypes<std::shared_ptr<HorizonSurface>>::ToJNIType(
+            env, owner);
+        jobject global = jni->NewGlobalRef(local);
+        if (!global)
+            return nullptr;
+        if (!android_native_window_compat_bind_horizon_surface(
+                global, horizon_window, width, height)) {
+            jni->DeleteGlobalRef(global);
+            return nullptr;
+        }
+        // libjnivm's NewGlobalRef wraps an Object* in a distinct JNI object.
+        // Register the reference we will hand to the host, not the raw C++
+        // object address. A different ref must be explicitly recognised later.
+        surface_owner = std::move(owner);
+        surface_reference = global;
+        surface_window = horizon_window;
+        jni->DeleteLocalRef(local);
+        return global;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+extern "C" bool morrow_jni_runtime_surface_bound(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return surface_reference != nullptr;
+}
+
+extern "C" bool morrow_jni_runtime_unbind_surface(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!surface_reference)
+        return true;
+    if (!runtime || !attached_to_runtime)
+        return false;
+    android_native_window_compat_unbind_surface(surface_reference);
+    runtime->GetJNIEnv()->DeleteGlobalRef(surface_reference);
+    surface_reference = nullptr;
+    surface_window = nullptr;
+    surface_owner.reset();
+    return true;
 }

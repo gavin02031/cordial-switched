@@ -2,10 +2,12 @@
 #include <jnivm.h>
 
 #include "android_jni_vm_bridge.h"
+#include "android_native_window_compat.h"
 #include "morrow_jni_runtime.h"
 
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <pthread.h>
 
 // Exercise the actual JNI function table rather than a mock provider. The
@@ -27,6 +29,20 @@ struct WorkerResult {
     JavaVM *native_vm;
     JNIEnv *worker_env;
 };
+
+using FromSurface = void *(*)(void *, void *);
+using WindowDimension = int32_t (*)(void *);
+using ReleaseWindow = void (*)(void *);
+
+template<typename Callback> static Callback native_window_symbol(const char *name)
+{
+    uint64_t address = 0;
+    assert(android_native_window_compat_resolve(name, nullptr, nullptr, &address));
+    Callback callback = nullptr;
+    static_assert(sizeof(callback) == sizeof(address), "pointer width mismatch");
+    std::memcpy(&callback, &address, sizeof(callback));
+    return callback;
+}
 
 static void *worker_run(void *value)
 {
@@ -79,6 +95,34 @@ int main()
     assert(worker.worker_env && worker.worker_env != main_env);
     assert(bridge->functions->get_env(bridge, &env, ANDROID_JNI_VERSION_1_6) ==
            ANDROID_JNI_OK && env == main_env);
-    puts("morrow_jni_runtime_test: JNI provider and per-thread identity passed");
+
+    auto from_surface = native_window_symbol<FromSurface>("ANativeWindow_fromSurface");
+    auto width = native_window_symbol<WindowDimension>("ANativeWindow_getWidth");
+    auto height = native_window_symbol<WindowDimension>("ANativeWindow_getHeight");
+    auto release = native_window_symbol<ReleaseWindow>("ANativeWindow_release");
+    int horizon_window = 1, other_window = 2;
+    assert(!morrow_jni_runtime_surface_bound());
+    assert(!morrow_jni_runtime_bind_horizon_surface(nullptr, 1280, 720));
+    assert(!morrow_jni_runtime_bind_horizon_surface(&horizon_window, 0, 720));
+    void *surface = morrow_jni_runtime_bind_horizon_surface(&horizon_window, 1280, 720);
+    assert(surface && morrow_jni_runtime_surface_bound());
+    assert(main_env->IsInstanceOf(static_cast<jobject>(surface),
+                                  main_env->FindClass("android/view/Surface")));
+    assert(from_surface(main_env, &horizon_window) == nullptr);
+    void *guest = from_surface(main_env, surface);
+    void *actual_window = nullptr;
+    assert(guest && width(guest) == 1280 && height(guest) == 720);
+    assert(android_native_window_compat_horizon_handle(guest, &actual_window));
+    assert(actual_window == &horizon_window);
+    assert(!morrow_jni_runtime_bind_horizon_surface(&other_window, 1280, 720));
+    assert(morrow_jni_runtime_bind_horizon_surface(&horizon_window, 960, 540) == surface);
+    assert(width(guest) == 960 && height(guest) == 540);
+    assert(morrow_jni_runtime_unbind_surface());
+    assert(!morrow_jni_runtime_surface_bound());
+    assert(!android_native_window_compat_horizon_handle(guest, &actual_window));
+    assert(actual_window == nullptr);
+    release(guest); // Borrowed references survive until their own release.
+    assert(morrow_jni_runtime_unbind_surface());
+    puts("morrow_jni_runtime_test: JNI provider, thread identity and Surface passed");
     return 0;
 }

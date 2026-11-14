@@ -231,9 +231,11 @@ int main(void)
             horizon_loader_smoke_run(&state.loader_smoke);
         if (state.page == UI_LOADER && (pressed & HidNpadButton_StickL)) {
 #ifdef MORROW_HAS_JNIVM
-            // Initialise the real JNI provider only for the opt-in loader
-            // diagnostic. The GLES triangle path stays independent of it.
-            morrow_jni_runtime_start();
+            // Register a genuine Java reference to the host-owned window,
+            // but do not create another EGL context while SDL is drawing.
+            if (morrow_jni_runtime_start())
+                morrow_jni_runtime_bind_horizon_surface(
+                    nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
 #endif
             horizon_real_link_run(&state.real_link);
         }
@@ -272,6 +274,10 @@ int main(void)
         }
     }
 
+#ifdef MORROW_HAS_JNIVM
+    // The Java Surface must not outlive the SDL-owned native window.
+    morrow_jni_runtime_unbind_surface();
+#endif
     ui_shutdown();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

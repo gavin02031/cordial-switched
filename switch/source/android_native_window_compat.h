@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // A JNI bridge must first register a *verified* Java Surface. An arbitrary
 // jobject is not a native window and cannot be cast into a Horizon handle.
 // Bind takes one owner reference; unbind releases it without invalidating
@@ -29,5 +33,9 @@ bool android_native_window_compat_horizon_handle(const void *guest_window,
 // Surface object is created by this adapter.
 bool android_native_window_compat_resolve(const char *name, const char *version,
                                           const char *library, uint64_t *address);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

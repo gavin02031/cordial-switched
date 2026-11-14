@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.44 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.45 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,10 +26,14 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.44 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM
-before running the same non-executable ELF link diagnostic. Its `link-XX.txt`
-report records `jni_vm_provider_installed`; **yes means the provider was
-constructed, not that Roblox started or the Switch hardware test passed**.
+v0.45 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+registers one typed JNI `android/view/Surface` global reference with the
+host-owned Horizon window, and runs the same non-executable ELF link diagnostic.
+Its `link-XX.txt` report records `jni_vm_provider_installed` and
+`android_java_surface_registered`. **A registered reference is not a working
+Java Activity, engine EGL context, Roblox startup, or Switch hardware proof**.
+Only the original global reference is registered with the native-window
+adapter; other JNI references to the same object are not yet canonicalised.
 The normal graphics preview and its **Minus** triangle test are unchanged.
 
 For a local build, install devkitPro with `devkitA64`, `libnx`,
@@ -210,8 +214,13 @@ then check:
    pass **on actual Switch hardware** before JNI can be claimed working.
    The opt-in runtime also has a host test against the **real pinned libjnivm**
    and a strict JNI bridge that returns `JNI_EDETACHED` for unbound threads.
-   It deliberately does not call `JNI_OnLoad`: Android Java classes and
-   GameActivity callbacks are still absent.
+   It deliberately does not call `JNI_OnLoad`: the required Android
+   GameActivity classes and platform callbacks are still absent.
+   The v0.45 host test creates a real typed JNI `Surface`, verifies the native
+   NDK `ANativeWindow_fromSurface` handoff and its Horizon-window identity,
+   tests dimensions and resize without changing Java identity, and checks that
+   unbinding rejects new EGL use while old native references can be released.
+   No Java Activity, Android compositor or game rendering is implemented.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

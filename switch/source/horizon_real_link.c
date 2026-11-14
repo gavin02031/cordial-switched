@@ -17,6 +17,9 @@
 #include "android_configuration_compat.h"
 #include "android_egl_gles_compat.h"
 #include "android_jni_vm_bridge.h"
+#ifdef MORROW_HAS_JNIVM
+#include "morrow_jni_runtime.h"
+#endif
 #include "android_native_window_compat.h"
 #include "android_dl_compat.h"
 #include "android_media_format_compat.h"
@@ -242,7 +245,13 @@ void horizon_real_link_run(RealLinkResult *result)
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
-    log_line(log, "android_java_surface_registered=no");
+    bool java_surface_bound = false;
+#ifdef MORROW_HAS_JNIVM
+    java_surface_bound = morrow_jni_runtime_surface_bound();
+#endif
+    log_line(log, "android_java_surface_registered=%s",
+             java_surface_bound ? "yes" : "no");
+    log_line(log, "android_java_surface_used_by_engine=no");
     log_line(log, "android_java_asset_manager_registered=no");
     log_line(log, "android_asset_configuration_registered=no");
     log_line(log, "android_configuration_ndk_functions=9");
