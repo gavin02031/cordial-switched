@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 // Configuration is supplied by a verified JNI/Android-runtime owner; neither
 // a directory full of assets nor the Switch display implies an Android locale
 // or dp-density. Language/country are exactly two bytes, not terminated.
@@ -32,5 +36,9 @@ bool android_asset_compat_get_configuration(const void *native_manager,
 
 bool android_asset_compat_resolve(const char *name, const char *version,
                                   const char *library, uint64_t *address);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

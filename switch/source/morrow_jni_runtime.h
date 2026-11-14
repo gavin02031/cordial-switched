@@ -9,7 +9,7 @@ extern "C" {
 #endif
 
 // Opt-in Horizon libjnivm runtime. This does not implement GameActivity,
-// Android resources or any executable Roblox engine image.
+// a full Android resources service or any executable Roblox engine image.
 bool morrow_jni_runtime_start(void);
 
 // Return the actual libjnivm JavaVM, not the separate diagnostic invocation
@@ -24,6 +24,14 @@ void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
                                                int32_t width, int32_t height);
 bool morrow_jni_runtime_surface_bound(void);
 bool morrow_jni_runtime_unbind_surface(void);
+
+// Bind a real JNI android/content/res/AssetManager global reference to a
+// caller-owned extracted asset directory. Missing directories fail closed;
+// changing the owning directory requires unbinding the previous reference.
+// Files are accessed read-only through the existing bounded NDK adapter.
+void *morrow_jni_runtime_bind_asset_manager(const char *asset_root);
+bool morrow_jni_runtime_asset_manager_bound(void);
+bool morrow_jni_runtime_unbind_asset_manager(void);
 
 #ifdef __cplusplus
 }

@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.45 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.46 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,14 +26,20 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.45 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.46 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `android/view/Surface` global reference with the
-host-owned Horizon window, and runs the same non-executable ELF link diagnostic.
-Its `link-XX.txt` report records `jni_vm_provider_installed` and
-`android_java_surface_registered`. **A registered reference is not a working
+host-owned Horizon window, optionally binds a typed JNI
+`android/content/res/AssetManager` to an existing read-only SD directory,
+and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
+report records `jni_vm_provider_installed`, `android_java_surface_registered`
+and `android_java_asset_manager_registered` independently. **A registered reference is not a working
 Java Activity, engine EGL context, Roblox startup, or Switch hardware proof**.
 Only the original global reference is registered with the native-window
 adapter; other JNI references to the same object are not yet canonicalised.
+For optional asset validation, place assets extracted from your own legitimate
+APK under `sdmc:/switch/cordial-switched/assets/`. Without that directory,
+asset registration correctly remains `no`; no APK or assets are downloaded by
+the preview, and no asset bytes are included in its diagnostic reports.
 The normal graphics preview and its **Minus** triangle test are unchanged.
 
 For a local build, install devkitPro with `devkitA64`, `libnx`,
@@ -221,6 +227,12 @@ then check:
    tests dimensions and resize without changing Java identity, and checks that
    unbinding rejects new EGL use while old native references can be released.
    No Java Activity, Android compositor or game rendering is implemented.
+   v0.46 adds the actual JNI AssetManager reference and binds it to the NDK
+   `AAssetManager_fromJava` provider only when an existing asset directory
+   passes the native validation checks. The host test opens a synthetic asset,
+   rejects traversal, retains Java identity on rebind to the same directory,
+   rejects changing the directory silently and verifies stale handles fail
+   after unbinding. No Android resources metadata is guessed.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

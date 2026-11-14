@@ -2,13 +2,16 @@
 #include <jnivm.h>
 
 #include "android_jni_vm_bridge.h"
+#include "android_asset_compat.h"
 #include "android_native_window_compat.h"
 #include "morrow_jni_runtime.h"
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <pthread.h>
+#include <unistd.h>
 
 // Exercise the actual JNI function table rather than a mock provider. The
 // Switch JNI hardware probe separately tests whether this survives libnx.
@@ -33,11 +36,25 @@ struct WorkerResult {
 using FromSurface = void *(*)(void *, void *);
 using WindowDimension = int32_t (*)(void *);
 using ReleaseWindow = void (*)(void *);
+using AssetFromJava = void *(*)(void *, void *);
+using AssetOpen = void *(*)(void *, const char *, int);
+using AssetLength = off_t (*)(void *);
+using AssetClose = void (*)(void *);
 
 template<typename Callback> static Callback native_window_symbol(const char *name)
 {
     uint64_t address = 0;
     assert(android_native_window_compat_resolve(name, nullptr, nullptr, &address));
+    Callback callback = nullptr;
+    static_assert(sizeof(callback) == sizeof(address), "pointer width mismatch");
+    std::memcpy(&callback, &address, sizeof(callback));
+    return callback;
+}
+
+template<typename Callback> static Callback asset_symbol(const char *name)
+{
+    uint64_t address = 0;
+    assert(android_asset_compat_resolve(name, nullptr, nullptr, &address));
     Callback callback = nullptr;
     static_assert(sizeof(callback) == sizeof(address), "pointer width mismatch");
     std::memcpy(&callback, &address, sizeof(callback));
@@ -123,6 +140,38 @@ int main()
     assert(actual_window == nullptr);
     release(guest); // Borrowed references survive until their own release.
     assert(morrow_jni_runtime_unbind_surface());
-    puts("morrow_jni_runtime_test: JNI provider, thread identity and Surface passed");
+
+    auto from_java = asset_symbol<AssetFromJava>("AAssetManager_fromJava");
+    auto open_asset = asset_symbol<AssetOpen>("AAssetManager_open");
+    auto asset_length = asset_symbol<AssetLength>("AAsset_getLength");
+    auto close_asset = asset_symbol<AssetClose>("AAsset_close");
+    assert(!morrow_jni_runtime_asset_manager_bound());
+    assert(!morrow_jni_runtime_bind_asset_manager("/missing-asset-directory"));
+    char root[] = "/tmp/morrow-jni-assets-XXXXXX";
+    assert(mkdtemp(root));
+    char asset_path[128];
+    assert(snprintf(asset_path, sizeof(asset_path), "%s/test.asset", root) > 0);
+    FILE *file = fopen(asset_path, "wb");
+    assert(file && fwrite("hello!", 1, 6, file) == 6 && fclose(file) == 0);
+    void *asset_java = morrow_jni_runtime_bind_asset_manager(root);
+    assert(asset_java && morrow_jni_runtime_asset_manager_bound());
+    assert(main_env->IsInstanceOf(static_cast<jobject>(asset_java),
+                                  main_env->FindClass("android/content/res/AssetManager")));
+    assert(from_java(main_env, &horizon_window) == nullptr);
+    void *native_manager = from_java(main_env, asset_java);
+    assert(native_manager);
+    assert(morrow_jni_runtime_bind_asset_manager(root) == asset_java);
+    assert(!morrow_jni_runtime_bind_asset_manager("/tmp"));
+    assert(!open_asset(native_manager, "../test.asset", 0));
+    void *asset = open_asset(native_manager, "test.asset", 0);
+    assert(asset && asset_length(asset) == 6);
+    assert(morrow_jni_runtime_unbind_asset_manager());
+    assert(!morrow_jni_runtime_asset_manager_bound());
+    assert(!from_java(main_env, asset_java));
+    assert(!open_asset(native_manager, "test.asset", 0));
+    close_asset(asset);
+    assert(morrow_jni_runtime_unbind_asset_manager());
+    assert(unlink(asset_path) == 0 && rmdir(root) == 0);
+    puts("morrow_jni_runtime_test: real JNI, Surface and AssetManager passed");
     return 0;
 }

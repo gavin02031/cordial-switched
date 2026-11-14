@@ -252,7 +252,13 @@ void horizon_real_link_run(RealLinkResult *result)
     log_line(log, "android_java_surface_registered=%s",
              java_surface_bound ? "yes" : "no");
     log_line(log, "android_java_surface_used_by_engine=no");
-    log_line(log, "android_java_asset_manager_registered=no");
+    bool java_assets_bound = false;
+#ifdef MORROW_HAS_JNIVM
+    java_assets_bound = morrow_jni_runtime_asset_manager_bound();
+#endif
+    log_line(log, "android_java_asset_manager_registered=%s",
+             java_assets_bound ? "yes" : "no");
+    log_line(log, "android_java_asset_manager_root=optional_user_assets");
     log_line(log, "android_asset_configuration_registered=no");
     log_line(log, "android_configuration_ndk_functions=9");
     log_line(log, "jni_vm_invocation_abi=%s",

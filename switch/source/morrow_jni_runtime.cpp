@@ -4,6 +4,7 @@
 
 #include "morrow_jni_runtime.h"
 #include "android_jni_vm_bridge.h"
+#include "android_asset_compat.h"
 #include "android_native_window_compat.h"
 
 #include <memory>
@@ -19,6 +20,11 @@ class HorizonSurface : public jnivm::Object {};
 std::shared_ptr<HorizonSurface> surface_owner;
 jobject surface_reference;
 void *surface_window;
+
+class AssetManagerObject : public jnivm::Object {};
+std::shared_ptr<AssetManagerObject> asset_owner;
+jobject asset_reference;
+std::string asset_directory;
 
 int32_t get_env(void *context, void **environment, int32_t version)
 {
@@ -152,5 +158,67 @@ extern "C" bool morrow_jni_runtime_unbind_surface(void)
     surface_reference = nullptr;
     surface_window = nullptr;
     surface_owner.reset();
+    return true;
+}
+
+extern "C" void *morrow_jni_runtime_bind_asset_manager(const char *asset_root)
+{
+    if (!asset_root || !*asset_root)
+        return nullptr;
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!runtime || !attached_to_runtime)
+        return nullptr;
+    if (asset_reference) {
+        // A root change must not quietly redirect an existing Java object.
+        // A guest may still hold its old AAssetManager handle.
+        if (asset_directory != asset_root ||
+            !android_asset_compat_bind_manager(asset_reference, asset_root))
+            return nullptr;
+        return asset_reference;
+    }
+    try {
+        std::string chosen_root(asset_root);
+        jnivm::ENV *env = runtime->GetEnv().get();
+        env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
+        auto owner = std::make_shared<AssetManagerObject>();
+        JNIEnv *jni = env->GetJNIEnv();
+        jobject local = jnivm::JNITypes<std::shared_ptr<AssetManagerObject>>::ToJNIType(
+            env, owner);
+        jobject global = jni->NewGlobalRef(local);
+        if (!global)
+            return nullptr;
+        if (!android_asset_compat_bind_manager(global, asset_root)) {
+            jni->DeleteGlobalRef(global);
+            jni->DeleteLocalRef(local);
+            return nullptr;
+        }
+        asset_directory.swap(chosen_root);
+        asset_owner = std::move(owner);
+        asset_reference = global;
+        jni->DeleteLocalRef(local);
+        return global;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+extern "C" bool morrow_jni_runtime_asset_manager_bound(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return asset_reference != nullptr;
+}
+
+extern "C" bool morrow_jni_runtime_unbind_asset_manager(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!asset_reference)
+        return true;
+    if (!runtime || !attached_to_runtime)
+        return false;
+    android_asset_compat_unbind_manager(asset_reference);
+    runtime->GetJNIEnv()->DeleteGlobalRef(asset_reference);
+    asset_reference = nullptr;
+    asset_directory.clear();
+    asset_owner.reset();
     return true;
 }

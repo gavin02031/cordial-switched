@@ -233,9 +233,12 @@ int main(void)
 #ifdef MORROW_HAS_JNIVM
             // Register a genuine Java reference to the host-owned window,
             // but do not create another EGL context while SDL is drawing.
-            if (morrow_jni_runtime_start())
+            if (morrow_jni_runtime_start()) {
                 morrow_jni_runtime_bind_horizon_surface(
                     nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
+                morrow_jni_runtime_bind_asset_manager(
+                    ENGINE_REPORT_DIR "/assets");
+            }
 #endif
             horizon_real_link_run(&state.real_link);
         }
@@ -275,7 +278,8 @@ int main(void)
     }
 
 #ifdef MORROW_HAS_JNIVM
-    // The Java Surface must not outlive the SDL-owned native window.
+    // Unbind Java owners before their host assets/display can go away.
+    morrow_jni_runtime_unbind_asset_manager();
     morrow_jni_runtime_unbind_surface();
 #endif
     ui_shutdown();
