@@ -241,10 +241,12 @@ jobs:
           # switch_rules sets compiler paths from DEVKITPRO; DEVKITA64 is not
           # necessarily exported by the devkitA64 container.
           test -x "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++"
+          # The pinned libjnivm vm.h includes unordered_map before string.
+          # GCC 15 requires string's std::hash specialization first.
           cmake -S third_party/libjnivm -B /tmp/morrow-jnivm-a64 \
             -DCMAKE_CXX_COMPILER="$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++" \
             -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
-            -DCMAKE_CXX_FLAGS='-O2 -march=armv8-a -fPIC -D__SWITCH__' \
+            -DCMAKE_CXX_FLAGS='-O2 -march=armv8-a -fPIC -D__SWITCH__ -include string' \
             -DJNIVM_ENABLE_TESTS=OFF \
             -DJNIVM_ENABLE_DEBUG=OFF \
             -DJNIVM_BUILD_EXAMPLES=OFF
