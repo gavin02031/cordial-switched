@@ -233,7 +233,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Fetch pinned JNI implementation
-        run: git submodule update --init third_party/libjnivm
+        # The devkitPro container runs as a different uid than checkout's
+        # bind-mounted owner. Trust only this checked-out workspace, not '*'.
+        run: git -c safe.directory="$GITHUB_WORKSPACE" submodule update --init third_party/libjnivm
       - name: Cross-compile libjnivm for Horizon ARM64
         run: |
           cmake -S third_party/libjnivm -B /tmp/morrow-jnivm-a64 \
