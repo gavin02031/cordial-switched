@@ -148,6 +148,15 @@ then check:
    deliberately **mock** provider to verify the ABI,
    failure modes, and thread isolation. **No JNI environment or Java classes
    exist in the Switch runtime yet; Roblox `JNI_OnLoad` is still not called.**
+   v0.38 introduces an **opt-in, isolated native Mesa EGL/GLES2 display test**.
+   On the Loader page press **Minus**. Morrow first closes its SDL renderer,
+   then asks Mesa for the default Horizon window and an OpenGL ES 2 context.
+   If successful, it draws a pastel triangle through GLES shaders and a vertex
+   buffer. Press **B** or **Plus** to return to Homebrew Menu. The numbered
+   `graphics-XX.txt` report records the actual EGL error or first successful
+   swap. The graphics test is not wired to Roblox's EGL imports and does **not**
+   render any Roblox content. On-device success remains unverified until a
+   Switch Lite test and photo/report are received.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

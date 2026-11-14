@@ -10,6 +10,7 @@
 #include "engine_boot_log.h"
 #include "horizon_loader_smoke.h"
 #include "horizon_real_link.h"
+#include "morrow_gles_smoke.h"
 
 // Keep the existing stage-XX naming while recording a fuller preflight trace.
 static FILE *open_stage_log(char *path, size_t length)
@@ -174,6 +175,7 @@ int main(void)
     engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
 
     bool quit = false;
+    bool run_gles_smoke = false;
     bool was_touching = false;
     const Uint64 frequency = SDL_GetPerformanceFrequency();
     Uint64 sample_start = SDL_GetPerformanceCounter();
@@ -192,6 +194,12 @@ int main(void)
         const u64 pressed = padGetButtonsDown(&pad);
         if (pressed & HidNpadButton_Plus)
             break;
+        if (state.page == UI_LOADER && (pressed & HidNpadButton_Minus)) {
+            // SDL owns the window right now. Hand it to Mesa only after all
+            // SDL rendering resources are gone, never while SDL is drawing.
+            run_gles_smoke = true;
+            break;
+        }
         if (pressed & (HidNpadButton_A | HidNpadButton_Right | HidNpadButton_R))
             page_forward(&state);
         if (pressed & (HidNpadButton_B | HidNpadButton_Left | HidNpadButton_L))
@@ -259,5 +267,7 @@ int main(void)
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
+    if (run_gles_smoke)
+        morrow_gles_smoke_run();
     return 0;
 }

@@ -281,7 +281,7 @@ static void topbar(SDL_Renderer *renderer, const char *title, const char *subtit
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.37", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.38", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -693,7 +693,7 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 
     label(renderer, 312, 666, FONT_SMALL, MUTED,
           state->page == UI_LOADER
-              ? "L/R: pages  |  X: views  |  ZL: list  |  ZR: audit  |  R3: ELF map  |  L3: real link  |  PLUS: exit"
+              ? "L/R: pages  |  X: views  |  ZL: list  |  ZR: audit  |  R3: ELF  |  L3: link  |  MINUS: GLES  |  PLUS: exit"
               : "L/R or A/B: pages   |   X: context action   |   Y: rescan   |   PLUS: exit");
     label(renderer, 1050, 666, FONT_SMALL, LAVENDER, "60 Hz UI target");
 }

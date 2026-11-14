@@ -234,7 +234,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.37 real-engine entry readiness attempt");
+    log_line(log, "# Cordial Switched v0.38 real-engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
