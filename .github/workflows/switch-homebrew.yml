@@ -238,9 +238,11 @@ jobs:
         run: git -c safe.directory="$GITHUB_WORKSPACE" submodule update --init third_party/libjnivm
       - name: Cross-compile libjnivm for Horizon ARM64
         run: |
-          test -x "$DEVKITA64/bin/aarch64-none-elf-g++"
+          # switch_rules sets compiler paths from DEVKITPRO; DEVKITA64 is not
+          # necessarily exported by the devkitA64 container.
+          test -x "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++"
           cmake -S third_party/libjnivm -B /tmp/morrow-jnivm-a64 \
-            -DCMAKE_CXX_COMPILER="$DEVKITA64/bin/aarch64-none-elf-g++" \
+            -DCMAKE_CXX_COMPILER="$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++" \
             -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
             -DCMAKE_CXX_FLAGS='-O2 -march=armv8-a -fPIC -D__SWITCH__' \
             -DJNIVM_ENABLE_TESTS=OFF \
@@ -248,5 +250,5 @@ jobs:
             -DJNIVM_BUILD_EXAMPLES=OFF
           cmake --build /tmp/morrow-jnivm-a64 --target jnivm --parallel 2
           test -s /tmp/morrow-jnivm-a64/libjnivm.a
-          "$DEVKITA64/bin/aarch64-none-elf-nm" -C /tmp/morrow-jnivm-a64/libjnivm.a > /tmp/morrow-jnivm-symbols.txt
+          "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-nm" -C /tmp/morrow-jnivm-a64/libjnivm.a > /tmp/morrow-jnivm-symbols.txt
           grep -q 'jnivm::VM' /tmp/morrow-jnivm-symbols.txt
