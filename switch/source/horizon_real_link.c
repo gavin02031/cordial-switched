@@ -276,6 +276,10 @@ void horizon_real_link_run(RealLinkResult *result)
              game_activity_ready ? "yes" : "no");
     log_line(log, "jni_game_activity_insets_callback=%s",
              game_activity_ready ? "zero_fullscreen_insets_only" : "unavailable");
+    log_line(log, "jni_game_activity_get_assets_callback=%s",
+             game_activity_ready ? "bound_read_only_manager_or_null" : "unavailable");
+    log_line(log, "jni_asset_reference_alias_resolution=%s",
+             jni_provider_ready ? "known_vm_references_only" : "unavailable");
     log_line(log, "jni_game_activity_bootstrap_implemented=no");
     log_line(log, "jni_onload_call_eligible=no");
     log_line(log, "native_egl_gles_symbols_linked=%s",

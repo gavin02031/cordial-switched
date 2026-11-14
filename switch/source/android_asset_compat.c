@@ -31,6 +31,14 @@ typedef struct {
 
 static NativeAssetManager *managers[MAX_MANAGERS];
 static pthread_mutex_t managers_lock = PTHREAD_MUTEX_INITIALIZER;
+static AndroidAssetJavaSameObject same_java_object;
+
+void android_asset_compat_set_reference_matcher(AndroidAssetJavaSameObject matcher)
+{
+    pthread_mutex_lock(&managers_lock);
+    same_java_object = matcher;
+    pthread_mutex_unlock(&managers_lock);
+}
 
 static NativeAssetManager *find_java_manager(void *java_manager)
 {
@@ -154,6 +162,18 @@ static NativeAssetManager *manager_from_java(void *env, void *java_manager)
     if (!env || !java_manager) return NULL;
     pthread_mutex_lock(&managers_lock);
     NativeAssetManager *manager = find_java_manager(java_manager);
+    if (!manager && same_java_object) {
+        for (unsigned i = 0; i < MAX_MANAGERS; i++) {
+            if (!managers[i] || !managers[i]->bound) continue;
+            // Compare JNI object identity, not jobject pointer value. This
+            // callback verifies that env belongs to its installed VM before
+            // consulting IsSameObject; never accept a guessed Java handle.
+            if (same_java_object(env, java_manager, managers[i]->java_manager)) {
+                manager = managers[i];
+                break;
+            }
+        }
+    }
     pthread_mutex_unlock(&managers_lock);
     return manager;
 }

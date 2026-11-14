@@ -43,6 +43,18 @@ public:
 
 class HorizonGameActivity : public jnivm::Object {
 public:
+    std::shared_ptr<AssetManagerObject> getAssets(jnivm::ENV *env)
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        // No asset directory means no Android asset owner. Returning a fake
+        // manager would turn an unresolved resource into a silent success.
+        if (!asset_owner)
+            return nullptr;
+        jnivm::JNITypes<std::shared_ptr<AssetManagerObject>>::ToJNIType(
+            env, asset_owner);
+        return asset_owner;
+    }
+
     std::shared_ptr<ZeroInsets> getWaterfallInsets(jnivm::ENV *env)
     {
         // Horizon's fullscreen display has no Android status bar or cutout.
@@ -55,8 +67,10 @@ public:
     static void Register(jnivm::ENV *env)
     {
         ZeroInsets::Register(env); // Needed for the method's JNI descriptor.
+        env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
         env->GetClass<HorizonGameActivity>("com/google/androidgamesdk/GameActivity");
         auto klass = env->GetClass("com/google/androidgamesdk/GameActivity");
+        klass->HookInstanceFunction(env, "getAssets", &HorizonGameActivity::getAssets);
         klass->HookInstanceFunction(env, "getWaterfallInsets",
                                     &HorizonGameActivity::getWaterfallInsets);
     }
@@ -64,6 +78,32 @@ public:
 
 std::shared_ptr<HorizonGameActivity> game_activity_owner;
 jobject game_activity_reference;
+
+bool same_java_asset_object(void *environment, void *candidate, void *bound)
+{
+    // This is called by the NDK bridge, which also serves non-JNI previews.
+    // Do not give IsSameObject an arbitrary pointer. The pinned VM represents
+    // references as Object*, so only objects in this thread's local frames or
+    // the VM's global collection are safe to inspect.
+    if (!attached_to_runtime || !runtime || !environment || !candidate || !bound)
+        return false;
+    JNIEnv *jni = runtime->GetJNIEnv();
+    if (jni != environment)
+        return false;
+    jnivm::ENV *env = runtime->GetEnv().get();
+    bool known = false;
+    for (const auto &frame : env->localframe) {
+        for (const auto &ref : frame)
+            if (ref.get() == candidate) known = true;
+    }
+    if (!known) {
+        std::lock_guard<std::mutex> lock(runtime->mtx);
+        for (const auto &ref : runtime->globals)
+            if (ref.get() == candidate) known = true;
+    }
+    return known && jni->IsSameObject(static_cast<jobject>(candidate),
+                                      static_cast<jobject>(bound)) == JNI_TRUE;
+}
 
 int32_t get_env(void *context, void **environment, int32_t version)
 {
@@ -122,6 +162,7 @@ extern "C" bool morrow_jni_runtime_start(void)
         // explicitly attach through the bridge before obtaining their env.
         attached_to_runtime = true;
         runtime = std::move(candidate);
+        android_asset_compat_set_reference_matcher(same_java_asset_object);
         return true;
     } catch (...) {
         // An allocation or JNI exception cannot cross the C entry point.

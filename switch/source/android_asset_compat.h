@@ -26,6 +26,14 @@ typedef struct {
 bool android_asset_compat_bind_manager(void *java_manager, const char *asset_root);
 void android_asset_compat_unbind_manager(void *java_manager);
 
+// A jobject returned by a JNI method may have a different reference address
+// from the bound global jobject while naming the same Java object. The VM
+// owner alone can validate that identity with IsSameObject. The matcher is
+// optional: without an installed VM, only exact bound references work.
+typedef bool (*AndroidAssetJavaSameObject)(void *env, void *candidate,
+                                           void *bound_reference);
+void android_asset_compat_set_reference_matcher(AndroidAssetJavaSameObject matcher);
+
 // The native AAssetManager handle returned by AAssetManager_fromJava is the
 // identity for these calls, not the original jobject. Both fail on stale or
 // unbound handles. Unbinding removes any previously supplied configuration.

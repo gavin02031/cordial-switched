@@ -117,6 +117,11 @@ int main()
     jmethodID method = main_env->GetMethodID(activity_class, "getWaterfallInsets",
                                               "()Landroidx/core/graphics/Insets;");
     assert(method);
+    jmethodID assets_method = main_env->GetMethodID(activity_class, "getAssets",
+                                        "()Landroid/content/res/AssetManager;");
+    assert(assets_method);
+    // Without an existing asset directory the Activity cannot invent one.
+    assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), assets_method));
     jobject insets = main_env->CallObjectMethod(static_cast<jobject>(activity), method);
     assert(insets && main_env->IsInstanceOf(insets, insets_class));
     for (const char *field : {"left", "top", "right", "bottom"}) {
@@ -180,6 +185,15 @@ int main()
     assert(from_java(main_env, &horizon_window) == nullptr);
     void *native_manager = from_java(main_env, asset_java);
     assert(native_manager);
+    jobject activity_assets = main_env->CallObjectMethod(
+        static_cast<jobject>(activity), assets_method);
+    assert(activity_assets && main_env->IsSameObject(activity_assets,
+                                                    static_cast<jobject>(asset_java)));
+    assert(from_java(main_env, activity_assets) == native_manager);
+    jobject alias = main_env->NewLocalRef(static_cast<jobject>(asset_java));
+    assert(alias && main_env->IsSameObject(alias, static_cast<jobject>(asset_java)));
+    assert(from_java(main_env, alias) == native_manager);
+    main_env->DeleteLocalRef(alias);
     assert(morrow_jni_runtime_bind_asset_manager(root) == asset_java);
     assert(!morrow_jni_runtime_bind_asset_manager("/tmp"));
     assert(!open_asset(native_manager, "../test.asset", 0));
@@ -188,6 +202,9 @@ int main()
     assert(morrow_jni_runtime_unbind_asset_manager());
     assert(!morrow_jni_runtime_asset_manager_bound());
     assert(!from_java(main_env, asset_java));
+    assert(!from_java(main_env, activity_assets));
+    assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), assets_method));
+    main_env->DeleteLocalRef(activity_assets);
     assert(!open_asset(native_manager, "test.asset", 0));
     close_asset(asset);
     assert(morrow_jni_runtime_unbind_asset_manager());
@@ -195,6 +212,6 @@ int main()
     assert(!morrow_jni_runtime_game_activity_ready());
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI, GameActivity insets, Surface and assets passed");
+    puts("morrow_jni_runtime_test: JNI, GameActivity assets/insets and aliases passed");
     return 0;
 }
