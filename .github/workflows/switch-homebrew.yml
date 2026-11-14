@@ -254,3 +254,17 @@ jobs:
           test -s /tmp/morrow-jnivm-a64/libjnivm.a
           "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-nm" -C /tmp/morrow-jnivm-a64/libjnivm.a > /tmp/morrow-jnivm-symbols.txt
           grep -q 'jnivm::VM' /tmp/morrow-jnivm-symbols.txt
+      - name: Link standalone on-console JNI diagnostic
+        working-directory: switch/jni_probe
+        run: make -j2
+      - name: Check JNI diagnostic executable
+        run: |
+          test -s switch/jni_probe/morrow-jni-probe.elf
+          test -s switch/jni_probe/morrow-jni-probe.nro
+          ls -lh switch/jni_probe/morrow-jni-probe.nro
+      - name: Upload isolated JNI diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: morrow-switch-jni-probe
+          path: switch/jni_probe/morrow-jni-probe.nro
+          if-no-files-found: error
