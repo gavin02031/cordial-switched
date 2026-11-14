@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.40 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.41 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -175,6 +175,15 @@ then check:
    `guest_egl_window_surface_created` separately. **This synthetic test is not
    Java, JNI or Roblox.** No real Java Surface is registered yet; the Android
    engine still cannot initialise and this is not a release candidate.
+   v0.41 supplies nine imported `AConfiguration_*` functions, including
+   configuration lifecycle and language/country, screen-size and dp getters.
+   A newly allocated configuration starts with the NDK's unspecified values;
+   `AConfiguration_fromAssetManager` copies metadata only if an existing,
+   verified native asset manager received a configuration profile explicitly
+   from its owner. Stale or unregistered handles cannot supply locale or dp.
+   No real Android Java asset manager is registered on Switch yet, so this
+   narrows the unresolved import gap without pretending to have a complete
+   Android resources subsystem or JNI environment.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
@@ -201,8 +210,9 @@ We will need signed-package verification before any future execution feature.
 ### Actual Switch Lite observations (November 13, 2026)
 
 The user reported seeing Morrow's colourful GLES2 triangle on v0.38.
-This is an on-device graphics milestone, not Roblox rendering; the v0.40
-checked guest-window path has not yet been hardware-tested.
+The user subsequently reported that the v0.40 checked guest-window triangle
+test also worked. These are on-device graphics milestones, not Roblox renders;
+numbered graphics logs from those runs have not been supplied.
 
 In the user's photograph of a v0.6 run on their Switch Lite, the on-screen
 results showed **JIT VERIFIED / ARM64 test returned 42**, and an

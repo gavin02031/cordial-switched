@@ -10,6 +10,7 @@
 #include "android_looper_compat.h"
 #include "android_native_window_compat.h"
 #include "android_asset_compat.h"
+#include "android_configuration_compat.h"
 #include "android_math_compat.h"
 #include "android_egl_gles_compat.h"
 
@@ -96,6 +97,10 @@ int main(void)
            (void *)(uintptr_t)expected);
     assert(android_asset_compat_resolve("AAssetManager_open", NULL, NULL, &expected));
     assert(lookup_symbol(android_library, "AAssetManager_open") ==
+           (void *)(uintptr_t)expected);
+    assert(android_configuration_compat_resolve("AConfiguration_getLanguage",
+                                                NULL, NULL, &expected));
+    assert(lookup_symbol(android_library, "AConfiguration_getLanguage") ==
            (void *)(uintptr_t)expected);
     assert(close_library(android_library) == 0);
 

@@ -14,6 +14,7 @@
 #include "android_cxa_compat.h"
 #include "android_looper_compat.h"
 #include "android_asset_compat.h"
+#include "android_configuration_compat.h"
 #include "android_egl_gles_compat.h"
 #include "android_jni_vm_bridge.h"
 #include "android_native_window_compat.h"
@@ -126,6 +127,7 @@ static bool resolve_compatible(const char *name, const char *version,
             android_looper_compat_resolve(name, version, library, address) ||
             android_native_window_compat_resolve(name, version, library, address) ||
             android_asset_compat_resolve(name, version, library, address) ||
+            android_configuration_compat_resolve(name, version, library, address) ||
             android_egl_gles_compat_resolve(name, version, library, address) ||
             android_dl_compat_resolve(name, version, library, address) ||
             android_math_compat_resolve(name, version, library, address) ||
@@ -236,12 +238,14 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.40 real-engine entry readiness attempt");
+    log_line(log, "# Cordial Switched v0.41 real-engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     log_line(log, "android_java_surface_registered=no");
     log_line(log, "android_java_asset_manager_registered=no");
+    log_line(log, "android_asset_configuration_registered=no");
+    log_line(log, "android_configuration_ndk_functions=9");
     log_line(log, "jni_vm_invocation_abi=%s",
              android_jni_vm_bridge_instance() ? "available" : "unavailable");
     log_line(log, "jni_vm_provider_installed=%s",

@@ -18,6 +18,8 @@ enum { MAX_MANAGERS = 8, ASSET_PATH_BYTES = 512,
 typedef struct {
     void *java_manager;
     char root[ASSET_PATH_BYTES];
+    AndroidAssetConfiguration configuration;
+    bool configuration_set;
     bool bound;
 } NativeAssetManager;
 
@@ -81,6 +83,11 @@ bool android_asset_compat_bind_manager(void *java_manager, const char *root)
         }
     }
     if (manager) {
+        // Rebinding a Java object cannot inherit a previous owner's locale.
+        if (!manager->bound || manager->java_manager != java_manager) {
+            memset(&manager->configuration, 0, sizeof(manager->configuration));
+            manager->configuration_set = false;
+        }
         manager->java_manager = java_manager;
         manager->bound = true;
         memcpy(manager->root, root, length + 1);
@@ -98,10 +105,48 @@ void android_asset_compat_unbind_manager(void *java_manager)
         manager->bound = false;
         manager->java_manager = NULL;
         manager->root[0] = 0;
+        memset(&manager->configuration, 0, sizeof(manager->configuration));
+        manager->configuration_set = false;
         // Keep the unique handle allocated so stale guest handles cannot be
         // mistaken for a different Java object reusing the same address.
     }
     pthread_mutex_unlock(&managers_lock);
+}
+
+bool android_asset_compat_set_configuration(void *candidate,
+                                             const AndroidAssetConfiguration *configuration)
+{
+    if (!candidate || !configuration) return false;
+    pthread_mutex_lock(&managers_lock);
+    bool found = false;
+    for (unsigned i = 0; i < MAX_MANAGERS; i++) {
+        if (!managers[i] || managers[i] != candidate || !managers[i]->bound) continue;
+        managers[i]->configuration = *configuration;
+        managers[i]->configuration_set = true;
+        found = true;
+        break;
+    }
+    pthread_mutex_unlock(&managers_lock);
+    return found;
+}
+
+bool android_asset_compat_get_configuration(const void *candidate,
+                                             AndroidAssetConfiguration *configuration)
+{
+    if (!configuration) return false;
+    memset(configuration, 0, sizeof(*configuration));
+    if (!candidate) return false;
+    pthread_mutex_lock(&managers_lock);
+    bool found = false;
+    for (unsigned i = 0; i < MAX_MANAGERS; i++) {
+        if (!managers[i] || managers[i] != candidate || !managers[i]->bound ||
+            !managers[i]->configuration_set) continue;
+        *configuration = managers[i]->configuration;
+        found = true;
+        break;
+    }
+    pthread_mutex_unlock(&managers_lock);
+    return found;
 }
 
 static NativeAssetManager *manager_from_java(void *env, void *java_manager)

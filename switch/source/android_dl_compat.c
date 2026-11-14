@@ -11,6 +11,7 @@
 #include "android_looper_compat.h"
 #include "android_native_window_compat.h"
 #include "android_asset_compat.h"
+#include "android_configuration_compat.h"
 #include "android_egl_gles_compat.h"
 #include "android_math_compat.h"
 
@@ -142,7 +143,8 @@ static void *bionic_dlsym(void *handle, const char *name)
     else if (module == &modules[MODULE_ANDROID]) {
         if (!android_looper_compat_resolve(name, NULL, NULL, &address) &&
             !android_native_window_compat_resolve(name, NULL, NULL, &address))
-            android_asset_compat_resolve(name, NULL, NULL, &address);
+            if (!android_asset_compat_resolve(name, NULL, NULL, &address))
+                android_configuration_compat_resolve(name, NULL, NULL, &address);
     }
     else if (module == &modules[MODULE_MATH])
         android_math_compat_resolve(name, "LIBC", "libm.so", &address);

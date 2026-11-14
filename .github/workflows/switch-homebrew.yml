@@ -39,7 +39,7 @@ jobs:
             switch/source/android_media_format_compat.c switch/source/android_media_codec_compat.c \
             switch/source/android_cxa_compat.c switch/source/android_looper_compat.c \
             switch/source/android_native_window_compat.c \
-            switch/source/android_asset_compat.c \
+            switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
             switch/source/android_egl_gles_compat.c \
             switch/source/android_dl_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
@@ -80,6 +80,13 @@ jobs:
             switch/tests/android_asset_compat_test.c switch/source/android_asset_compat.c -pthread \
             -o /tmp/cordial-android-asset-test
           /tmp/cordial-android-asset-test
+      - name: Test Android configuration ABI with verified asset-manager metadata
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_configuration_compat_test.c \
+            switch/source/android_configuration_compat.c switch/source/android_asset_compat.c \
+            -pthread -o /tmp/cordial-android-configuration-test
+          /tmp/cordial-android-configuration-test
       - name: Test explicit EGL/GLES2 import names and safe host unavailability
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
@@ -100,7 +107,7 @@ jobs:
             switch/tests/android_dl_compat_test.c switch/source/android_dl_compat.c \
             switch/source/android_log_compat.c switch/source/android_looper_compat.c \
             switch/source/android_native_window_compat.c \
-            switch/source/android_asset_compat.c \
+            switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
             switch/source/android_egl_gles_compat.c \
             switch/source/android_math_compat.c -pthread -lm \
             -o /tmp/cordial-android-dl-test
