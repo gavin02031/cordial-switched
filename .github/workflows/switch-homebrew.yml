@@ -79,6 +79,13 @@ jobs:
             switch/tests/android_asset_compat_test.c switch/source/android_asset_compat.c -pthread \
             -o /tmp/cordial-android-asset-test
           /tmp/cordial-android-asset-test
+      - name: Test JNI JavaVM invocation ABI and per-thread provider isolation
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_jni_vm_bridge_test.c \
+            switch/source/android_jni_vm_bridge.c -pthread \
+            -o /tmp/cordial-android-jni-vm-test
+          /tmp/cordial-android-jni-vm-test
       - name: Test Bionic dynamic library and symbol lookup namespace
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

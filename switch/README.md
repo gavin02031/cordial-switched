@@ -140,6 +140,14 @@ then check:
    buffers limited to 16 MiB and file descriptors issued for real files. No Java
    `AssetManager` has been bound yet: the caller must supply a verified object
    and keep its JNI reference alive, so this is not APK-resource emulation.
+   v0.37 adds the C ABI for JavaVM's five JNI invocation callbacks, including
+   `GetEnv`, thread attachment/detachment, and daemon attachment. Calls fail
+   closed until a real Java environment provider is installed once; `GetEnv`
+   delegates per-thread `JNIEnv` lookup to that provider, which must never
+   share an environment between threads. The host regression test uses a
+   deliberately **mock** provider to verify the ABI,
+   failure modes, and thread isolation. **No JNI environment or Java classes
+   exist in the Switch runtime yet; Roblox `JNI_OnLoad` is still not called.**
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

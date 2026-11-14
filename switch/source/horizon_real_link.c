@@ -14,6 +14,7 @@
 #include "android_cxa_compat.h"
 #include "android_looper_compat.h"
 #include "android_asset_compat.h"
+#include "android_jni_vm_bridge.h"
 #include "android_native_window_compat.h"
 #include "android_dl_compat.h"
 #include "android_media_format_compat.h"
@@ -233,12 +234,18 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.36 real-engine entry readiness attempt");
+    log_line(log, "# Cordial Switched v0.37 real-engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     log_line(log, "android_java_surface_registered=no");
     log_line(log, "android_java_asset_manager_registered=no");
+    log_line(log, "jni_vm_invocation_abi=%s",
+             android_jni_vm_bridge_instance() ? "available" : "unavailable");
+    log_line(log, "jni_vm_provider_installed=%s",
+             android_jni_vm_bridge_has_provider() ? "yes" : "no");
+    log_line(log, "jni_env_implemented=no");
+    log_line(log, "jni_onload_call_eligible=no");
     log_line(log, "event=preflight_started");
 
     // On a rare release failure retain the reservation for the next L3.
