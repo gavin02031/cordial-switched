@@ -69,9 +69,11 @@ static void *worker_run(void *value)
     void *env = reinterpret_cast<void *>(1);
     assert(f->get_env(worker->bridge, &env, ANDROID_JNI_VERSION_1_6) ==
            ANDROID_JNI_EDETACHED && !env);
+    assert(!morrow_jni_runtime_jni_env());
     assert(f->attach_daemon(worker->bridge, &env, nullptr) == ANDROID_JNI_OK);
     worker->worker_env = static_cast<JNIEnv *>(env);
     assert(worker->worker_env && worker->worker_env != worker->main_env);
+    assert(morrow_jni_runtime_jni_env() == worker->worker_env);
     JavaVM *returned_vm = nullptr;
     assert(worker->worker_env->GetJavaVM(&returned_vm) == JNI_OK);
     assert(returned_vm == worker->native_vm);
@@ -80,6 +82,7 @@ static void *worker_run(void *value)
     assert(f->detach(worker->bridge) == ANDROID_JNI_OK);
     assert(f->get_env(worker->bridge, &env, ANDROID_JNI_VERSION_1_6) ==
            ANDROID_JNI_EDETACHED && !env);
+    assert(!morrow_jni_runtime_jni_env());
     assert(f->detach(worker->bridge) == ANDROID_JNI_EDETACHED);
     return nullptr;
 }
@@ -90,6 +93,7 @@ int main()
     assert(bridge && bridge->functions);
     assert(!android_jni_vm_bridge_has_provider());
     assert(morrow_jni_runtime_java_vm() == nullptr);
+    assert(morrow_jni_runtime_jni_env() == nullptr);
     assert(!morrow_jni_runtime_game_activity_ready());
     assert(morrow_jni_runtime_start());
     assert(morrow_jni_runtime_start());
@@ -101,6 +105,7 @@ int main()
            ANDROID_JNI_OK);
     auto *main_env = static_cast<JNIEnv *>(env);
     assert(main_env && main_env->GetVersion() == JNI_VERSION_1_6);
+    assert(morrow_jni_runtime_jni_env() == main_env);
     JavaVM *returned_vm = nullptr;
     assert(main_env->GetJavaVM(&returned_vm) == JNI_OK);
     assert(returned_vm == native_vm);

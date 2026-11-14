@@ -15,6 +15,9 @@
 #include "elf_probe.h"
 #include "android_egl_gles_compat.h"
 #include "android_native_window_compat.h"
+#ifdef MORROW_HAS_JNIVM
+#include "morrow_jni_runtime.h"
+#endif
 
 static void report(FILE *out, const char *format, ...)
 {
@@ -117,7 +120,7 @@ static GLuint create_triangle_program(FILE *log)
 void morrow_gles_smoke_run(void)
 {
     FILE *log = new_graphics_report();
-    report(log, "# Morrow v0.40 guest-window to Horizon Mesa smoke test");
+    report(log, "# Morrow v0.50 guest-window to Horizon Mesa smoke test");
     report(log, "roblox_engine_executed=no");
     report(log, "roblox_frame_rendered=no");
     uint64_t bridge_symbol = 0;
@@ -125,7 +128,13 @@ void morrow_gles_smoke_run(void)
         "glCreateShader", NULL, NULL, &bridge_symbol);
     report(log, "native_guest_gl_symbol_resolved=%s", bridge_gl ? "yes" : "no");
     report(log, "guest_egl_window_surface_bridge=registered_surface_only");
+#ifdef MORROW_HAS_JNIVM
+    report(log, "synthetic_java_surface=no");
+    report(log, "jni_surface_smoke_enabled=yes");
+#else
     report(log, "synthetic_java_surface=yes");
+    report(log, "jni_surface_smoke_enabled=no");
+#endif
 
     typedef void *(*FromSurface)(void *, void *);
     typedef void (*ReleaseWindow)(void *);
@@ -138,9 +147,16 @@ void morrow_gles_smoke_run(void)
     ReleaseWindow release_window = NULL;
     CreateSurface create_surface = NULL;
     GetGuestError get_guest_error = NULL;
-    unsigned char synthetic_env = 1, synthetic_surface = 2;
+    unsigned char synthetic_surface = 2;
+#ifndef MORROW_HAS_JNIVM
+    unsigned char synthetic_env = 1;
+#endif
+    void *java_environment = NULL;
+    void *java_surface = NULL;
     void *guest_window = NULL;
+    void *mapped_horizon_window = NULL;
     bool guest_bound = false;
+    bool mapped = false;
     if (android_native_window_compat_resolve("ANativeWindow_fromSurface",
            NULL, NULL, &from_address) &&
         android_native_window_compat_resolve("ANativeWindow_release",
@@ -205,15 +221,44 @@ void morrow_gles_smoke_run(void)
         report(log, "failure=unregistered_guest_window_not_rejected");
         goto done;
     }
-    guest_bound = android_native_window_compat_bind_horizon_surface(
-        &synthetic_surface, nwindowGetDefault(), 1280, 720);
-    if (!guest_bound) {
-        report(log, "failure=synthetic_surface_registration");
+#ifdef MORROW_HAS_JNIVM
+    // The main UI has already released SDL's renderer and unbound its JNI
+    // Surface. Exercise the actual JNI -> ANativeWindow -> EGL path now.
+    // A failed JNI start is a failed smoke test, never a synthetic fallback.
+    if (!morrow_jni_runtime_start()) {
+        report(log, "failure=jni_vm_start");
         goto done;
     }
-    guest_window = from_surface(&synthetic_env, &synthetic_surface);
+    java_environment = morrow_jni_runtime_jni_env();
+    java_surface = morrow_jni_runtime_bind_horizon_surface(
+        nwindowGetDefault(), 1280, 720);
+    guest_bound = java_surface != NULL;
+    report(log, "real_java_surface_registered=%s", guest_bound ? "yes" : "no");
+    if (!java_environment) {
+        report(log, "failure=jni_current_thread_environment_missing");
+        goto done;
+    }
+#else
+    java_environment = &synthetic_env;
+    java_surface = &synthetic_surface;
+    guest_bound = android_native_window_compat_bind_horizon_surface(
+        java_surface, nwindowGetDefault(), 1280, 720);
+#endif
+    if (!guest_bound) {
+        report(log, "failure=surface_registration");
+        goto done;
+    }
+    guest_window = from_surface(java_environment, java_surface);
     if (!guest_window) {
         report(log, "failure=guest_anativewindow_lookup");
+        goto done;
+    }
+    mapped = android_native_window_compat_horizon_handle(
+        guest_window, &mapped_horizon_window);
+    report(log, "guest_surface_horizon_window_identity=%s",
+           mapped && mapped_horizon_window == nwindowGetDefault() ? "yes" : "no");
+    if (!mapped || mapped_horizon_window != nwindowGetDefault()) {
+        report(log, "failure=guest_window_owner_mismatch");
         goto done;
     }
     surface = create_surface(display, config,
@@ -309,8 +354,13 @@ done:
         eglTerminate(display);
     }
     if (guest_window) release_window(guest_window);
-    if (guest_bound)
+    if (guest_bound) {
+#ifdef MORROW_HAS_JNIVM
+        morrow_jni_runtime_unbind_surface();
+#else
         android_native_window_compat_unbind_surface(&synthetic_surface);
+#endif
+    }
     report(log, "event=graphics_test_finished");
     if (log) fclose(log);
 }

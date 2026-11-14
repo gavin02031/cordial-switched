@@ -8,13 +8,17 @@
 extern "C" {
 #endif
 
-// Opt-in Horizon libjnivm runtime. This does not implement GameActivity,
-// a full Android resources service or any executable Roblox engine image.
+// Opt-in Horizon libjnivm runtime. This provides only a partial GameActivity,
+// not the complete Android services or an executable Roblox engine image.
 bool morrow_jni_runtime_start(void);
 
 // Return the actual libjnivm JavaVM, not the separate diagnostic invocation
 // bridge. JNIEnv::GetJavaVM must return the same JavaVM passed to JNI_OnLoad.
 void *morrow_jni_runtime_java_vm(void);
+
+// The JNI environment belongs to the calling, already attached thread.
+// Returns NULL before startup or after detaching, never implicitly attaches.
+void *morrow_jni_runtime_jni_env(void);
 
 // A host-owned, live Horizon NWindow can be represented by one stable JNI
 // android/view/Surface reference. The caller keeps NWindow alive until unbind.
@@ -34,7 +38,8 @@ bool morrow_jni_runtime_asset_manager_bound(void);
 bool morrow_jni_runtime_unbind_asset_manager(void);
 
 // The initial GameActivity reference has the correct JNI class identity and
-// one truthful callback: zero waterfall insets on the full-screen Switch.
+// two truthful callbacks: zero waterfall insets on the full-screen Switch and
+// a real AssetManager only when a read-only directory has been bound.
 // Native lifecycle, IME, flag bootstrap and app services are not implemented.
 void *morrow_jni_runtime_game_activity(void);
 bool morrow_jni_runtime_game_activity_ready(void);

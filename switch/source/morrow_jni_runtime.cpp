@@ -177,6 +177,12 @@ extern "C" void *morrow_jni_runtime_java_vm(void)
     return runtime ? runtime->GetJavaVM() : nullptr;
 }
 
+extern "C" void *morrow_jni_runtime_jni_env(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return runtime && attached_to_runtime ? runtime->GetJNIEnv() : nullptr;
+}
+
 extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
                                                           int32_t width, int32_t height)
 {

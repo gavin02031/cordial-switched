@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.49 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.50 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.49 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.50 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -47,7 +47,11 @@ For optional asset validation, place assets extracted from your own legitimate
 APK under `sdmc:/switch/cordial-switched/assets/`. Without that directory,
 asset registration correctly remains `no`; no APK or assets are downloaded by
 the preview, and no asset bytes are included in its diagnostic reports.
-The normal graphics preview and its **Minus** triangle test are unchanged.
+The default graphics preview and its synthetic **Minus** triangle test are
+unchanged. On the opt-in JNI preview, **Loader → Minus** now repeats the
+triangle test with a real `libjnivm` Java `Surface` instead of the synthetic
+one, recording the result in `graphics-XX.txt`. This is an on-device test of
+JNI Surface → `ANativeWindow_fromSurface` → EGL → GLES, not a Roblox render.
 
 For a local build, install devkitPro with `devkitA64`, `libnx`,
 `switch-sdl2`, and `switch-sdl2_ttf`, set `DEVKITPRO`, and run:
@@ -261,6 +265,14 @@ then check:
    same NWindow, retain their dimensions and fail new acquisitions after
    unbinding. The native window and AddressSanitizer tests also pass. This
    does not yet give the Roblox engine an EGL context or a first frame.
+   v0.50 gives the opt-in **Minus** graphics test a second, real-JNI path.
+   After SDL releases its renderer, the test starts the VM, obtains the actual
+   current-thread JNI environment, binds a typed Java Surface to the Horizon
+   window, and passes that reference through `ANativeWindow_fromSurface` to
+   the checked EGL window-surface adapter. The `graphics-XX.txt` diagnostic
+   distinguishes this from the default synthetic test and records the real
+   window identity and EGL outcome. The VM/thread host regression test passes,
+   but this joined JNI/EGL path still requires Switch Lite hardware results.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
