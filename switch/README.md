@@ -135,6 +135,11 @@ then check:
    (five NDK imports), accepting only surfaces explicitly registered by a future
    JNI implementation. No Java surface is registered today, so `fromSurface`
    correctly returns unavailable, and no EGL framebuffer is claimed.
+   v0.36 adds six Android NDK asset-manager entry points. Read-only assets can
+   come from a deliberately bound local directory, with path traversal rejected,
+   buffers limited to 16 MiB and file descriptors issued for real files. No Java
+   `AssetManager` has been bound yet: the caller must supply a verified object
+   and keep its JNI reference alive, so this is not APK-resource emulation.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
