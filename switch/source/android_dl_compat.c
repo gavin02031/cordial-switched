@@ -9,6 +9,7 @@
 
 #include "android_log_compat.h"
 #include "android_looper_compat.h"
+#include "android_native_window_compat.h"
 #include "android_math_compat.h"
 
 enum { DL_ERROR_BYTES = 128 };
@@ -132,8 +133,10 @@ static void *bionic_dlsym(void *handle, const char *name)
     uint64_t address = 0;
     if (module == &modules[MODULE_LOG])
         android_log_compat_resolve(name, &address, NULL);
-    else if (module == &modules[MODULE_ANDROID])
-        android_looper_compat_resolve(name, NULL, NULL, &address);
+    else if (module == &modules[MODULE_ANDROID]) {
+        if (!android_looper_compat_resolve(name, NULL, NULL, &address))
+            android_native_window_compat_resolve(name, NULL, NULL, &address);
+    }
     else if (module == &modules[MODULE_MATH])
         android_math_compat_resolve(name, "LIBC", "libm.so", &address);
     else if (module == &modules[MODULE_DL])

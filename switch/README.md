@@ -131,6 +131,10 @@ then check:
    Stripped section headers are reported as *unknown*, not as proof that an
    initializer is absent. All discovery is **read-only**: it does not execute
    the initializers or resolve the remaining Android JNI/graphics dependencies.
+   v0.35 supplies a native `ANativeWindow` reference-count and dimension bridge
+   (five NDK imports), accepting only surfaces explicitly registered by a future
+   JNI implementation. No Java surface is registered today, so `fromSurface`
+   correctly returns unavailable, and no EGL framebuffer is claimed.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

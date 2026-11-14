@@ -8,6 +8,7 @@
 #include "android_dl_compat.h"
 #include "android_log_compat.h"
 #include "android_looper_compat.h"
+#include "android_native_window_compat.h"
 #include "android_math_compat.h"
 
 typedef void *(*OpenLibrary)(const char *, int);
@@ -79,6 +80,10 @@ int main(void)
     assert(android_library);
     assert(android_looper_compat_resolve("ALooper_prepare", NULL, NULL, &expected));
     assert(lookup_symbol(android_library, "ALooper_prepare") ==
+           (void *)(uintptr_t)expected);
+    assert(android_native_window_compat_resolve("ANativeWindow_getWidth", NULL,
+                                                NULL, &expected));
+    assert(lookup_symbol(android_library, "ANativeWindow_getWidth") ==
            (void *)(uintptr_t)expected);
     assert(close_library(android_library) == 0);
 
