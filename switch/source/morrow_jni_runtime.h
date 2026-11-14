@@ -37,13 +37,26 @@ void *morrow_jni_runtime_bind_asset_manager(const char *asset_root);
 bool morrow_jni_runtime_asset_manager_bound(void);
 bool morrow_jni_runtime_unbind_asset_manager(void);
 
-// The initial GameActivity reference has the correct JNI class identity and
-// two truthful callbacks: zero waterfall insets on the full-screen Switch and
-// a real AssetManager only when a read-only directory has been bound.
-// Native lifecycle, IME, flag bootstrap and app services are not implemented.
+// GameActivity has typed insets and asset callbacks and records two Android
+// window/input requests. No Android window manager or IME applies those
+// requests; lifecycle, flag bootstrap and app services are not implemented.
 void *morrow_jni_runtime_game_activity(void);
 bool morrow_jni_runtime_game_activity_ready(void);
 bool morrow_jni_runtime_release_game_activity(void);
+
+typedef struct {
+    uint32_t window_flag_requests;
+    int32_t last_window_flags;
+    int32_t last_window_mask;
+    uint32_t ime_editor_info_requests;
+    int32_t last_ime_value_1;
+    int32_t last_ime_value_2;
+    int32_t last_ime_value_3;
+} MorrowGameActivityRequests;
+
+// Returns false if no Activity is registered. Observations are diagnostic,
+// not confirmation that Android window flags or soft keyboard took effect.
+bool morrow_jni_runtime_activity_requests(MorrowGameActivityRequests *requests);
 
 #ifdef __cplusplus
 }

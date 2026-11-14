@@ -280,6 +280,21 @@ void horizon_real_link_run(RealLinkResult *result)
              game_activity_ready ? "zero_fullscreen_insets_only" : "unavailable");
     log_line(log, "jni_game_activity_get_assets_callback=%s",
              game_activity_ready ? "bound_read_only_manager_or_null" : "unavailable");
+    log_line(log, "jni_game_activity_window_ime_callbacks=%s",
+             game_activity_ready ? "registered_observation_only" : "unavailable");
+    uint32_t window_flag_requests = 0;
+    uint32_t ime_editor_info_requests = 0;
+#ifdef MORROW_HAS_JNIVM
+    MorrowGameActivityRequests activity_requests = {0};
+    if (morrow_jni_runtime_activity_requests(&activity_requests)) {
+        window_flag_requests = activity_requests.window_flag_requests;
+        ime_editor_info_requests = activity_requests.ime_editor_info_requests;
+    }
+#endif
+    log_line(log, "jni_game_activity_window_flag_request_count=%u", window_flag_requests);
+    log_line(log, "jni_game_activity_ime_editor_info_request_count=%u", ime_editor_info_requests);
+    log_line(log, "jni_game_activity_window_flags_applied=no");
+    log_line(log, "jni_game_activity_ime_editor_info_applied=no");
     log_line(log, "jni_asset_reference_alias_resolution=%s",
              jni_provider_ready ? "known_vm_references_only" : "unavailable");
     log_line(log, "jni_game_activity_bootstrap_implemented=no");

@@ -32,6 +32,8 @@ struct WorkerResult {
     JNIEnv *main_env;
     JavaVM *native_vm;
     JNIEnv *worker_env;
+    void *activity;
+    jmethodID set_window_flags;
 };
 
 using FromSurface = void *(*)(void *, void *);
@@ -77,6 +79,9 @@ static void *worker_run(void *value)
     JavaVM *returned_vm = nullptr;
     assert(worker->worker_env->GetJavaVM(&returned_vm) == JNI_OK);
     assert(returned_vm == worker->native_vm);
+    worker->worker_env->CallVoidMethod(static_cast<jobject>(worker->activity),
+                                      worker->set_window_flags, 0x800, 0x400);
+    assert(!worker->worker_env->ExceptionCheck());
     assert(f->get_env(worker->bridge, &env, ANDROID_JNI_VERSION_1_6) == ANDROID_JNI_OK);
     assert(env == worker->worker_env);
     assert(f->detach(worker->bridge) == ANDROID_JNI_OK);
@@ -95,6 +100,9 @@ int main()
     assert(morrow_jni_runtime_java_vm() == nullptr);
     assert(morrow_jni_runtime_jni_env() == nullptr);
     assert(!morrow_jni_runtime_game_activity_ready());
+    MorrowGameActivityRequests activity_requests = {};
+    assert(!morrow_jni_runtime_activity_requests(&activity_requests));
+    assert(!morrow_jni_runtime_activity_requests(nullptr));
     assert(morrow_jni_runtime_start());
     assert(morrow_jni_runtime_start());
     assert(android_jni_vm_bridge_has_provider());
@@ -119,6 +127,26 @@ int main()
     jclass insets_class = main_env->FindClass("androidx/core/graphics/Insets");
     assert(activity_class && insets_class);
     assert(main_env->IsInstanceOf(static_cast<jobject>(activity), activity_class));
+    assert(morrow_jni_runtime_activity_requests(&activity_requests));
+    assert(activity_requests.window_flag_requests == 0);
+    assert(activity_requests.ime_editor_info_requests == 0);
+    jmethodID set_window_flags = main_env->GetMethodID(
+        activity_class, "setWindowFlags", "(II)V");
+    jmethodID set_ime_info = main_env->GetMethodID(
+        activity_class, "setImeEditorInfoFields", "(III)V");
+    assert(set_window_flags && set_ime_info);
+    main_env->CallVoidMethod(static_cast<jobject>(activity), set_window_flags,
+                             0x400, 0x200);
+    main_env->CallVoidMethod(static_cast<jobject>(activity), set_ime_info,
+                             17, 23, 42);
+    assert(morrow_jni_runtime_activity_requests(&activity_requests));
+    assert(activity_requests.window_flag_requests == 1);
+    assert(activity_requests.last_window_flags == 0x400);
+    assert(activity_requests.last_window_mask == 0x200);
+    assert(activity_requests.ime_editor_info_requests == 1);
+    assert(activity_requests.last_ime_value_1 == 17);
+    assert(activity_requests.last_ime_value_2 == 23);
+    assert(activity_requests.last_ime_value_3 == 42);
     jmethodID method = main_env->GetMethodID(activity_class, "getWaterfallInsets",
                                               "()Landroidx/core/graphics/Insets;");
     assert(method);
@@ -135,13 +163,18 @@ int main()
     }
     main_env->DeleteLocalRef(insets);
 
-    WorkerResult worker = {bridge, main_env, native_vm, nullptr};
+    WorkerResult worker = {bridge, main_env, native_vm, nullptr,
+                           activity, set_window_flags};
     pthread_t thread;
     assert(pthread_create(&thread, nullptr, worker_run, &worker) == 0);
     assert(pthread_join(thread, nullptr) == 0);
     assert(worker.worker_env && worker.worker_env != main_env);
     assert(bridge->functions->get_env(bridge, &env, ANDROID_JNI_VERSION_1_6) ==
            ANDROID_JNI_OK && env == main_env);
+    assert(morrow_jni_runtime_activity_requests(&activity_requests));
+    assert(activity_requests.window_flag_requests == 2);
+    assert(activity_requests.last_window_flags == 0x800);
+    assert(activity_requests.last_window_mask == 0x400);
 
     auto from_surface = native_window_symbol<FromSurface>("ANativeWindow_fromSurface");
     auto width = native_window_symbol<WindowDimension>("ANativeWindow_getWidth");
@@ -231,8 +264,9 @@ int main()
     assert(morrow_jni_runtime_unbind_asset_manager());
     assert(morrow_jni_runtime_release_game_activity());
     assert(!morrow_jni_runtime_game_activity_ready());
+    assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI, GameActivity assets/insets and aliases passed");
+    puts("morrow_jni_runtime_test: JNI, GameActivity callbacks, cross-thread flags and aliases passed");
     return 0;
 }

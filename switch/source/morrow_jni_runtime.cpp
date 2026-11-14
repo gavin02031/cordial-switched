@@ -43,6 +43,31 @@ public:
 
 class HorizonGameActivity : public jnivm::Object {
 public:
+    MorrowGameActivityRequests requests = {};
+
+    void setWindowFlags(jnivm::ENV *, jint flags, jint mask)
+    {
+        // Horizon has no Android WindowManager. Preserve the request for
+        // diagnostics rather than claiming these bits changed a window.
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (requests.window_flag_requests < UINT32_MAX)
+            ++requests.window_flag_requests;
+        requests.last_window_flags = flags;
+        requests.last_window_mask = mask;
+    }
+
+    void setImeEditorInfoFields(jnivm::ENV *, jint first, jint second, jint third)
+    {
+        // No soft keyboard/EditorInfo exists here yet. The desktop bridge
+        // declares this exact signature but cannot apply those fields either.
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (requests.ime_editor_info_requests < UINT32_MAX)
+            ++requests.ime_editor_info_requests;
+        requests.last_ime_value_1 = first;
+        requests.last_ime_value_2 = second;
+        requests.last_ime_value_3 = third;
+    }
+
     std::shared_ptr<AssetManagerObject> getAssets(jnivm::ENV *env)
     {
         std::lock_guard<std::mutex> lock(start_mutex);
@@ -70,6 +95,10 @@ public:
         env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
         env->GetClass<HorizonGameActivity>("com/google/androidgamesdk/GameActivity");
         auto klass = env->GetClass("com/google/androidgamesdk/GameActivity");
+        klass->HookInstanceFunction(env, "setWindowFlags",
+                                    &HorizonGameActivity::setWindowFlags);
+        klass->HookInstanceFunction(env, "setImeEditorInfoFields",
+                                    &HorizonGameActivity::setImeEditorInfoFields);
         klass->HookInstanceFunction(env, "getAssets", &HorizonGameActivity::getAssets);
         klass->HookInstanceFunction(env, "getWaterfallInsets",
                                     &HorizonGameActivity::getWaterfallInsets);
@@ -352,5 +381,17 @@ extern "C" bool morrow_jni_runtime_release_game_activity(void)
     runtime->GetJNIEnv()->DeleteGlobalRef(game_activity_reference);
     game_activity_reference = nullptr;
     game_activity_owner.reset();
+    return true;
+}
+
+extern "C" bool morrow_jni_runtime_activity_requests(
+    MorrowGameActivityRequests *requests)
+{
+    if (!requests)
+        return false;
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!game_activity_owner)
+        return false;
+    *requests = game_activity_owner->requests;
     return true;
 }
