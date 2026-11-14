@@ -14,6 +14,7 @@
 
 #include "elf_probe.h"
 #include "android_egl_gles_compat.h"
+#include "android_native_window_compat.h"
 
 static void report(FILE *out, const char *format, ...)
 {
@@ -116,20 +117,53 @@ static GLuint create_triangle_program(FILE *log)
 void morrow_gles_smoke_run(void)
 {
     FILE *log = new_graphics_report();
-    report(log, "# Morrow v0.38 native Mesa EGL/GLES2 smoke test");
+    report(log, "# Morrow v0.40 guest-window to Horizon Mesa smoke test");
     report(log, "roblox_engine_executed=no");
     report(log, "roblox_frame_rendered=no");
     uint64_t bridge_symbol = 0;
     const bool bridge_gl = android_egl_gles_compat_resolve(
         "glCreateShader", NULL, NULL, &bridge_symbol);
     report(log, "native_guest_gl_symbol_resolved=%s", bridge_gl ? "yes" : "no");
-    report(log, "guest_egl_window_surface_bridge=no");
+    report(log, "guest_egl_window_surface_bridge=registered_surface_only");
+    report(log, "synthetic_java_surface=yes");
+
+    typedef void *(*FromSurface)(void *, void *);
+    typedef void (*ReleaseWindow)(void *);
+    typedef EGLSurface (*CreateSurface)(EGLDisplay, EGLConfig,
+                                        EGLNativeWindowType, const EGLint *);
+    typedef EGLint (*GetGuestError)(void);
+    uint64_t from_address = 0, release_address = 0, create_address = 0;
+    uint64_t error_address = 0;
+    FromSurface from_surface = NULL;
+    ReleaseWindow release_window = NULL;
+    CreateSurface create_surface = NULL;
+    GetGuestError get_guest_error = NULL;
+    unsigned char synthetic_env = 1, synthetic_surface = 2;
+    void *guest_window = NULL;
+    bool guest_bound = false;
+    if (android_native_window_compat_resolve("ANativeWindow_fromSurface",
+           NULL, NULL, &from_address) &&
+        android_native_window_compat_resolve("ANativeWindow_release",
+           NULL, NULL, &release_address) &&
+        android_egl_gles_compat_resolve("eglCreateWindowSurface",
+           NULL, NULL, &create_address) &&
+        android_egl_gles_compat_resolve("eglGetError",
+           NULL, NULL, &error_address)) {
+        from_surface = (FromSurface)(uintptr_t)from_address;
+        release_window = (ReleaseWindow)(uintptr_t)release_address;
+        create_surface = (CreateSurface)(uintptr_t)create_address;
+        get_guest_error = (GetGuestError)(uintptr_t)error_address;
+    }
 
     EGLDisplay display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     EGLContext context = EGL_NO_CONTEXT;
     EGLSurface surface = EGL_NO_SURFACE;
     GLuint program = 0;
     GLuint vertex_buffer = 0;
+    if (!from_surface || !release_window || !create_surface || !get_guest_error) {
+        report(log, "failure=guest_window_bridge_symbol_missing");
+        goto done;
+    }
     if (display == EGL_NO_DISPLAY) {
         report(log, "failure=egl_get_display:0x%x", eglGetError());
         goto done;
@@ -157,11 +191,38 @@ void morrow_gles_smoke_run(void)
         report(log, "failure=egl_choose_config:0x%x", eglGetError());
         goto done;
     }
-    surface = eglCreateWindowSurface(display, config, nwindowGetDefault(), NULL);
-    if (surface == EGL_NO_SURFACE) {
-        report(log, "failure=egl_create_window_surface:0x%x", eglGetError());
+    // Verify the guest ABI rejects an arbitrary pointer before supplying a
+    // registered reference. A missing Java runtime must never be papered over
+    // by passing the guest pointer directly into native Mesa.
+    EGLSurface invalid_surface = create_surface(display, config,
+                                (EGLNativeWindowType)(uintptr_t)&synthetic_surface,
+                                NULL);
+    const EGLint invalid_error = get_guest_error();
+    report(log, "unregistered_window_rejected=%s",
+           invalid_surface == EGL_NO_SURFACE &&
+           invalid_error == EGL_BAD_NATIVE_WINDOW ? "yes" : "no");
+    if (invalid_surface != EGL_NO_SURFACE || invalid_error != EGL_BAD_NATIVE_WINDOW) {
+        report(log, "failure=unregistered_guest_window_not_rejected");
         goto done;
     }
+    guest_bound = android_native_window_compat_bind_horizon_surface(
+        &synthetic_surface, nwindowGetDefault(), 1280, 720);
+    if (!guest_bound) {
+        report(log, "failure=synthetic_surface_registration");
+        goto done;
+    }
+    guest_window = from_surface(&synthetic_env, &synthetic_surface);
+    if (!guest_window) {
+        report(log, "failure=guest_anativewindow_lookup");
+        goto done;
+    }
+    surface = create_surface(display, config,
+                             (EGLNativeWindowType)(uintptr_t)guest_window, NULL);
+    if (surface == EGL_NO_SURFACE) {
+        report(log, "failure=guest_egl_create_window_surface:0x%x", eglGetError());
+        goto done;
+    }
+    report(log, "guest_egl_window_surface_created=yes");
     static const EGLint context_attributes[] = {
         EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE
     };
@@ -247,6 +308,9 @@ done:
         if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface);
         eglTerminate(display);
     }
+    if (guest_window) release_window(guest_window);
+    if (guest_bound)
+        android_native_window_compat_unbind_surface(&synthetic_surface);
     report(log, "event=graphics_test_finished");
     if (log) fclose(log);
 }

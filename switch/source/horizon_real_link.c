@@ -236,7 +236,7 @@ void horizon_real_link_run(RealLinkResult *result)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
-    log_line(log, "# Cordial Switched v0.39 real-engine entry readiness attempt");
+    log_line(log, "# Cordial Switched v0.40 real-engine entry readiness attempt");
     log_line(log, "# No engine entry call without complete relocations and Android runtime.");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
@@ -252,7 +252,8 @@ void horizon_real_link_run(RealLinkResult *result)
              android_egl_gles_compat_has_backend() ? "yes" : "no");
     log_line(log, "native_egl_gles_symbol_catalogue=%u",
              android_egl_gles_compat_known_count());
-    log_line(log, "guest_egl_window_surface_bridge=no");
+    log_line(log, "guest_egl_window_surface_bridge=registered_surfaces_only");
+    log_line(log, "guest_egl_window_surface_registered=no");
     log_line(log, "guest_egl_context_current=no");
     log_line(log, "event=preflight_started");
 

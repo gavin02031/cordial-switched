@@ -11,6 +11,7 @@ enum { MAX_NATIVE_WINDOWS = 8 };
 
 typedef struct {
     void *java_surface;
+    void *horizon_window;
     int32_t width, height;
     unsigned references;
     bool bound;
@@ -49,13 +50,18 @@ static void drop_reference(NativeWindow *window)
     free(window);
 }
 
-bool android_native_window_compat_bind_surface(void *surface,
-                                                int32_t width, int32_t height)
+static bool bind_surface(void *surface, void *horizon_window,
+                         int32_t width, int32_t height)
 {
     if (!surface || width <= 0 || height <= 0) return false;
     pthread_mutex_lock(&windows_lock);
     NativeWindow *existing = find_surface(surface);
     if (existing) {
+        // A live guest window must never silently switch native displays.
+        if (existing->horizon_window != horizon_window) {
+            pthread_mutex_unlock(&windows_lock);
+            return false;
+        }
         existing->width = width;
         existing->height = height;
         pthread_mutex_unlock(&windows_lock);
@@ -65,13 +71,41 @@ bool android_native_window_compat_bind_surface(void *surface,
         if (windows[i]) continue;
         NativeWindow *window = calloc(1, sizeof(*window));
         if (!window) break;
-        *window = (NativeWindow){surface, width, height, 1, true};
+        *window = (NativeWindow){surface, horizon_window, width, height, 1, true};
         windows[i] = window;
         pthread_mutex_unlock(&windows_lock);
         return true;
     }
     pthread_mutex_unlock(&windows_lock);
     return false;
+}
+
+bool android_native_window_compat_bind_surface(void *surface,
+                                                int32_t width, int32_t height)
+{
+    return bind_surface(surface, NULL, width, height);
+}
+
+bool android_native_window_compat_bind_horizon_surface(void *surface,
+                                                        void *horizon_window,
+                                                        int32_t width,
+                                                        int32_t height)
+{
+    if (!horizon_window) return false;
+    return bind_surface(surface, horizon_window, width, height);
+}
+
+bool android_native_window_compat_horizon_handle(const void *candidate,
+                                                  void **horizon_window)
+{
+    if (!horizon_window) return false;
+    *horizon_window = NULL;
+    pthread_mutex_lock(&windows_lock);
+    NativeWindow *window = find_window(candidate);
+    if (window && window->bound && window->horizon_window)
+        *horizon_window = window->horizon_window;
+    pthread_mutex_unlock(&windows_lock);
+    return *horizon_window != NULL;
 }
 
 void android_native_window_compat_unbind_surface(void *surface)

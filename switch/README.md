@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. Version 0.26 includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.40 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -154,18 +154,27 @@ then check:
    If successful, it draws a pastel triangle through GLES shaders and a vertex
    buffer. Press **B** or **Plus** to return to Homebrew Menu. The numbered
    `graphics-XX.txt` report records the actual EGL error or first successful
-   swap. The graphics test is not wired to Roblox's EGL imports and does **not**
-   render any Roblox content. On-device success remains unverified until a
-   Switch Lite test and photo/report are received.
-   v0.39 exposes 90 explicit, ABI-compatible EGL/GLES2 function addresses to
+   swap. The graphics test does **not** render any Roblox content. The user
+   reported seeing the triangle on their Switch Lite with v0.38; a numbered
+   `graphics-XX.txt` report for that run has not yet been supplied.
+   v0.39 exposed 90 explicit, ABI-compatible EGL/GLES2 function addresses to
    the ARM64 strict import resolver, using the same native Mesa libraries that
    power the graphics test. Guest `dlopen`/`dlsym` can find only registered
    symbols in `libEGL.so` and `libGLESv2.so`. One critical EGL import,
-   `eglCreateWindowSurface`, is intentionally **not** mapped yet: a guest
-   `ANativeWindow` is not a Horizon `NWindow`, and handing the former directly
-   to Mesa would be unsafe. The imported `eglGetProcAddress` is restricted to
-   registered symbols too. This narrows the import gap; it does not supply a
-   Java Surface, transition SDL to an engine surface or execute Roblox.
+   `eglCreateWindowSurface`, was intentionally left unmapped at that point:
+   a guest `ANativeWindow` is not a Horizon `NWindow`, and handing the former
+   directly to Mesa would be unsafe. The imported `eglGetProcAddress` is
+   restricted to registered symbols too.
+   v0.40 adds the **91st EGL/GLES symbol**, a checked `eglCreateWindowSurface`
+   adapter. An explicit guest `ANativeWindow` to Horizon `NWindow` registration
+   is mandatory; arbitrary guest handles and unbound windows are refused with
+   `EGL_BAD_NATIVE_WINDOW`. The existing **Minus** graphics test now exercises
+   this path using a synthetic Surface identity paired to the real Horizon
+   display, checks that an unregistered handle fails, then draws the same
+   triangle. `graphics-XX.txt` records `unregistered_window_rejected` and
+   `guest_egl_window_surface_created` separately. **This synthetic test is not
+   Java, JNI or Roblox.** No real Java Surface is registered yet; the Android
+   engine still cannot initialise and this is not a release candidate.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
@@ -190,6 +199,10 @@ relocate code, call into the engine or verify the APK's signing certificate.
 We will need signed-package verification before any future execution feature.
 
 ### Actual Switch Lite observations (November 13, 2026)
+
+The user reported seeing Morrow's colourful GLES2 triangle on v0.38.
+This is an on-device graphics milestone, not Roblox rendering; the v0.40
+checked guest-window path has not yet been hardware-tested.
 
 In the user's photograph of a v0.6 run on their Switch Lite, the on-screen
 results showed **JIT VERIFIED / ARM64 test returned 42**, and an
