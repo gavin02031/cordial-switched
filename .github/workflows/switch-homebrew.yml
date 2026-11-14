@@ -1,0 +1,270 @@
+name: Cordial Switched - Horizon preview
+
+on:
+  push:
+    paths:
+      - 'switch/**'
+      - '.github/workflows/switch-homebrew.yml'
+  pull_request:
+    paths:
+      - 'switch/**'
+      - '.github/workflows/switch-homebrew.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  elf-probe-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test read-only ARM64 ELF inspector
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/elf_probe_test.c switch/source/elf_probe.c switch/source/android_log_compat.c \
+            -o /tmp/cordial-elf-probe-test
+          /tmp/cordial-elf-probe-test
+      - name: Test ARM64 engine initializer discovery (no engine execution)
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_entry_probe_test.c switch/source/engine_entry_probe.c \
+            -o /tmp/cordial-engine-entry-probe-test
+          /tmp/cordial-engine-entry-probe-test
+      - name: Test non-executable ARM64 segment staging
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
+            switch/source/android_log_compat.c switch/source/android_math_compat.c \
+            switch/source/android_media_format_compat.c switch/source/android_media_codec_compat.c \
+            switch/source/android_cxa_compat.c switch/source/android_looper_compat.c \
+            switch/source/android_native_window_compat.c \
+            switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
+            switch/source/android_egl_gles_compat.c \
+            switch/source/android_dl_compat.c \
+            switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
+            switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
+            switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
+            switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c \
+            switch/source/engine_tls_scratch.c -lm -pthread \
+            -o /tmp/cordial-engine-stage-test
+          /tmp/cordial-engine-stage-test
+      - name: Test strict Android liblog providers
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_log_compat_test.c switch/source/android_log_compat.c \
+            -o /tmp/cordial-android-log-test
+          /tmp/cordial-android-log-test
+      - name: Test Bionic C++ destructor lifecycle bridge
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_cxa_compat_test.c switch/source/android_cxa_compat.c \
+            -o /tmp/cordial-android-cxa-test
+          /tmp/cordial-android-cxa-test
+      - name: Test Android NDK looper and FD callback bridge
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_looper_compat_test.c switch/source/android_looper_compat.c -pthread \
+            -o /tmp/cordial-android-looper-test
+          /tmp/cordial-android-looper-test
+      - name: Test native Android surface references and dimensions
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_native_window_compat_test.c \
+            switch/source/android_native_window_compat.c -pthread \
+            -o /tmp/cordial-android-native-window-test
+          /tmp/cordial-android-native-window-test
+      - name: Test Android read-only asset manager binding and file access
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_asset_compat_test.c switch/source/android_asset_compat.c -pthread \
+            -o /tmp/cordial-android-asset-test
+          /tmp/cordial-android-asset-test
+      - name: Test Android configuration ABI with verified asset-manager metadata
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_configuration_compat_test.c \
+            switch/source/android_configuration_compat.c switch/source/android_asset_compat.c \
+            -pthread -o /tmp/cordial-android-configuration-test
+          /tmp/cordial-android-configuration-test
+      - name: Test explicit EGL/GLES2 import names and safe host unavailability
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_egl_gles_compat_test.c \
+            switch/source/android_egl_gles_compat.c \
+            -o /tmp/cordial-android-egl-gles-test
+          /tmp/cordial-android-egl-gles-test
+      - name: Test JNI JavaVM invocation ABI and per-thread provider isolation
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_jni_vm_bridge_test.c \
+            switch/source/android_jni_vm_bridge.c -pthread \
+            -o /tmp/cordial-android-jni-vm-test
+          /tmp/cordial-android-jni-vm-test
+      - name: Test Bionic dynamic library and symbol lookup namespace
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_dl_compat_test.c switch/source/android_dl_compat.c \
+            switch/source/android_log_compat.c switch/source/android_looper_compat.c \
+            switch/source/android_native_window_compat.c \
+            switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
+            switch/source/android_egl_gles_compat.c \
+            switch/source/android_math_compat.c -pthread -lm \
+            -o /tmp/cordial-android-dl-test
+          /tmp/cordial-android-dl-test
+      - name: Test Android libm ABI providers
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_math_compat_test.c switch/source/android_math_compat.c -lm \
+            -o /tmp/cordial-android-math-test
+          /tmp/cordial-android-math-test
+      - name: Test versioned Android NDK media formats
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_media_format_compat_test.c \
+            switch/source/android_media_format_compat.c \
+            -o /tmp/cordial-android-media-format-test
+          /tmp/cordial-android-media-format-test
+      - name: Test truthful unavailable Android NDK codec responses
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_media_codec_compat_test.c \
+            switch/source/android_media_codec_compat.c \
+            -o /tmp/cordial-android-media-codec-test
+          /tmp/cordial-android-media-codec-test
+      - name: Test Android Bionic libc and stdio adapters
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_platform_compat_test.c \
+            switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
+            switch/source/android_fortify_compat.c \
+            -o /tmp/cordial-android-platform-test
+          /tmp/cordial-android-platform-test
+      - name: Test Android Bionic pthread object translation
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_pthread_compat_test.c switch/source/android_pthread_compat.c -pthread \
+            -o /tmp/cordial-android-pthread-test
+          timeout 30s /tmp/cordial-android-pthread-test
+      - name: Test Android Bionic pthread TLS key multiplexing
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_tls_compat_test.c switch/source/android_tls_compat.c -pthread \
+            -o /tmp/cordial-android-tls-test
+          timeout 30s /tmp/cordial-android-tls-test
+      - name: Test Android Bionic LP64 thread attributes
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_thread_attr_compat_test.c switch/source/android_thread_attr_compat.c -pthread \
+            -o /tmp/cordial-android-thread-attr-test
+          /tmp/cordial-android-thread-attr-test
+      - name: Test bounded Android thread lifecycle bridge
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_thread_lifecycle_compat_test.c \
+            switch/source/android_thread_lifecycle_compat.c switch/source/android_thread_attr_compat.c \
+            switch/source/android_arm64_tcb_shadow.c -pthread \
+            -o /tmp/cordial-android-thread-lifecycle-test
+          timeout 30s /tmp/cordial-android-thread-lifecycle-test
+      - name: Test Android ARM64 TCB shadow slot layout
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_arm64_tcb_shadow_test.c switch/source/android_arm64_tcb_shadow.c \
+            -o /tmp/cordial-android-arm64-tcb-shadow-test
+          /tmp/cordial-android-arm64-tcb-shadow-test
+      - name: Test Android ELF TLS scratch templates
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_tls_scratch_test.c switch/source/engine_tls_scratch.c \
+            -o /tmp/cordial-android-elf-tls-scratch-test
+          /tmp/cordial-android-elf-tls-scratch-test
+      - name: Test isolated Android ELF TLS thread storage
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_tls_thread_test.c \
+            switch/source/engine_tls_thread.c switch/source/android_arm64_tcb_shadow.c \
+            -pthread -o /tmp/cordial-android-elf-tls-thread-test
+          timeout 30s /tmp/cordial-android-elf-tls-thread-test
+      - name: Test native Horizon code-memory segment permission planning
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_memory_plan_test.c switch/source/engine_memory_plan.c \
+            -o /tmp/cordial-memory-plan-test
+          /tmp/cordial-memory-plan-test
+      - name: Test phased Horizon code-address reservations
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/horizon_code_address_test.c switch/source/horizon_code_address.c \
+            -o /tmp/cordial-code-address-test
+          /tmp/cordial-code-address-test
+      - name: Test final-base ELF image mapping sequence and rollback
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_runtime_image_test.c \
+            switch/source/engine_runtime_image.c switch/source/engine_stage.c \
+            switch/source/engine_memory_plan.c switch/source/elf_probe.c \
+            switch/source/android_log_compat.c switch/source/engine_loader_fixture.c \
+            -o /tmp/cordial-runtime-image-test
+          /tmp/cordial-runtime-image-test
+
+  build:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile native Horizon target
+        working-directory: switch
+        run: make -j2
+      - name: Check generated executable
+        run: |
+          test -s switch/cordial-switched.elf
+          test -s switch/cordial-switched.nro
+          ls -lh switch/cordial-switched.nro
+      - name: Upload test build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cordial-switched-switch-preview
+          path: switch/cordial-switched.nro
+          if-no-files-found: error
+
+  jni-crossbuild:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned JNI implementation
+        # The devkitPro container runs as a different uid than checkout's
+        # bind-mounted owner. Trust only this checked-out workspace, not '*'.
+        run: git -c safe.directory="$GITHUB_WORKSPACE" submodule update --init third_party/libjnivm
+      - name: Cross-compile libjnivm for Horizon ARM64
+        run: |
+          # switch_rules sets compiler paths from DEVKITPRO; DEVKITA64 is not
+          # necessarily exported by the devkitA64 container.
+          test -x "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++"
+          # The pinned libjnivm vm.h includes unordered_map before string.
+          # GCC 15 requires string's std::hash specialization first.
+          cmake -S third_party/libjnivm -B /tmp/morrow-jnivm-a64 \
+            -DCMAKE_CXX_COMPILER="$DEVKITPRO/devkitA64/bin/aarch64-none-elf-g++" \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_CXX_FLAGS='-O2 -march=armv8-a -fPIC -D__SWITCH__ -include string' \
+            -DJNIVM_ENABLE_TESTS=OFF \
+            -DJNIVM_ENABLE_DEBUG=OFF \
+            -DJNIVM_BUILD_EXAMPLES=OFF
+          cmake --build /tmp/morrow-jnivm-a64 --target jnivm --parallel 2
+          test -s /tmp/morrow-jnivm-a64/libjnivm.a
+          "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-nm" -C /tmp/morrow-jnivm-a64/libjnivm.a > /tmp/morrow-jnivm-symbols.txt
+          grep -q 'jnivm::VM' /tmp/morrow-jnivm-symbols.txt
+      - name: Link standalone on-console JNI diagnostic
+        working-directory: switch/jni_probe
+        run: make -j2
+      - name: Check JNI diagnostic executable
+        run: |
+          test -s switch/jni_probe/morrow-jni-probe.elf
+          test -s switch/jni_probe/morrow-jni-probe.nro
+          ls -lh switch/jni_probe/morrow-jni-probe.nro
+      - name: Upload isolated JNI diagnostic
+        uses: actions/upload-artifact@v4
+        with:
+          name: morrow-switch-jni-probe
+          path: switch/jni_probe/morrow-jni-probe.nro
+          if-no-files-found: error
