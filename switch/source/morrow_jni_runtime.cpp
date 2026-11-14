@@ -26,6 +26,45 @@ std::shared_ptr<AssetManagerObject> asset_owner;
 jobject asset_reference;
 std::string asset_directory;
 
+class ZeroInsets : public jnivm::Object {
+public:
+    jint left = 0, top = 0, right = 0, bottom = 0;
+
+    static void Register(jnivm::ENV *env)
+    {
+        env->GetClass<ZeroInsets>("androidx/core/graphics/Insets");
+        auto klass = env->GetClass("androidx/core/graphics/Insets");
+        klass->HookInstance(env, "left", &ZeroInsets::left);
+        klass->HookInstance(env, "top", &ZeroInsets::top);
+        klass->HookInstance(env, "right", &ZeroInsets::right);
+        klass->HookInstance(env, "bottom", &ZeroInsets::bottom);
+    }
+};
+
+class HorizonGameActivity : public jnivm::Object {
+public:
+    std::shared_ptr<ZeroInsets> getWaterfallInsets(jnivm::ENV *env)
+    {
+        // Horizon's fullscreen display has no Android status bar or cutout.
+        // Zero is a real measurement of the host layout, not a stubbed value.
+        auto value = std::make_shared<ZeroInsets>();
+        jnivm::JNITypes<std::shared_ptr<ZeroInsets>>::ToJNIType(env, value);
+        return value;
+    }
+
+    static void Register(jnivm::ENV *env)
+    {
+        ZeroInsets::Register(env); // Needed for the method's JNI descriptor.
+        env->GetClass<HorizonGameActivity>("com/google/androidgamesdk/GameActivity");
+        auto klass = env->GetClass("com/google/androidgamesdk/GameActivity");
+        klass->HookInstanceFunction(env, "getWaterfallInsets",
+                                    &HorizonGameActivity::getWaterfallInsets);
+    }
+};
+
+std::shared_ptr<HorizonGameActivity> game_activity_owner;
+jobject game_activity_reference;
+
 int32_t get_env(void *context, void **environment, int32_t version)
 {
     if (!attached_to_runtime)
@@ -75,6 +114,7 @@ extern "C" bool morrow_jni_runtime_start(void)
         JNIEnv *env = candidate->GetJNIEnv();
         if (!env || !env->functions || env->GetVersion() != JNI_VERSION_1_6)
             return false;
+        HorizonGameActivity::Register(candidate->GetEnv().get());
         const AndroidJniVmProvider provider = {get_env, attach, detach, nullptr};
         if (!android_jni_vm_bridge_install_provider(&provider, candidate.get()))
             return false;
@@ -220,5 +260,49 @@ extern "C" bool morrow_jni_runtime_unbind_asset_manager(void)
     asset_reference = nullptr;
     asset_directory.clear();
     asset_owner.reset();
+    return true;
+}
+
+extern "C" void *morrow_jni_runtime_game_activity(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!runtime || !attached_to_runtime)
+        return nullptr;
+    if (game_activity_reference)
+        return game_activity_reference;
+    try {
+        jnivm::ENV *env = runtime->GetEnv().get();
+        auto owner = std::make_shared<HorizonGameActivity>();
+        JNIEnv *jni = env->GetJNIEnv();
+        jobject local = jnivm::JNITypes<std::shared_ptr<HorizonGameActivity>>::ToJNIType(
+            env, owner);
+        jobject global = jni->NewGlobalRef(local);
+        if (!global)
+            return nullptr;
+        game_activity_owner = std::move(owner);
+        game_activity_reference = global;
+        jni->DeleteLocalRef(local);
+        return global;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+extern "C" bool morrow_jni_runtime_game_activity_ready(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return game_activity_reference != nullptr;
+}
+
+extern "C" bool morrow_jni_runtime_release_game_activity(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!game_activity_reference)
+        return true;
+    if (!runtime || !attached_to_runtime)
+        return false;
+    runtime->GetJNIEnv()->DeleteGlobalRef(game_activity_reference);
+    game_activity_reference = nullptr;
+    game_activity_owner.reset();
     return true;
 }

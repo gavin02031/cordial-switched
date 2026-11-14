@@ -267,7 +267,16 @@ void horizon_real_link_run(RealLinkResult *result)
     log_line(log, "jni_vm_provider_installed=%s", jni_provider_ready ? "yes" : "no");
     log_line(log, "jni_env_provider_connected=%s", jni_provider_ready ? "yes" : "no");
     log_line(log, "jni_runtime_hardware_verified=no");
-    log_line(log, "jni_engine_class_callbacks_registered=no");
+    log_line(log, "jni_engine_class_callbacks_complete=no");
+    bool game_activity_ready = false;
+#ifdef MORROW_HAS_JNIVM
+    game_activity_ready = morrow_jni_runtime_game_activity_ready();
+#endif
+    log_line(log, "jni_game_activity_object_registered=%s",
+             game_activity_ready ? "yes" : "no");
+    log_line(log, "jni_game_activity_insets_callback=%s",
+             game_activity_ready ? "zero_fullscreen_insets_only" : "unavailable");
+    log_line(log, "jni_game_activity_bootstrap_implemented=no");
     log_line(log, "jni_onload_call_eligible=no");
     log_line(log, "native_egl_gles_symbols_linked=%s",
              android_egl_gles_compat_has_backend() ? "yes" : "no");

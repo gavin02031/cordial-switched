@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <pthread.h>
 #include <unistd.h>
 
@@ -89,6 +90,7 @@ int main()
     assert(bridge && bridge->functions);
     assert(!android_jni_vm_bridge_has_provider());
     assert(morrow_jni_runtime_java_vm() == nullptr);
+    assert(!morrow_jni_runtime_game_activity_ready());
     assert(morrow_jni_runtime_start());
     assert(morrow_jni_runtime_start());
     assert(android_jni_vm_bridge_has_provider());
@@ -104,6 +106,24 @@ int main()
     assert(returned_vm == native_vm);
     assert(bridge->functions->get_env(bridge, &env, 0x00010008) ==
            ANDROID_JNI_EVERSION && !env);
+
+    void *activity = morrow_jni_runtime_game_activity();
+    assert(activity && morrow_jni_runtime_game_activity_ready());
+    assert(morrow_jni_runtime_game_activity() == activity);
+    jclass activity_class = main_env->FindClass("com/google/androidgamesdk/GameActivity");
+    jclass insets_class = main_env->FindClass("androidx/core/graphics/Insets");
+    assert(activity_class && insets_class);
+    assert(main_env->IsInstanceOf(static_cast<jobject>(activity), activity_class));
+    jmethodID method = main_env->GetMethodID(activity_class, "getWaterfallInsets",
+                                              "()Landroidx/core/graphics/Insets;");
+    assert(method);
+    jobject insets = main_env->CallObjectMethod(static_cast<jobject>(activity), method);
+    assert(insets && main_env->IsInstanceOf(insets, insets_class));
+    for (const char *field : {"left", "top", "right", "bottom"}) {
+        jfieldID id = main_env->GetFieldID(insets_class, field, "I");
+        assert(id && main_env->GetIntField(insets, id) == 0);
+    }
+    main_env->DeleteLocalRef(insets);
 
     WorkerResult worker = {bridge, main_env, native_vm, nullptr};
     pthread_t thread;
@@ -171,7 +191,10 @@ int main()
     assert(!open_asset(native_manager, "test.asset", 0));
     close_asset(asset);
     assert(morrow_jni_runtime_unbind_asset_manager());
+    assert(morrow_jni_runtime_release_game_activity());
+    assert(!morrow_jni_runtime_game_activity_ready());
+    assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: real JNI, Surface and AssetManager passed");
+    puts("morrow_jni_runtime_test: JNI, GameActivity insets, Surface and assets passed");
     return 0;
 }

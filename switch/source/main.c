@@ -234,6 +234,7 @@ int main(void)
             // Register a genuine Java reference to the host-owned window,
             // but do not create another EGL context while SDL is drawing.
             if (morrow_jni_runtime_start()) {
+                morrow_jni_runtime_game_activity();
                 morrow_jni_runtime_bind_horizon_surface(
                     nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
                 morrow_jni_runtime_bind_asset_manager(
@@ -281,6 +282,7 @@ int main(void)
     // Unbind Java owners before their host assets/display can go away.
     morrow_jni_runtime_unbind_asset_manager();
     morrow_jni_runtime_unbind_surface();
+    morrow_jni_runtime_release_game_activity();
 #endif
     ui_shutdown();
     SDL_DestroyRenderer(renderer);

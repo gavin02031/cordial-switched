@@ -33,6 +33,13 @@ void *morrow_jni_runtime_bind_asset_manager(const char *asset_root);
 bool morrow_jni_runtime_asset_manager_bound(void);
 bool morrow_jni_runtime_unbind_asset_manager(void);
 
+// The initial GameActivity reference has the correct JNI class identity and
+// one truthful callback: zero waterfall insets on the full-screen Switch.
+// Native lifecycle, IME, flag bootstrap and app services are not implemented.
+void *morrow_jni_runtime_game_activity(void);
+bool morrow_jni_runtime_game_activity_ready(void);
+bool morrow_jni_runtime_release_game_activity(void);
+
 #ifdef __cplusplus
 }
 #endif
