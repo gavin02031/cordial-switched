@@ -186,15 +186,18 @@ then check:
    Android resources subsystem or JNI environment.
    The native workflow also runs an **independent experimental cross-build**
    of Cordial's pinned `libjnivm` dependency for Switch ARM64. The result is
-   checked as a static library only; it is not linked into the `.nro` yet and
+   checked as a static library; it is not linked into the main preview `.nro` and
    cannot establish a working Roblox JNI callback path by itself. This gate
    tests whether we can reuse the desktop Java object model rather than
    creating an unrelated, incomplete JNI implementation.
    A separate experimental **`morrow-jni-probe.nro`** is built from that
    library when the independent JNI job succeeds. Launch it in Homebrew Menu
    to construct a `jnivm::VM`, obtain the current thread's `JNIEnv`, and
-   exercise the JNI 1.6 `JavaVM::GetEnv` callback. It prints PASS/FAIL and
-   writes `sdmc:/switch/cordial-switched/jni-XX.txt`. This program cannot
+   exercise the JNI 1.6 `JavaVM::GetEnv` callback. The v0.43 probe also
+   attaches a worker pthread, checks it receives a distinct `JNIEnv`, tests
+   JavaVM lookup and detaches it. Core VM and worker results remain separate.
+   It prints PASS/FAIL and writes `sdmc:/switch/cordial-switched/jni-XX.txt`.
+   This program cannot
    start Roblox: it does not load `libroblox.so`, register its Android
    GameActivity classes, or provide an EGL surface. The separate `.nro` must
    pass **on actual Switch hardware** before JNI can be claimed working.

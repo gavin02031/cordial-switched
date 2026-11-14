@@ -12,7 +12,7 @@ BUILD        := build
 SOURCES      := source
 APP_TITLE    := Morrow JNI Probe
 APP_AUTHOR   := Morrow contributors
-APP_VERSION  := 0.42.0
+APP_VERSION  := 0.43.0
 
 ARCH         := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CXXFLAGS     := -std=gnu++14 -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) \
