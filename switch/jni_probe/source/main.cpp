@@ -40,6 +40,14 @@ FILE *create_report(char *path, size_t length)
     return nullptr;
 }
 
+void checkpoint(FILE *report, const char *event)
+{
+    if (!report)
+        return;
+    fprintf(report, "event=%s\n", event);
+    fflush(report); // Preserve the last completed step if the hardware faults.
+}
+
 void show_result(bool success, FILE *report, const char *path)
 {
     puts(success ? "JNI probe: PASS" : "JNI probe: FAIL");
@@ -80,13 +88,19 @@ int main()
 
     bool success = false;
     try {
+        checkpoint(report, "before_vm_construction");
         jnivm::VM vm;
+        checkpoint(report, "vm_constructed");
         JavaVM *java_vm = vm.GetJavaVM();
+        checkpoint(report, "java_vm_retrieved");
         JNIEnv *env = vm.GetJNIEnv();
+        checkpoint(report, "jni_env_retrieved");
         void *attached_env = nullptr;
         const jint status = java_vm ? java_vm->GetEnv(&attached_env, JNI_VERSION_1_6)
                                     : JNI_ERR;
+        checkpoint(report, "java_vm_get_env_returned");
         const jint version = env ? env->GetVersion() : 0;
+        checkpoint(report, "jni_get_version_returned");
         success = java_vm && env && env->functions &&
                   status == JNI_OK && attached_env == env &&
                   version == JNI_VERSION_1_6;
