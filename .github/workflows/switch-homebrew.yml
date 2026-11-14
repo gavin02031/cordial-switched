@@ -226,3 +226,24 @@ jobs:
           name: cordial-switched-switch-preview
           path: switch/cordial-switched.nro
           if-no-files-found: error
+
+  jni-crossbuild:
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch pinned JNI implementation
+        run: git submodule update --init third_party/libjnivm
+      - name: Cross-compile libjnivm for Horizon ARM64
+        run: |
+          cmake -S third_party/libjnivm -B /tmp/morrow-jnivm-a64 \
+            -DCMAKE_CXX_COMPILER=aarch64-none-elf-g++ \
+            -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+            -DCMAKE_CXX_FLAGS='-O2 -march=armv8-a -fPIC -D__SWITCH__' \
+            -DJNIVM_ENABLE_TESTS=OFF \
+            -DJNIVM_ENABLE_DEBUG=OFF \
+            -DJNIVM_BUILD_EXAMPLES=OFF
+          cmake --build /tmp/morrow-jnivm-a64 --target jnivm --parallel 2
+          test -s /tmp/morrow-jnivm-a64/libjnivm.a
+          aarch64-none-elf-nm -C /tmp/morrow-jnivm-a64/libjnivm.a > /tmp/morrow-jnivm-symbols.txt
+          grep -q 'jnivm::VM' /tmp/morrow-jnivm-symbols.txt

@@ -184,6 +184,12 @@ then check:
    No real Android Java asset manager is registered on Switch yet, so this
    narrows the unresolved import gap without pretending to have a complete
    Android resources subsystem or JNI environment.
+   The native workflow also runs an **independent experimental cross-build**
+   of Cordial's pinned `libjnivm` dependency for Switch ARM64. The result is
+   checked as a static library only; it is not linked into the `.nro` yet and
+   cannot establish a working Roblox JNI callback path by itself. This gate
+   tests whether we can reuse the desktop Java object model rather than
+   creating an unrelated, incomplete JNI implementation.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
