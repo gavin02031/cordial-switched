@@ -276,6 +276,9 @@ void horizon_real_link_run(RealLinkResult *result)
 #endif
     log_line(log, "jni_game_activity_object_registered=%s",
              game_activity_ready ? "yes" : "no");
+    log_line(log, "jni_game_activity_class_loader=%s",
+             game_activity_ready ? "registered_classes_only" : "unavailable");
+    log_line(log, "jni_apk_classpath_installed=no");
     log_line(log, "jni_game_activity_insets_callback=%s",
              game_activity_ready ? "zero_fullscreen_insets_only" : "unavailable");
     log_line(log, "jni_game_activity_get_assets_callback=%s",

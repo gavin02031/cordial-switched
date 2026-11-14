@@ -37,9 +37,10 @@ void *morrow_jni_runtime_bind_asset_manager(const char *asset_root);
 bool morrow_jni_runtime_asset_manager_bound(void);
 bool morrow_jni_runtime_unbind_asset_manager(void);
 
-// GameActivity has typed insets and asset callbacks and records two Android
-// window/input requests. No Android window manager or IME applies those
-// requests; lifecycle, flag bootstrap and app services are not implemented.
+// GameActivity has typed insets and asset callbacks, a restricted ClassLoader
+// for explicitly registered platform classes, and records two Android
+// window/input requests. No APK classpath, Android window manager or IME
+// applies those requests; lifecycle and app bootstrap remain unimplemented.
 void *morrow_jni_runtime_game_activity(void);
 bool morrow_jni_runtime_game_activity_ready(void);
 bool morrow_jni_runtime_release_game_activity(void);

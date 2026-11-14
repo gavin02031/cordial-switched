@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.51 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.52 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.51 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.52 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -281,6 +281,15 @@ then check:
    Android window flags nor IME settings are applied**: the Switch still has
    no Android window manager or soft keyboard. The real-JNI and ASan host
    tests pass; engine startup and this callback path on hardware are untested.
+   v0.52 adds a stable typed `java/lang/ClassLoader` returned by
+   `GameActivity.getClassLoader()`. Its `loadClass` and `findClass` methods
+   recognise dotted/slashed names for the platform classes Morrow registers;
+   unknown APK classes return null because no Android APK classpath exists.
+   The real-JNI test checks class identity and unknown-name rejection.
+   Repeated Activity calls also no longer create a second hidden local JNI
+   reference. The pinned VM itself still retains a temporary class reference
+   per method call in the host test, so JNI local lifetime is **not yet fully
+   resolved**. No Roblox engine instructions are executed by this preview.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

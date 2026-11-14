@@ -41,9 +41,52 @@ public:
     }
 };
 
+class HorizonClassLoader : public jnivm::Object {
+public:
+    std::shared_ptr<jnivm::Class> loadClass(
+        jnivm::ENV *env, std::shared_ptr<jnivm::String> name)
+    {
+        if (!name)
+            return nullptr;
+        std::string path = *name;
+        for (char &part : path)
+            if (part == '.') part = '/';
+        // The Android APK's classpath is not installed on Horizon. Resolve
+        // only classes whose platform identities we have explicitly defined;
+        // inventing a placeholder Class would hide the missing Android API.
+        static const char *const known[] = {
+            "java/lang/Object", "java/lang/Class", "java/lang/String",
+            "java/lang/ClassLoader", "android/view/Surface",
+            "android/content/res/AssetManager", "androidx/core/graphics/Insets",
+            "com/google/androidgamesdk/GameActivity"
+        };
+        for (const char *entry : known)
+            if (path == entry)
+                return env->GetClass(entry);
+        return nullptr;
+    }
+
+    static void Register(jnivm::ENV *env)
+    {
+        auto klass = env->GetClass<HorizonClassLoader>("java/lang/ClassLoader");
+        klass->HookInstanceFunction(env, "loadClass", &HorizonClassLoader::loadClass);
+        klass->HookInstanceFunction(env, "findClass", &HorizonClassLoader::loadClass);
+    }
+};
+
+std::shared_ptr<HorizonClassLoader> class_loader_owner;
+
 class HorizonGameActivity : public jnivm::Object {
 public:
     MorrowGameActivityRequests requests = {};
+
+    std::shared_ptr<HorizonClassLoader> getClassLoader(jnivm::ENV *)
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (!class_loader_owner)
+            class_loader_owner = std::make_shared<HorizonClassLoader>();
+        return class_loader_owner;
+    }
 
     void setWindowFlags(jnivm::ENV *, jint flags, jint mask)
     {
@@ -68,33 +111,36 @@ public:
         requests.last_ime_value_3 = third;
     }
 
-    std::shared_ptr<AssetManagerObject> getAssets(jnivm::ENV *env)
+    std::shared_ptr<AssetManagerObject> getAssets(jnivm::ENV *)
     {
         std::lock_guard<std::mutex> lock(start_mutex);
         // No asset directory means no Android asset owner. Returning a fake
         // manager would turn an unresolved resource into a silent success.
         if (!asset_owner)
             return nullptr;
-        jnivm::JNITypes<std::shared_ptr<AssetManagerObject>>::ToJNIType(
-            env, asset_owner);
         return asset_owner;
     }
 
-    std::shared_ptr<ZeroInsets> getWaterfallInsets(jnivm::ENV *env)
+    std::shared_ptr<ZeroInsets> getWaterfallInsets(jnivm::ENV *)
     {
         // Horizon's fullscreen display has no Android status bar or cutout.
         // Zero is a real measurement of the host layout, not a stubbed value.
-        auto value = std::make_shared<ZeroInsets>();
-        jnivm::JNITypes<std::shared_ptr<ZeroInsets>>::ToJNIType(env, value);
-        return value;
+        // HookInstanceFunction converts the returned shared_ptr to exactly
+        // one JNI local. Converting here as well leaked an unreachable second
+        // local on every call from the engine's UI.
+        return std::make_shared<ZeroInsets>();
     }
 
     static void Register(jnivm::ENV *env)
     {
         ZeroInsets::Register(env); // Needed for the method's JNI descriptor.
+        HorizonClassLoader::Register(env);
+        env->GetClass<HorizonSurface>("android/view/Surface");
         env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
         env->GetClass<HorizonGameActivity>("com/google/androidgamesdk/GameActivity");
         auto klass = env->GetClass("com/google/androidgamesdk/GameActivity");
+        klass->HookInstanceFunction(env, "getClassLoader",
+                                    &HorizonGameActivity::getClassLoader);
         klass->HookInstanceFunction(env, "setWindowFlags",
                                     &HorizonGameActivity::setWindowFlags);
         klass->HookInstanceFunction(env, "setImeEditorInfoFields",
@@ -237,11 +283,14 @@ extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
         jobject local = jnivm::JNITypes<std::shared_ptr<HorizonSurface>>::ToJNIType(
             env, owner);
         jobject global = jni->NewGlobalRef(local);
-        if (!global)
+        if (!global) {
+            jni->DeleteLocalRef(local);
             return nullptr;
+        }
         if (!android_native_window_compat_bind_horizon_surface(
                 global, horizon_window, width, height)) {
             jni->DeleteGlobalRef(global);
+            jni->DeleteLocalRef(local);
             return nullptr;
         }
         // libjnivm's NewGlobalRef wraps an Object* in a distinct JNI object.
@@ -302,8 +351,10 @@ extern "C" void *morrow_jni_runtime_bind_asset_manager(const char *asset_root)
         jobject local = jnivm::JNITypes<std::shared_ptr<AssetManagerObject>>::ToJNIType(
             env, owner);
         jobject global = jni->NewGlobalRef(local);
-        if (!global)
+        if (!global) {
+            jni->DeleteLocalRef(local);
             return nullptr;
+        }
         if (!android_asset_compat_bind_manager(global, asset_root)) {
             jni->DeleteGlobalRef(global);
             jni->DeleteLocalRef(local);
@@ -354,8 +405,10 @@ extern "C" void *morrow_jni_runtime_game_activity(void)
         jobject local = jnivm::JNITypes<std::shared_ptr<HorizonGameActivity>>::ToJNIType(
             env, owner);
         jobject global = jni->NewGlobalRef(local);
-        if (!global)
+        if (!global) {
+            jni->DeleteLocalRef(local);
             return nullptr;
+        }
         game_activity_owner = std::move(owner);
         game_activity_reference = global;
         jni->DeleteLocalRef(local);
