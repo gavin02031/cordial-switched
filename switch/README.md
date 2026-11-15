@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.60 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.61 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.60 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.61 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -52,8 +52,15 @@ missing, or its entry is not in RX memory. It writes the precise reason in
 `link-XX.txt`. **There is a real possibility of an app crash if a call is
 allowed**: the Android Java and graphics runtime is incomplete, and no
 authentication, playable frame, or online connection has been validated.
-An entered engine mapping stays resident until you quit Morrow; restart before
-another test. Use a test account only if full gameplay is eventually reached.
+An entered engine mapping stays resident until you quit Morrow. If and only if
+`JNI_OnLoad` returns `0x00010006`, **ZR + L3** makes a *separate*, one-time
+experimental call to the observed AGDK `GameActivity.initializeNativeCode`
+export. It requires a real bound AssetManager (`assets/` must exist), typed
+Configuration and Surface; the report records an eventual native handle or
+the missing prerequisite. **It can crash**, because current Roblox APKs may
+change their JNI descriptors and the Android activity runtime is incomplete.
+It does not log in or render Roblox. Restart before trying the sequence again.
+Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
@@ -134,8 +141,9 @@ then check:
    This option saves `link-XX.txt` in the same folder. Normal L3 does not
    map the Roblox image as executable, call an engine initialiser, sign in,
    or join a game. The v0.59 **ZL + L3** experiment may map and call the real
-`JNI_OnLoad` only after its safety checks pass; it does not attempt the
-   GameActivity initialiser or gameplay. A real engine still needs Android
+   `JNI_OnLoad` only after its safety checks pass. v0.61 adds a separate
+   **ZR + L3** GameActivity initialiser attempt after successful `JNI_OnLoad`.
+   Neither operation is a gameplay or login implementation. A real engine still needs Android
    TLS, constructors, complete JNI and graphics.
    Starting with v0.27, this same report checks whether a separate, aligned
    copy of the real library's PT_TLS initializer and a single-module DTV
@@ -374,6 +382,15 @@ then check:
    The strict JNI provider test checks field identity, types and the empty
    locale list using the actual pinned VM. GameActivity launch and Roblox
    login are still not implemented.
+   v0.61 adds the next opt-in call boundary: when real `JNI_OnLoad` returns
+   JNI 1.6, a later **ZR + L3** run attempts the exported AGDK
+   `GameActivity.initializeNativeCode` using the exact argument types recorded
+   from Cordial's Android trace. Its Activity, AssetManager and Configuration
+   are verified JNI references, the three strings name the existing Morrow
+   data directory, and saved state is null for a cold boot. The mapped image
+   stays pinned. Host tests verify ABI argument order and local-ref cleanup
+   with a synthetic function. **This does not initialise the full Android
+   Java application, connect EGL to Roblox or render a login screen**.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

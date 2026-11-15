@@ -82,6 +82,21 @@ typedef struct {
 // not confirmation that Android window flags or soft keyboard took effect.
 bool morrow_jni_runtime_activity_requests(MorrowGameActivityRequests *requests);
 
+typedef struct {
+    bool entry_invoked;
+    bool entry_returned;
+    bool java_exception_pending;
+    int64_t native_handle;
+} MorrowGameActivityInitResult;
+
+// This is the observed AGDK JNI descriptor from Cordial's Android trace:
+// (JNIEnv*, jobject, jstring, jstring, jstring, AssetManager, savedState,
+// Configuration) -> jlong. It is NOT generic ABI discovery. Call only after
+// a successful real JNI_OnLoad and an explicit user-initiated experiment.
+// A missing asset manager is a hard failure; no placeholder is fabricated.
+bool morrow_jni_runtime_call_game_activity(uintptr_t entry, const char *data_path,
+                                            MorrowGameActivityInitResult *result);
+
 #ifdef __cplusplus
 }
 #endif

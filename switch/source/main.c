@@ -242,8 +242,10 @@ int main(void)
                 morrow_jni_runtime_configuration();
             }
 #endif
+            const u64 held = padGetButtons(&pad);
             horizon_real_link_run(&state.real_link,
-                                  (padGetButtons(&pad) & HidNpadButton_ZL) != 0);
+                (held & HidNpadButton_ZL) ? 1u :
+                (held & HidNpadButton_ZR) ? 2u : 0u);
         }
 
         HidTouchScreenState touch = {0};

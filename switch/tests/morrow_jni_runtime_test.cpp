@@ -45,6 +45,30 @@ using AssetLength = off_t (*)(void *);
 using AssetClose = void (*)(void *);
 
 static jobject expected_instance;
+static jobject expected_activity;
+static jobject expected_assets;
+static jobject expected_configuration;
+static const char *expected_path;
+static unsigned native_activity_calls;
+
+static jlong synthetic_game_activity_init(JNIEnv *env, jobject activity,
+                                          jstring internal, jstring obb,
+                                          jstring external, jobject assets,
+                                          jbyteArray saved_state, jobject configuration)
+{
+    assert(env && expected_path && !saved_state);
+    assert(env->IsSameObject(activity, expected_activity));
+    assert(env->IsSameObject(assets, expected_assets));
+    assert(env->IsSameObject(configuration, expected_configuration));
+    for (jstring path : {internal, obb, external}) {
+        assert(path);
+        const char *characters = env->GetStringUTFChars(path, nullptr);
+        assert(characters && !strcmp(characters, expected_path));
+        env->ReleaseStringUTFChars(path, characters);
+    }
+    ++native_activity_calls;
+    return 0x12345;
+}
 static jint instance_increment(JNIEnv *env, jobject instance, jint value)
 {
     assert(env->IsSameObject(instance, expected_instance));
@@ -254,6 +278,11 @@ int main()
     assert(assets_method);
     // Without an existing asset directory the Activity cannot invent one.
     assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), assets_method));
+    MorrowGameActivityInitResult init_result = {};
+    assert(!morrow_jni_runtime_call_game_activity(
+        reinterpret_cast<uintptr_t>(&synthetic_game_activity_init),
+        "/valid-directory-not-yet-bound", &init_result));
+    assert(!init_result.entry_invoked);
     jobject insets = main_env->CallObjectMethod(static_cast<jobject>(activity), method);
     assert(insets && main_env->IsInstanceOf(insets, insets_class));
     for (const char *field : {"left", "top", "right", "bottom"}) {
@@ -350,6 +379,23 @@ int main()
     assert(file && fwrite("hello!", 1, 6, file) == 6 && fclose(file) == 0);
     void *asset_java = morrow_jni_runtime_bind_asset_manager(root);
     assert(asset_java && morrow_jni_runtime_asset_manager_bound());
+    expected_activity = static_cast<jobject>(activity);
+    expected_assets = static_cast<jobject>(asset_java);
+    expected_configuration = static_cast<jobject>(configuration);
+    expected_path = root;
+    const size_t activity_locals_before = real_env->localframe.front().size();
+    for (unsigned i = 0; i < 32; ++i) {
+        assert(morrow_jni_runtime_call_game_activity(
+            reinterpret_cast<uintptr_t>(&synthetic_game_activity_init),
+            root, &init_result));
+        assert(init_result.entry_invoked && init_result.entry_returned &&
+               !init_result.java_exception_pending &&
+               init_result.native_handle == 0x12345);
+    }
+    assert(native_activity_calls == 32);
+    assert(real_env->localframe.front().size() == activity_locals_before);
+    expected_activity = expected_assets = expected_configuration = nullptr;
+    expected_path = nullptr;
     assert(main_env->IsInstanceOf(static_cast<jobject>(asset_java),
                                   main_env->FindClass("android/content/res/AssetManager")));
     assert(from_java(main_env, &horizon_window) == nullptr);

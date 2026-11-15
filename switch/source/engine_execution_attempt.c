@@ -8,6 +8,28 @@ static EngineExecutionDecision blocked(const char *reason)
     return (EngineExecutionDecision){false, 0, reason};
 }
 
+bool engine_execution_rx_target(const EngineMemoryPlan *plan,
+                                uint64_t runtime_base, uint64_t virtual_address,
+                                uintptr_t *target)
+{
+    if (!target || !plan || !engine_memory_plan_validate(plan) ||
+        virtual_address < plan->virtual_page_base || runtime_base > UINTPTR_MAX)
+        return false;
+    const uint64_t offset = virtual_address - plan->virtual_page_base;
+    if (offset >= plan->image_bytes || offset > UINTPTR_MAX - runtime_base)
+        return false;
+    for (size_t i = 0; i < plan->run_count; i++) {
+        const EngineMemoryRun *run = &plan->runs[i];
+        if (run->permission == ENGINE_MEMORY_READ_EXECUTE &&
+            offset >= run->offset_bytes &&
+            offset - run->offset_bytes < run->size_bytes) {
+            *target = (uintptr_t)(runtime_base + offset);
+            return true;
+        }
+    }
+    return false;
+}
+
 EngineExecutionDecision engine_execution_decide(
     bool explicitly_requested, bool strict_linked, bool mapped,
     const EngineProbeResult *probe, const EngineEntryProbe *entry,
@@ -28,25 +50,11 @@ EngineExecutionDecision engine_execution_decide(
         return blocked("jni_game_activity_runtime_incomplete");
     if (!engine_memory_plan_validate(plan))
         return blocked("invalid_executable_memory_plan");
-    if (entry->jni_onload_virtual_address < plan->virtual_page_base ||
-        runtime_base > UINTPTR_MAX)
-        return blocked("jni_onload_outside_mapped_image");
-    const uint64_t offset = entry->jni_onload_virtual_address -
-                            plan->virtual_page_base;
-    if (offset >= plan->image_bytes || offset > UINTPTR_MAX - runtime_base)
-        return blocked("jni_onload_outside_mapped_image");
-    bool executable = false;
-    for (size_t i = 0; i < plan->run_count; i++) {
-        const EngineMemoryRun *run = &plan->runs[i];
-        if (run->permission == ENGINE_MEMORY_READ_EXECUTE &&
-            offset >= run->offset_bytes &&
-            offset - run->offset_bytes < run->size_bytes) {
-            executable = true;
-            break;
-        }
-    }
-    if (!executable) return blocked("jni_onload_not_in_rx_pages");
-    return (EngineExecutionDecision){true, (uintptr_t)(runtime_base + offset),
+    uintptr_t target = 0;
+    if (!engine_execution_rx_target(plan, runtime_base,
+                                    entry->jni_onload_virtual_address, &target))
+        return blocked("jni_onload_not_in_rx_pages");
+    return (EngineExecutionDecision){true, target,
                                      "jni_onload_eligible_experimental"};
 }
 

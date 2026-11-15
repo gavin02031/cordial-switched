@@ -47,6 +47,10 @@ static HorizonCodeMemory reservation;
 // can safely be unloaded by a second L3; the OS reclaims both on app exit.
 static bool engine_entry_started;
 static bool engine_mapping_pinned;
+static bool engine_jni_onload_succeeded;
+static bool game_activity_attempt_consumed;
+static bool game_activity_entry_called;
+static uintptr_t live_game_activity_target;
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)
 {
@@ -233,7 +237,7 @@ static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
     engine_tls_scratch_release(&template_image);
 }
 
-void horizon_real_link_run(RealLinkResult *result, bool request_execution)
+void horizon_real_link_run(RealLinkResult *result, unsigned action)
 {
     if (!result) return;
     memset(result, 0, sizeof(*result));
@@ -249,7 +253,62 @@ void horizon_real_link_run(RealLinkResult *result, bool request_execution)
     }
     log_line(log, "# Morrow native engine entry readiness attempt");
     log_line(log, "# JNI_OnLoad is opt-in and blocked unless strict mapping and runtime gates pass.");
-    log_line(log, "engine_execution_requested=%s", request_execution ? "yes" : "no");
+    log_line(log, "engine_execution_action=%s",
+             action == 1 ? "jni_onload" : action == 2 ? "game_activity" : "diagnostic");
+    if (action == 2) {
+        log_line(log, "game_activity_prior_jni_onload_succeeded=%s",
+                 engine_jni_onload_succeeded ? "yes" : "no");
+        log_line(log, "game_activity_entry_pointer_valid=%s",
+                 live_game_activity_target ? "yes" : "no");
+        if (!engine_mapping_pinned || !engine_jni_onload_succeeded ||
+            !live_game_activity_target) {
+            detail(result, "First complete ZL+L3 JNI_OnLoad before GameActivity.");
+            log_line(log, "blocker=engine_jni_onload_not_ready");
+            goto done;
+        }
+        if (game_activity_attempt_consumed) {
+            detail(result, "Activity entry already attempted. Restart Morrow.");
+            log_line(log, "blocker=game_activity_already_attempted");
+            goto done;
+        }
+#ifdef MORROW_HAS_JNIVM
+        const bool env_ready = morrow_jni_runtime_jni_env() != NULL;
+        const bool activity_ready = morrow_jni_runtime_game_activity_ready();
+        const bool config_ready = morrow_jni_runtime_configuration_bound();
+        const bool assets_ready = morrow_jni_runtime_asset_manager_bound();
+        const bool surface_ready = morrow_jni_runtime_surface_bound();
+        log_line(log, "activity_jni_env_ready=%s", env_ready ? "yes" : "no");
+        log_line(log, "activity_java_object_ready=%s", activity_ready ? "yes" : "no");
+        log_line(log, "activity_configuration_ready=%s", config_ready ? "yes" : "no");
+        log_line(log, "activity_real_asset_manager_ready=%s", assets_ready ? "yes" : "no");
+        log_line(log, "activity_horizon_surface_ready=%s", surface_ready ? "yes" : "no");
+        if (!env_ready || !activity_ready || !config_ready ||
+            !assets_ready || !surface_ready) {
+            detail(result, "GameActivity blocked: missing actual JNI/assets/surface.");
+            log_line(log, "blocker=game_activity_jni_prerequisite_missing");
+            goto done;
+        }
+        game_activity_attempt_consumed = true;
+        MorrowGameActivityInitResult init = {0};
+        log_line(log, "event=entering_real_game_activity_initialize_native");
+        detail(result, "GameActivity attempted. Inspect link report; restart to retry.");
+        const bool returned = morrow_jni_runtime_call_game_activity(
+            live_game_activity_target, ENGINE_REPORT_DIR, &init);
+        game_activity_entry_called = init.entry_invoked;
+        log_line(log, "game_activity_initializer_returned=%s",
+                 returned && init.entry_returned ? "yes" : "no");
+        log_line(log, "game_activity_jni_exception_pending=%s",
+                 init.java_exception_pending ? "yes" : "no");
+        if (returned)
+            log_line(log, "game_activity_native_handle=0x%llx",
+                     (unsigned long long)init.native_handle);
+        log_line(log, "engine_gameplay_started=no");
+#else
+        detail(result, "JNI-enabled Morrow artifact required for GameActivity.");
+        log_line(log, "blocker=jni_runtime_not_compiled");
+#endif
+        goto done;
+    }
     if (engine_mapping_pinned) {
         detail(result, "Engine code mapping held. Restart Morrow before retrying.");
         log_line(log, "blocker=prior_engine_mapping_requires_process_restart");
@@ -411,7 +470,7 @@ void horizon_real_link_run(RealLinkResult *result, bool request_execution)
         entry.has_game_activity_initialize_native)
         log_line(log, "game_activity_initialize_native_virtual_address=0x%llx",
                  (unsigned long long)entry.game_activity_initialize_native_virtual_address);
-    log_line(log, "game_activity_initialize_native_call_eligible=no");
+    log_line(log, "game_activity_initialize_native_call_eligible=only_after_successful_jni_onload");
     log_line(log, "native_activity_exported=%s",
              entry.status != ENGINE_ENTRY_INSPECTED ? "unknown" :
              entry.has_native_activity_oncreate ? "yes" : "no");
@@ -493,9 +552,9 @@ void horizon_real_link_run(RealLinkResult *result, bool request_execution)
             result->stage_prepared = true;
             detail(result, "Strict link passed; Android JNI/graphics runtime still missing.");
             log_line(log, "event=strict_stage_prepared");
-            if (!request_execution)
+            if (action != 1)
                 log_line(log, "execution_gate=not_requested");
-            if (request_execution) {
+            if (action == 1) {
                 bool vm_ready = false, env_ready = false, activity_ready = false;
                 void *vm = NULL;
 #ifdef MORROW_HAS_JNIVM
@@ -548,6 +607,20 @@ void horizon_real_link_run(RealLinkResult *result, bool request_execution)
                         log_line(log, "event=real_engine_jni_onload_returned");
                         log_line(log, "engine_jni_onload_return=0x%08X", (unsigned)version);
                         log_line(log, "experimental_jni_onload_called=yes");
+                        engine_jni_onload_succeeded = version == 0x00010006;
+                        log_line(log, "engine_jni_onload_accepted=%s",
+                                 engine_jni_onload_succeeded ? "yes" : "no");
+                        if (engine_jni_onload_succeeded &&
+                            entry.status == ENGINE_ENTRY_INSPECTED &&
+                            entry.has_game_activity_initialize_native &&
+                            engine_execution_rx_target(&plan,
+                                (uint64_t)(uintptr_t)reservation.mapped,
+                                entry.game_activity_initialize_native_virtual_address,
+                                &live_game_activity_target)) {
+                            log_line(log, "game_activity_mapped_entry_ready=yes");
+                        } else {
+                            log_line(log, "game_activity_mapped_entry_ready=no");
+                        }
                         log_line(log, "engine_gameplay_started=no");
                     }
                 }
@@ -596,7 +669,8 @@ void horizon_real_link_run(RealLinkResult *result, bool request_execution)
 
 done:
     log_line(log, "engine_entry_called=%s", engine_entry_started ? "yes" : "no");
-    log_line(log, "game_activity_initialize_native_called=no");
+    log_line(log, "game_activity_initialize_native_called=%s",
+             game_activity_entry_called ? "yes" : "no");
     log_line(log, "engine_executed=%s", engine_entry_started ? "yes" : "no");
     log_line(log, "engine_mapped_executable=%s",
              reservation.active ? "yes" : "no");

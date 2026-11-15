@@ -664,3 +664,62 @@ extern "C" bool morrow_jni_runtime_activity_requests(
     *requests = game_activity_owner->requests;
     return true;
 }
+
+extern "C" bool morrow_jni_runtime_call_game_activity(
+    uintptr_t entry, const char *data_path, MorrowGameActivityInitResult *result)
+{
+    if (!result) return false;
+    *result = {};
+    if (!entry || !data_path || !*data_path) return false;
+
+    // Do not hold start_mutex while calling guest code: GameActivity's
+    // getAssets and window callbacks acquire it during native initialization.
+    JNIEnv *env = nullptr;
+    jobject activity = nullptr, assets = nullptr, configuration = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (!runtime || !attached_to_runtime || !game_activity_reference ||
+            !asset_reference || !configuration_reference) return false;
+        env = runtime->GetJNIEnv();
+        activity = env->NewLocalRef(game_activity_reference);
+        assets = env->NewLocalRef(asset_reference);
+        configuration = env->NewLocalRef(configuration_reference);
+    }
+    if (!activity || !assets || !configuration) {
+        if (activity) env->DeleteLocalRef(activity);
+        if (assets) env->DeleteLocalRef(assets);
+        if (configuration) env->DeleteLocalRef(configuration);
+        return false;
+    }
+
+    jstring internal = nullptr, obb = nullptr, external = nullptr;
+    bool returned = false;
+    try {
+        internal = env->NewStringUTF(data_path);
+        obb = env->NewStringUTF(data_path);
+        external = env->NewStringUTF(data_path);
+        if (internal && obb && external) {
+            using NativeInit = jlong (*)(JNIEnv *, jobject, jstring, jstring,
+                                        jstring, jobject, jbyteArray, jobject);
+            // A cold start has no saved Android state. The three paths point
+            // to the real app-owned SD folder; no APK or account data is read.
+            result->entry_invoked = true;
+            result->native_handle = reinterpret_cast<NativeInit>(entry)(
+                env, activity, internal, obb, external, assets, nullptr,
+                configuration);
+            result->entry_returned = true;
+            result->java_exception_pending = env->ExceptionCheck();
+            returned = true;
+        }
+    } catch (...) {
+        // An Android callback may throw C++ in this incomplete VM. Do not
+        // claim that the engine started after a failed boundary crossing.
+    }
+    if (external) env->DeleteLocalRef(external);
+    if (obb) env->DeleteLocalRef(obb);
+    if (internal) env->DeleteLocalRef(internal);
+    env->DeleteLocalRef(configuration);
+    env->DeleteLocalRef(assets);
+    env->DeleteLocalRef(activity);
+    return returned;
+}

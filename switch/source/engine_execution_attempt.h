@@ -24,6 +24,12 @@ EngineExecutionDecision engine_execution_decide(
     const EngineMemoryPlan *plan, uint64_t runtime_base,
     bool java_vm_ready, bool java_environment_ready, bool activity_ready);
 
+// Resolve another verified export in the *same* already mapped code image.
+// The final mapping must remain alive for the entire guest call.
+bool engine_execution_rx_target(const EngineMemoryPlan *plan,
+                                uint64_t runtime_base, uint64_t virtual_address,
+                                uintptr_t *target);
+
 // Only call following an eligible decision. The caller must keep the mapped
 // image and its relocation providers alive after entry returns.
 int32_t engine_execution_call_jni_onload(uintptr_t entry, void *java_vm);

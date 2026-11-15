@@ -693,7 +693,7 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 
     label(renderer, 312, 666, FONT_SMALL, MUTED,
           state->page == UI_LOADER
-              ? "L/R: pages  |  X: views  |  ZR: audit  |  R3: ELF  |  L3: link  |  ZL+L3: engine try  |  -: GLES  |  +: exit"
+              ? "L/R: pages  |  ZR: audit  |  R3: ELF  |  L3: link  |  ZL+L3: OnLoad  |  ZR+L3: Activity  |  -: GLES  |  +: exit"
               : "L/R or A/B: pages   |   X: context action   |   Y: rescan   |   PLUS: exit");
     label(renderer, 1050, 666, FONT_SMALL, LAVENDER, "60 Hz UI target");
 }

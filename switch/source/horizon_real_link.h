@@ -11,10 +11,11 @@ typedef struct {
     char detail[112];
 } RealLinkResult;
 
-// L3 performs strict final-base relocation diagnostics. Holding ZL with L3
-// additionally requests an experimental JNI_OnLoad call, only if *all* live
-// mapping, JNI, constructors and TLS preconditions have been verified.
-// The engine may still crash; a successful return does not imply gameplay.
-void horizon_real_link_run(RealLinkResult *result, bool request_execution);
+// L3 performs strict final-base relocation diagnostics. ZL+L3 requests an
+// experimental JNI_OnLoad call. After that returns successfully, ZR+L3
+// separately requests AGDK GameActivity.initializeNativeCode. Both operations
+// can crash; a successful return does not imply rendering or playable login.
+// action: 0=diagnostic, 1=JNI_OnLoad, 2=GameActivity native entry.
+void horizon_real_link_run(RealLinkResult *result, unsigned action);
 
 #endif
