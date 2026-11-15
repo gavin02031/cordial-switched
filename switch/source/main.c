@@ -99,16 +99,16 @@ static void handle_touch(UiState *state, unsigned x, unsigned y)
 {
     // libnx touch coordinates are in the Switch's native 1280x720 space.
     if (x < 273) {
-        if (y >= 229 && y < 289)
-            state->page = UI_OVERVIEW;
-        else if (y >= 298 && y < 358)
-            state->page = UI_PERFORMANCE;
-        else if (y >= 367 && y < 427)
-            state->page = UI_ROADMAP;
-        else if (y >= 436 && y < 496)
-            state->page = UI_ENGINE;
-        else if (y >= 505 && y < 565)
-            state->page = UI_LOADER;
+        // The six-row Morrow rail shares its coordinates with ui.c. Ignore
+        // gaps between rows instead of selecting the wrong page on a tap.
+        if (y >= 203 && y < 203 + UI_PAGE_COUNT * 55) {
+            const unsigned index = (y - 203) / 55;
+            if ((y - 203) % 55 < 49 && index < UI_PAGE_COUNT)
+                state->page = (UiPage)index;
+        }
+    } else if (state->page == UI_OVERVIEW &&
+               x >= 332 && x < 555 && y >= 375 && y < 431) {
+        state->page = UI_LIBRARY;
     } else if (state->page == UI_PERFORMANCE &&
                x >= 731 && x < 1176 && y >= 492 && y < 586) {
         state->animations = !state->animations;
@@ -128,7 +128,7 @@ int main(void)
         return failure_screen("SDL could not initialise the video service.");
 
     // 720p is the Lite display's native resolution. No 1080p framebuffer cost.
-    SDL_Window *window = SDL_CreateWindow("Cordial Switched", 0, 0,
+    SDL_Window *window = SDL_CreateWindow("Cordial Switched - Morrow UI Preview", 0, 0,
                                            UI_WIDTH, UI_HEIGHT, SDL_WINDOW_SHOWN);
     if (!window) {
         SDL_Quit();

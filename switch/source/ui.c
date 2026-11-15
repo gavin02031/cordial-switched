@@ -252,36 +252,38 @@ static void sidebar(SDL_Renderer *renderer, const UiState *state)
 {
     panel(renderer, 28, 27, 246, 665, (SDL_Color){17, 23, 44, 246});
     rounded(renderer, 48, 49, 54, 54, 14, LAVENDER);
-    label(renderer, 63, 59, FONT_TITLE, (SDL_Color){22, 16, 48, 255}, "C");
-    label(renderer, 111, 52, FONT_MEDIUM, WHITE, "CORDIAL");
-    label(renderer, 112, 81, FONT_SMALL, LAVENDER, "SWITCHED");
+    // Morrow's logo is drawn natively. No Roblox or third-party icon assets
+    // need to ship in the homebrew binary.
+    label(renderer, 59, 58, FONT_TITLE, (SDL_Color){22, 16, 48, 255}, "M");
+    label(renderer, 111, 52, FONT_MEDIUM, WHITE, "MORROW");
+    label(renderer, 112, 81, FONT_SMALL, LAVENDER, "SWITCH NATIVE");
 
-    label(renderer, 49, 155, FONT_SMALL, MUTED, "NAVIGATION");
-    const char *items[] = {"Overview", "Performance", "Roadmap", "Engine", "Loader"};
+    label(renderer, 49, 155, FONT_SMALL, MUTED, "YOUR SPACE");
+    const char *items[] = {"Home", "Library", "Performance", "Roadmap", "Engine", "Loader"};
     for (unsigned i = 0; i < UI_PAGE_COUNT; i++) {
-        const int y = 229 + (int)i * 69;
+        const int y = 203 + (int)i * 55;
         const bool active = state->page == (UiPage)i;
         if (active) {
-            rounded(renderer, 44, y, 214, 58, 13, (SDL_Color){59, 49, 91, 255});
-            rounded(renderer, 45, y + 13, 4, 31, 2, LAVENDER);
+            rounded(renderer, 44, y, 214, 49, 13, (SDL_Color){59, 49, 91, 255});
+            rounded(renderer, 45, y + 10, 4, 29, 2, LAVENDER);
         }
-        rounded(renderer, 63, y + 20, 15, 15, 5,
+        rounded(renderer, 63, y + 17, 15, 15, 5,
                 active ? LAVENDER : (SDL_Color){83, 94, 123, 255});
-        label(renderer, 91, y + 14, FONT_BODY, active ? WHITE : MUTED, items[i]);
+        label(renderer, 91, y + 9, FONT_BODY, active ? WHITE : MUTED, items[i]);
     }
 
     fill(renderer, 49, 571, 200, 1, (SDL_Color){144, 150, 204, 38});
-    label(renderer, 49, 593, FONT_SMALL, MUTED, "ENGINE STATUS");
+    label(renderer, 49, 593, FONT_SMALL, MUTED, "ROBLOX STATUS");
     rounded(renderer, 48, 625, 180, 34, 10, (SDL_Color){66, 43, 63, 235});
     rounded(renderer, 59, 636, 9, 9, 4, PINK);
-    label(renderer, 77, 631, FONT_SMALL, PINK, "NOT LOADED");
+    label(renderer, 77, 631, FONT_SMALL, PINK, "NOT PLAYABLE");
 }
 
 static void topbar(SDL_Renderer *renderer, const char *title, const char *subtitle)
 {
     label(renderer, 310, 42, FONT_TITLE, WHITE, title);
     label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "NATIVE TEST  v0.41", (SDL_Color){54, 46, 83, 220},
+    badge(renderer, 1042, 47, 184, "MORROW  /  PREVIEW", (SDL_Color){54, 46, 83, 220},
           LAVENDER);
 }
 
@@ -297,17 +299,17 @@ static void stat_card(SDL_Renderer *renderer, int x, const char *name,
 
 static void overview(SDL_Renderer *renderer, const UiState *state, double seconds)
 {
-    topbar(renderer, "Welcome aboard.", "Cordial's native Switch port in development");
+    topbar(renderer, "Your next universe.", "A Switch-native home for your future Roblox library");
     panel(renderer, 306, 142, 921, 304, PANEL);
 
-    badge(renderer, 337, 170, 169, "HORIZON OS / ARM64",
+    badge(renderer, 337, 170, 169, "BUILT FOR SWITCH LITE",
           (SDL_Color){59, 52, 100, 255}, LAVENDER);
-    label(renderer, 337, 222, FONT_HERO, WHITE, "A new way to play.");
-    label(renderer, 340, 299, FONT_BODY, MUTED, "The foundation for Roblox on your Switch Lite.");
-    label(renderer, 340, 331, FONT_BODY, MUTED, "The game engine is not connected yet.");
+    label(renderer, 337, 222, FONT_HERO, WHITE, "Make space for play.");
+    label(renderer, 340, 299, FONT_BODY, MUTED, "Your own library, controls and launcher on Horizon OS.");
+    label(renderer, 340, 331, FONT_BODY, PINK, "Roblox gameplay is still under development.");
 
-    rounded(renderer, 336, 379, 179, 43, 12, (SDL_Color){111, 209, 175, 52});
-    label(renderer, 352, 387, FONT_BODY, MINT, "Platform online");
+    rounded(renderer, 336, 379, 219, 43, 12, (SDL_Color){120, 105, 206, 255});
+    label(renderer, 353, 387, FONT_BODY, WHITE, "Explore library  >");
 
     // A lightweight abstract console motif: no copyrighted Roblox imagery.
     const int motion = state->animations ? (int)(5.0 * sin(seconds * 1.25)) : 0;
@@ -318,9 +320,44 @@ static void overview(SDL_Renderer *renderer, const UiState *state, double second
     rounded(renderer, 947, 294 - motion, 54, 54, 12, (SDL_Color){244, 168, 201, 255});
     rounded(renderer, 1136, 220 - motion, 28, 28, 8, MINT);
 
-    stat_card(renderer, 306, "OUTPUT RESOLUTION", "1280 x 720", LAVENDER);
-    stat_card(renderer, 619, "UI FRAME TARGET", "60 FPS", MINT);
-    stat_card(renderer, 932, "ROBLOX ENGINE", "OFFLINE", PINK);
+    stat_card(renderer, 306, "HANDHELD DISPLAY", "1280 x 720", LAVENDER);
+    stat_card(renderer, 619, "NATIVE UI TARGET", "60 FPS", MINT);
+    stat_card(renderer, 932, "ROBLOX GAMEPLAY", "NOT READY", PINK);
+}
+
+static void library(SDL_Renderer *renderer, const UiState *state)
+{
+    topbar(renderer, "Your library.", "A custom Morrow home. Roblox games are not available yet.");
+    panel(renderer, 306, 142, 921, 304, PANEL);
+    label(renderer, 337, 170, FONT_SMALL, LAVENDER, "FEATURED PLATFORM");
+
+    // A console-native collection layout, separate from the Android app
+    // shell. The only tile is a diagnostic platform entry, never a fake game.
+    rounded(renderer, 336, 207, 240, 213, 19, (SDL_Color){51, 51, 92, 255});
+    rounded(renderer, 356, 226, 200, 113, 15, (SDL_Color){103, 85, 173, 255});
+    rounded(renderer, 420, 246, 67, 72, 18, LAVENDER);
+    rounded(renderer, 440, 264, 27, 34, 8, (SDL_Color){76, 62, 127, 255});
+    label(renderer, 357, 355, FONT_BODY, WHITE, "Roblox / Android");
+    label(renderer, 357, 388, FONT_SMALL, PINK, "ENGINE NOT STARTED");
+
+    label(renderer, 610, 216, FONT_MEDIUM, WHITE, "Your worlds will live here.");
+    label(renderer, 612, 263, FONT_BODY, MUTED, "Morrow will use its own browsing and library UI.");
+    label(renderer, 612, 298, FONT_BODY, MUTED, "Game rendering will still come from Roblox's engine.");
+    badge(renderer, 611, 361, 247, "COMING AFTER ENGINE BOOT",
+          (SDL_Color){66, 43, 63, 235}, PINK);
+
+    panel(renderer, 306, 473, 445, 161, PANEL_LIGHT);
+    label(renderer, 333, 495, FONT_SMALL, LAVENDER, "ENGINE FILE");
+    label(renderer, 334, 529, FONT_MEDIUM, WHITE,
+          state->engine.status == ENGINE_PROBE_INSPECTED ? "File detected" : "Not found on SD");
+    label(renderer, 334, 580, FONT_SMALL, MUTED,
+          "An inspected library is not a running game.");
+
+    panel(renderer, 768, 473, 459, 161, PANEL_LIGHT);
+    label(renderer, 793, 495, FONT_SMALL, MINT, "YOUR NEXT TEST");
+    label(renderer, 794, 529, FONT_MEDIUM, WHITE, "Loader  /  L3");
+    label(renderer, 794, 580, FONT_SMALL, MUTED,
+          "Save the engine readiness report to your SD card.");
 }
 
 static void performance(SDL_Renderer *renderer, const UiState *state)
@@ -674,6 +711,9 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
     switch (state->page) {
     case UI_OVERVIEW:
         overview(renderer, state, seconds);
+        break;
+    case UI_LIBRARY:
+        library(renderer, state);
         break;
     case UI_PERFORMANCE:
         performance(renderer, state);

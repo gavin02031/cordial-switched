@@ -1,12 +1,17 @@
-# Cordial Switched: native Horizon experiment
+# Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.64 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.65 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
-SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
+SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
 It reads handheld controls and
-touchscreen input. **It does not
+touchscreen input. The Morrow UI prototype now has a dedicated Home and
+Library page, with a native logo, featured engine tile, honest readiness
+status and touch/controller navigation. The Library **does not yet fetch
+experiences or launch games**: those require real Roblox authentication and
+engine startup. Development `.nro` packages still use the Cordial Switched
+name until a playable Morrow v1.0 is proven. **It does not
 currently run Roblox, connect to Roblox servers or sign in to any Roblox
 account.**
 
@@ -18,6 +23,16 @@ average frame time; 60 FPS is a **target**, not a measured hardware result or
 a promise about eventual game performance. The current layout targets the
 Switch Lite's 1280x720 handheld display.
 
+### Which UI is ours?
+
+Morrow's launcher is native Horizon software. Its Home, Library, future
+account navigation, settings and controller-focused overlays can have a
+completely original design; they do not need to imitate the Android app
+shell. Once supported, gameplay itself would still run through Roblox's
+Android engine, with compatibility services behind the scenes. An experience
+browser or login flow requires its own verified, secure integration; the
+current library is an **offline visual preview**, not a live account session.
+
 ## Build
 
 The [Cordial Switched Horizon preview](../.github/workflows/switch-homebrew.yml)
@@ -26,7 +41,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.64 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.65 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -100,8 +115,8 @@ launch it from the Homebrew Menu on a Switch with working homebrew support,
 then check:
 
 1. The Overview page renders correctly, including fonts, colours and cards.
-2. **A/B**, **left/right** or **L/R** switch Overview, Performance, Roadmap,
-   Engine, and Loader.
+2. **A/B**, **left/right** or **L/R** switch Home, Library, Performance,
+   Roadmap, Engine, and Loader.
 3. Tapping navigation items switches pages; on Performance, **X** or the toggle
    turns the ambient movement on and off.
 4. Check the Performance page after a few seconds. Report the renderer type,

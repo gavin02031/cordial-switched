@@ -16,6 +16,7 @@
 
 typedef enum {
     UI_OVERVIEW = 0,
+    UI_LIBRARY,
     UI_PERFORMANCE,
     UI_ROADMAP,
     UI_ENGINE,
