@@ -135,6 +135,28 @@ typedef struct {
 bool morrow_jni_runtime_call_game_activity(uintptr_t entry, const char *data_path,
                                             MorrowGameActivityInitResult *result);
 
+typedef enum {
+    MORROW_APP_BRIDGE_GLOBAL_INIT = 0,
+    MORROW_APP_BRIDGE_V2_INIT,
+    MORROW_APP_BRIDGE_LUA_SHELL,
+    MORROW_APP_BRIDGE_START_APP
+} MorrowAppBridgeStep;
+
+typedef struct {
+    bool entry_invoked;
+    bool entry_returned;
+    bool java_exception_pending;
+    bool cpp_exception_caught;
+} MorrowAppBridgeCallResult;
+
+// Deliberate experimental native invocation with the four observed static
+// NativeGLInterface JNI ABIs. Params are partial, not a verified Android
+// bootstrap. This does not supply account authentication or a game session.
+// Caller must preflight a previously mapped and validated RX entry, and
+// journal the pending call before entering guest code.
+bool morrow_jni_runtime_call_app_bridge(uintptr_t entry, MorrowAppBridgeStep step,
+                                        MorrowAppBridgeCallResult *result);
+
 #ifdef __cplusplus
 }
 #endif

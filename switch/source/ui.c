@@ -530,6 +530,9 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
             label(renderer, 340, 611, FONT_SMALL,
                   state->loader_smoke.status == LOADER_SMOKE_VERIFIED ? MINT : PINK,
                   state->loader_smoke.detail);
+        else if (state->recovered_crash_path[0])
+            label(renderer, 340, 611, FONT_SMALL, PINK,
+                  "Prior engine attempt ended uncleanly: see crash-XX.txt on SD");
         else
             label(renderer, 340, 611, FONT_SMALL, LAVENDER,
                   "R3: synthetic ARM64 ELF mapping test (no Roblox library needed)");
@@ -585,6 +588,12 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
             label(renderer, 341, 617, FONT_SMALL, PINK,
                   "ZL: report failed (check SD free space and folder permissions)");
         }
+    } else if (state->recovered_crash_path[0]) {
+        const char *base = strrchr(state->recovered_crash_path, '/');
+        char message[112];
+        snprintf(message, sizeof(message), "Previous native call ended uncleanly: %.55s",
+                 base ? base + 1 : state->recovered_crash_path);
+        label(renderer, 341, 617, FONT_SMALL, PINK, message);
     } else {
         label(renderer, 341, 617, FONT_SMALL, MUTED,
               "ZL: export full symbol list to sdmc:/switch/cordial-switched/");
@@ -733,7 +742,7 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 
     label(renderer, 312, 666, FONT_SMALL, MUTED,
           state->page == UI_LOADER
-              ? "L/R: pages  |  ZR: audit  |  R3: ELF  |  L3: link  |  ZL+L3: OnLoad  |  ZR+L3: Activity  |  -: GLES  |  +: exit"
+              ? "L/R: pages | L3: link | ZL+L3: JNI | ZR+L3: Activity | ZL+ZR+L3: Bridge | -: GLES | +: exit"
               : "L/R or A/B: pages   |   X: context action   |   Y: rescan   |   PLUS: exit");
     label(renderer, 1050, 666, FONT_SMALL, LAVENDER, "60 Hz UI target");
 }

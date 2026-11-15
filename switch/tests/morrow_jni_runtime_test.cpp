@@ -56,6 +56,32 @@ static jobject expected_assets;
 static jobject expected_configuration;
 static const char *expected_path;
 static unsigned native_activity_calls;
+static jclass expected_bridge_class;
+static jobject expected_bridge_init_params, expected_bridge_start_params;
+static unsigned native_bridge_calls[4];
+
+static void synthetic_bridge_global(JNIEnv *env, jclass klass)
+{
+    assert(env && env->IsSameObject(klass, expected_bridge_class));
+    ++native_bridge_calls[0];
+}
+static void synthetic_bridge_init(JNIEnv *env, jclass klass, jobject params)
+{
+    assert(env && env->IsSameObject(klass, expected_bridge_class));
+    assert(env->IsSameObject(params, expected_bridge_init_params));
+    ++native_bridge_calls[1];
+}
+static void synthetic_bridge_lua(JNIEnv *env, jclass klass)
+{
+    assert(env && env->IsSameObject(klass, expected_bridge_class));
+    ++native_bridge_calls[2];
+}
+static void synthetic_bridge_start(JNIEnv *env, jclass klass, jobject params)
+{
+    assert(env && env->IsSameObject(klass, expected_bridge_class));
+    assert(env->IsSameObject(params, expected_bridge_start_params));
+    ++native_bridge_calls[3];
+}
 
 static jlong synthetic_game_activity_init(JNIEnv *env, jobject activity,
                                           jstring internal, jstring obb,
@@ -622,6 +648,37 @@ int main()
         start_class, "platformParams", "()Lcom/roblox/engine/jni/model/PlatformParams;");
     assert(surface_field && surface_method && platform_field && platform_method);
     const size_t bridge_locals_before = real_env->localframe.front().size();
+    expected_bridge_class = main_env->FindClass(
+        "com/roblox/engine/jni/NativeGLInterface");
+    assert(expected_bridge_class);
+    expected_bridge_init_params = static_cast<jobject>(init_params);
+    expected_bridge_start_params = static_cast<jobject>(start_params);
+    const size_t bridge_call_locals_before = real_env->localframe.front().size();
+    const uintptr_t bridge_functions[] = {
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_global),
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_init),
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_lua),
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_start)
+    };
+    for (unsigned trial = 0; trial < 32; ++trial) {
+        for (unsigned step = 0; step < 4; ++step) {
+            MorrowAppBridgeCallResult call = {};
+            assert(morrow_jni_runtime_call_app_bridge(bridge_functions[step],
+                static_cast<MorrowAppBridgeStep>(step), &call));
+            assert(call.entry_invoked && call.entry_returned &&
+                   !call.java_exception_pending && !call.cpp_exception_caught);
+        }
+    }
+    for (unsigned step = 0; step < 4; ++step)
+        assert(native_bridge_calls[step] == 32);
+    assert(real_env->localframe.front().size() == bridge_call_locals_before);
+    main_env->DeleteLocalRef(expected_bridge_class);
+    expected_bridge_class = nullptr;
+    expected_bridge_init_params = expected_bridge_start_params = nullptr;
+    // The existing AutoValue getter test below uses the same local-frame
+    // baseline and must still pass after 128 separate native boundary calls.
+    const size_t bridge_after_calls = real_env->localframe.front().size();
+    assert(bridge_after_calls == bridge_locals_before);
     for (unsigned i = 0; i < 32; ++i) {
         jobject field_surface = main_env->GetObjectField(
             static_cast<jobject>(start_params), surface_field);

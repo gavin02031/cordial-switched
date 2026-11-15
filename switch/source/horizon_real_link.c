@@ -34,6 +34,7 @@
 #include "elf_probe.h"
 #include "engine_entry_probe.h"
 #include "engine_execution_attempt.h"
+#include "engine_run_journal.h"
 #include "engine_memory_plan.h"
 #include "engine_stage.h"
 #include "engine_tls_scratch.h"
@@ -51,6 +52,10 @@ static bool engine_jni_onload_succeeded;
 static bool game_activity_attempt_consumed;
 static bool game_activity_entry_called;
 static uintptr_t live_game_activity_target;
+static uintptr_t live_app_bridge_targets[4];
+#ifdef MORROW_HAS_JNIVM
+static bool app_bridge_attempt_consumed;
+#endif
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)
 {
@@ -265,7 +270,93 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_line(log, "# Morrow native engine entry readiness attempt");
     log_line(log, "# JNI_OnLoad is opt-in and blocked unless strict mapping and runtime gates pass.");
     log_line(log, "engine_execution_action=%s",
-             action == 1 ? "jni_onload" : action == 2 ? "game_activity" : "diagnostic");
+             action == 1 ? "jni_onload" : action == 2 ? "game_activity" :
+             action == 3 ? "app_bridge_v2" : "diagnostic");
+    if (action == 3) {
+        log_line(log, "app_bridge_prior_jni_onload_succeeded=%s",
+                 engine_jni_onload_succeeded ? "yes" : "no");
+        if (!engine_mapping_pinned || !engine_jni_onload_succeeded) {
+            detail(result, "First complete ZL+L3 JNI_OnLoad before App Bridge.");
+            log_line(log, "blocker=engine_jni_onload_not_ready");
+            goto done;
+        }
+        if (app_bridge_attempt_consumed) {
+            detail(result, "App Bridge already attempted; restart Morrow.");
+            log_line(log, "blocker=app_bridge_already_attempted");
+            goto done;
+        }
+        for (unsigned i = 0; i < 4; ++i) {
+            log_line(log, "app_bridge_step_%u_rx_target=%s", i + 1,
+                     live_app_bridge_targets[i] ? "yes" : "no");
+            if (!live_app_bridge_targets[i]) {
+                detail(result, "App Bridge export absent or outside mapped RX pages.");
+                log_line(log, "blocker=app_bridge_entry_not_executable");
+                goto done;
+            }
+        }
+#ifdef MORROW_HAS_JNIVM
+        const char *const names[] = {
+            "nativeGameGlobalInit", "nativeAppBridgeV2InitWithParams",
+            "nativeAppBridgeStartLuaAppDM", "nativeAppBridgeV2StartAppWithParams"
+        };
+        if (!morrow_jni_runtime_jni_env() ||
+            !morrow_jni_runtime_asset_manager_bound() ||
+            !morrow_jni_runtime_surface_bound() ||
+            !morrow_jni_runtime_app_bridge_init_params() ||
+            !morrow_jni_runtime_app_bridge_start_params()) {
+            detail(result, "App Bridge blocked: missing JNI, assets or Surface.");
+            log_line(log, "blocker=app_bridge_runtime_prerequisite_missing");
+            goto done;
+        }
+        log_line(log, "app_bridge_params=partial_missing_android_lifecycle_and_account");
+        log_line(log, "app_bridge_execution_mode=explicit_experimental_user_request");
+        app_bridge_attempt_consumed = true;
+        detail(result, "App Bridge attempted; inspect report and crash marker.");
+        for (unsigned i = 0; i < 4; ++i) {
+            char phase[92];
+            snprintf(phase, sizeof(phase), "app_bridge_%u_%s", i + 1, names[i]);
+            if (!engine_run_journal_begin(ENGINE_REPORT_DIR, phase, result->log_path)) {
+                log_line(log, "blocker=crash_journal_not_durable");
+                detail(result, "App Bridge blocked: cannot save crash marker.");
+                break;
+            }
+            log_line(log, "event=entering_%s", phase);
+            if (fflush(log) != 0 || fsync(fileno(log)) != 0) {
+                engine_run_journal_finish(ENGINE_REPORT_DIR);
+                log_line(log, "blocker=link_report_not_durable");
+                detail(result, "App Bridge blocked: report could not sync to SD.");
+                break;
+            }
+            MorrowAppBridgeCallResult call = {0};
+            const bool returned = morrow_jni_runtime_call_app_bridge(
+                live_app_bridge_targets[i], (MorrowAppBridgeStep)i, &call);
+            const bool marker_cleared = engine_run_journal_finish(ENGINE_REPORT_DIR);
+            log_line(log, "app_bridge_step_%u_invoked=%s", i + 1,
+                     call.entry_invoked ? "yes" : "no");
+            log_line(log, "app_bridge_step_%u_returned=%s", i + 1,
+                     call.entry_returned ? "yes" : "no");
+            log_line(log, "app_bridge_step_%u_java_exception=%s", i + 1,
+                     call.java_exception_pending ? "yes" : "no");
+            log_line(log, "app_bridge_step_%u_cpp_exception=%s", i + 1,
+                     call.cpp_exception_caught ? "yes" : "no");
+            if (!marker_cleared || !returned || call.java_exception_pending) {
+                log_line(log, "blocker=app_bridge_step_failed");
+                detail(result, "App Bridge stopped; read last completed step.");
+                break;
+            }
+            if (i == 3) {
+                log_line(log, "app_bridge_sequence_returned=yes");
+                detail(result, "Four native entries returned; no gameplay verified.");
+            }
+        }
+        log_line(log, "roblox_login_verified=no");
+        log_line(log, "engine_gameplay_started=no");
+#else
+        detail(result, "JNI-enabled Morrow artifact required for App Bridge.");
+        log_line(log, "blocker=jni_runtime_not_compiled");
+#endif
+        goto done;
+    }
     if (action == 2) {
         log_line(log, "game_activity_prior_jni_onload_succeeded=%s",
                  engine_jni_onload_succeeded ? "yes" : "no");
@@ -301,10 +392,24 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         }
         game_activity_attempt_consumed = true;
         MorrowGameActivityInitResult init = {0};
+        bool returned = false;
+        if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
+                                      "game_activity_initialize_native", result->log_path)) {
+            detail(result, "Cannot save GameActivity crash marker; call blocked.");
+            log_line(log, "blocker=crash_journal_not_durable");
+            goto done;
+        }
         log_line(log, "event=entering_real_game_activity_initialize_native");
+        if (fflush(log) != 0 || fsync(fileno(log)) != 0) {
+            engine_run_journal_finish(ENGINE_REPORT_DIR);
+            log_line(log, "blocker=link_report_not_durable");
+            goto done;
+        }
         detail(result, "GameActivity attempted. Inspect link report; restart to retry.");
-        const bool returned = morrow_jni_runtime_call_game_activity(
+        returned = morrow_jni_runtime_call_game_activity(
             live_game_activity_target, ENGINE_REPORT_DIR, &init);
+        log_line(log, "game_activity_crash_marker_cleared=%s",
+                 engine_run_journal_finish(ENGINE_REPORT_DIR) ? "yes" : "no");
         game_activity_entry_called = init.entry_invoked;
         log_line(log, "game_activity_initializer_returned=%s",
                  returned && init.entry_returned ? "yes" : "no");
@@ -694,18 +799,37 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                     } else {
                         // Engine-owned JNI registrations can outlive the call.
                         // Retain both mappings even if JNI_OnLoad returns error.
-                        engine_entry_started = true;
                         engine_mapping_pinned = true;
                         stage.image = NULL;
                         log_line(log, "engine_mapped_executable=yes");
-                        log_line(log, "event=entering_real_engine_jni_onload");
-                        detail(result, "Entered Roblox JNI_OnLoad; inspect link report and restart.");
-                        const int32_t version = engine_execution_call_jni_onload(
-                            candidate.target, vm);
-                        log_line(log, "event=real_engine_jni_onload_returned");
-                        log_line(log, "engine_jni_onload_return=0x%08X", (unsigned)version);
-                        log_line(log, "experimental_jni_onload_called=yes");
-                        engine_jni_onload_succeeded = version == 0x00010006;
+                        int32_t version = 0;
+                        bool onload_called = false;
+                        if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
+                                                      "jni_onload", result->log_path)) {
+                            log_line(log, "blocker=crash_journal_not_durable");
+                            detail(result, "Engine blocked: cannot save crash marker.");
+                        } else {
+                            log_line(log, "event=entering_real_engine_jni_onload");
+                            if (fflush(log) != 0 || fsync(fileno(log)) != 0) {
+                                engine_run_journal_finish(ENGINE_REPORT_DIR);
+                                log_line(log, "blocker=link_report_not_durable");
+                                detail(result, "Engine blocked: report could not sync.");
+                            } else {
+                                detail(result, "Entered Roblox JNI_OnLoad; inspect link report and restart.");
+                                engine_entry_started = true;
+                                onload_called = true;
+                                version = engine_execution_call_jni_onload(candidate.target, vm);
+                                log_line(log, "jni_onload_crash_marker_cleared=%s",
+                                         engine_run_journal_finish(ENGINE_REPORT_DIR) ? "yes" : "no");
+                            }
+                        }
+                        if (onload_called) {
+                            log_line(log, "event=real_engine_jni_onload_returned");
+                            log_line(log, "engine_jni_onload_return=0x%08X", (unsigned)version);
+                        }
+                        log_line(log, "experimental_jni_onload_called=%s",
+                                 onload_called ? "yes" : "no");
+                        engine_jni_onload_succeeded = onload_called && version == 0x00010006;
                         log_line(log, "engine_jni_onload_accepted=%s",
                                  engine_jni_onload_succeeded ? "yes" : "no");
                         if (engine_jni_onload_succeeded &&
@@ -718,6 +842,29 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             log_line(log, "game_activity_mapped_entry_ready=yes");
                         } else {
                             log_line(log, "game_activity_mapped_entry_ready=no");
+                        }
+                        if (engine_jni_onload_succeeded &&
+                            entry.status == ENGINE_ENTRY_INSPECTED) {
+                            const bool found[] = {
+                                entry.has_app_bridge_global_init,
+                                entry.has_app_bridge_v2_init,
+                                entry.has_app_bridge_lua_shell_start,
+                                entry.has_app_bridge_start_app
+                            };
+                            const uint64_t addresses[] = {
+                                entry.app_bridge_global_init_virtual_address,
+                                entry.app_bridge_v2_init_virtual_address,
+                                entry.app_bridge_lua_shell_start_virtual_address,
+                                entry.app_bridge_start_app_virtual_address
+                            };
+                            for (unsigned i = 0; i < 4; ++i) {
+                                if (found[i])
+                                    engine_execution_rx_target(&plan,
+                                        (uint64_t)(uintptr_t)reservation.mapped,
+                                        addresses[i], &live_app_bridge_targets[i]);
+                                log_line(log, "app_bridge_step_%u_mapped_rx_ready=%s", i + 1,
+                                         live_app_bridge_targets[i] ? "yes" : "no");
+                            }
                         }
                         log_line(log, "engine_gameplay_started=no");
                     }

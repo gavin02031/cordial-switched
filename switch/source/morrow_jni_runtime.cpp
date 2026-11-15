@@ -592,6 +592,7 @@ public:
             "android/os/LocaleList", "java/util/Locale",
             "com/roblox/engine/jni/model/PlatformParams",
             "com/roblox/engine/jni/model/DeviceParams",
+            "com/roblox/engine/jni/NativeGLInterface",
             "com/roblox/engine/jni/autovalue/InitParams",
             "com/roblox/engine/jni/autovalue/StartAppParams",
             "com/google/androidgamesdk/GameActivity"
@@ -827,6 +828,7 @@ extern "C" bool morrow_jni_runtime_start(void)
         HorizonGameActivity::Register(candidate->GetEnv().get());
         HorizonStartAppParams::Register(candidate->GetEnv().get());
         HorizonInitParams::Register(candidate->GetEnv().get());
+        candidate->GetEnv()->GetClass("com/roblox/engine/jni/NativeGLInterface");
         if (sd_space_known)
             HorizonLocalStorageManager::Register(candidate->GetEnv().get());
         candidate->GetEnv()->GetClass("dev/morrow/diagnostics/OnLoadProbe");
@@ -1419,4 +1421,60 @@ extern "C" bool morrow_jni_runtime_call_game_activity(
     env->DeleteLocalRef(assets);
     env->DeleteLocalRef(activity);
     return returned;
+}
+
+extern "C" bool morrow_jni_runtime_call_app_bridge(
+    uintptr_t entry, MorrowAppBridgeStep step, MorrowAppBridgeCallResult *result)
+{
+    if (!result) return false;
+    *result = {};
+    if (!entry || step < MORROW_APP_BRIDGE_GLOBAL_INIT ||
+        step > MORROW_APP_BRIDGE_START_APP) return false;
+
+    // Prepare the existing typed objects before taking the runtime lock.
+    // Their public constructors acquire the same lock internally.
+    if (step == MORROW_APP_BRIDGE_V2_INIT &&
+        !morrow_jni_runtime_app_bridge_init_params()) return false;
+    if (step == MORROW_APP_BRIDGE_START_APP &&
+        !morrow_jni_runtime_app_bridge_start_params()) return false;
+
+    JNIEnv *env = nullptr;
+    jclass bridge_class = nullptr;
+    jobject params = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (!runtime || !attached_to_runtime) return false;
+        env = runtime->GetJNIEnv();
+        bridge_class = env->FindClass("com/roblox/engine/jni/NativeGLInterface");
+        if (step == MORROW_APP_BRIDGE_V2_INIT && init_params_reference)
+            params = env->NewLocalRef(init_params_reference);
+        if (step == MORROW_APP_BRIDGE_START_APP && start_app_reference)
+            params = env->NewLocalRef(start_app_reference);
+    }
+    if (!bridge_class || ((step == MORROW_APP_BRIDGE_V2_INIT ||
+                           step == MORROW_APP_BRIDGE_START_APP) && !params)) {
+        if (params) env->DeleteLocalRef(params);
+        if (bridge_class) env->DeleteLocalRef(bridge_class);
+        return false;
+    }
+
+    try {
+        // No start_mutex while entering guest code; JNI callbacks may call
+        // Java bridge objects, acquire the runtime lock or spawn threads.
+        result->entry_invoked = true;
+        if (params) {
+            using WithParams = void (*)(JNIEnv *, jclass, jobject);
+            reinterpret_cast<WithParams>(entry)(env, bridge_class, params);
+        } else {
+            using NoParams = void (*)(JNIEnv *, jclass);
+            reinterpret_cast<NoParams>(entry)(env, bridge_class);
+        }
+        result->entry_returned = true;
+        result->java_exception_pending = env->ExceptionCheck();
+    } catch (...) {
+        result->cpp_exception_caught = true;
+    }
+    if (params) env->DeleteLocalRef(params);
+    env->DeleteLocalRef(bridge_class);
+    return result->entry_returned;
 }

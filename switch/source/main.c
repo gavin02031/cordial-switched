@@ -2,12 +2,14 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include <SDL.h>
 #include <switch.h>
 
 #include "ui.h"
 #include "engine_boot_log.h"
+#include "engine_run_journal.h"
 #include "horizon_loader_smoke.h"
 #include "horizon_real_link.h"
 #include "morrow_gles_smoke.h"
@@ -205,6 +207,12 @@ int main(void)
     snprintf(state.renderer_name, sizeof(state.renderer_name), "%s",
              info.name ? info.name : "unknown");
     engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
+    // Recover a persisted entry marker from a previous terminated process.
+    // This can indicate a crash, forced exit or power loss; it is not a stack
+    // trace. The numbered report and the prior link log remain on SD.
+    if (mkdir(ENGINE_REPORT_DIR, 0777) == 0 || errno == EEXIST)
+        engine_run_journal_recover(ENGINE_REPORT_DIR, state.recovered_crash_path,
+                                   sizeof(state.recovered_crash_path));
 
     bool quit = false;
     bool run_gles_smoke = false;
@@ -276,6 +284,7 @@ int main(void)
 #endif
             const u64 held = padGetButtons(&pad);
             horizon_real_link_run(&state.real_link,
+                (held & HidNpadButton_ZL) && (held & HidNpadButton_ZR) ? 3u :
                 (held & HidNpadButton_ZL) ? 1u :
                 (held & HidNpadButton_ZR) ? 2u : 0u);
         }

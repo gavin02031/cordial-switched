@@ -15,7 +15,10 @@ typedef struct {
 // experimental JNI_OnLoad call. After that returns successfully, ZR+L3
 // separately requests AGDK GameActivity.initializeNativeCode. Both operations
 // can crash; a successful return does not imply rendering or playable login.
-// action: 0=diagnostic, 1=JNI_OnLoad, 2=GameActivity native entry.
+// ZL+ZR+L3 separately requests the four NativeGLInterface App Bridge V2
+// JNI exports with typed but incomplete startup params after successful
+// JNI_OnLoad. It can crash, and it does not prove login or gameplay.
+// action: 0=diagnostic, 1=JNI_OnLoad, 2=GameActivity, 3=App Bridge V2.
 void horizon_real_link_run(RealLinkResult *result, unsigned action);
 
 #endif

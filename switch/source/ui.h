@@ -39,6 +39,7 @@ typedef struct {
     char boot_log_path[112];
     LoaderSmokeResult loader_smoke;
     RealLinkResult real_link;
+    char recovered_crash_path[112];
     bool accelerated;
     bool vsync;
     double fps;
