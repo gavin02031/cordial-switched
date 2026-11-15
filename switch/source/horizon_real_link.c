@@ -119,6 +119,17 @@ static void log_line(FILE *out, const char *format, ...)
     fputc('\n', out);
     fflush(out);
 }
+static void log_engine_export(FILE *log, const char *name,
+                              const EngineEntryProbe *entry,
+                              bool found, uint64_t virtual_address)
+{
+    log_line(log, "%s_exported=%s", name,
+             entry->status != ENGINE_ENTRY_INSPECTED ? "unknown" :
+             found ? "yes" : "no");
+    if (entry->status == ENGINE_ENTRY_INSPECTED && found)
+        log_line(log, "%s_virtual_address=0x%llx", name,
+                 (unsigned long long)virtual_address);
+}
 static void detail(RealLinkResult *result, const char *message)
 {
     snprintf(result->detail, sizeof(result->detail), "%.110s", message);
@@ -477,6 +488,24 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     if (entry.status == ENGINE_ENTRY_INSPECTED && entry.has_native_activity_oncreate)
         log_line(log, "native_activity_virtual_address=0x%llx",
                  (unsigned long long)entry.native_activity_virtual_address);
+    // Cordial's Android launch trace and app-bridge investigation agree that
+    // the Roblox home shell uses NativeGLInterface's V2 bridge, not AGDK's
+    // GameActivity surface callbacks. Inspect these actual exports before
+    // attempting another ABI-dependent guest entry point.
+    log_engine_export(log, "app_bridge_global_init", &entry,
+                      entry.has_app_bridge_global_init,
+                      entry.app_bridge_global_init_virtual_address);
+    log_engine_export(log, "app_bridge_v2_init", &entry,
+                      entry.has_app_bridge_v2_init,
+                      entry.app_bridge_v2_init_virtual_address);
+    log_engine_export(log, "app_bridge_lua_shell_start", &entry,
+                      entry.has_app_bridge_lua_shell_start,
+                      entry.app_bridge_lua_shell_start_virtual_address);
+    log_engine_export(log, "app_bridge_start_app", &entry,
+                      entry.has_app_bridge_start_app,
+                      entry.app_bridge_start_app_virtual_address);
+    log_line(log, "app_bridge_startup_call_eligible=no_missing_real_autovalue_params_and_lifecycle");
+    log_line(log, "app_bridge_startup_called=no");
     log_line(log, "elf_dt_init=%s", entry.has_init ? "present" : "absent");
     if (entry.has_init)
         log_line(log, "elf_dt_init_virtual_address=0x%llx",
@@ -531,6 +560,16 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             if (delta < plan.image_bytes && delta <= UINTPTR_MAX -
                 (uintptr_t)reservation.mapped)
                 log_line(log, "game_activity_initialize_native_unmapped_candidate_address=0x%llx",
+                         (unsigned long long)((uintptr_t)reservation.mapped + delta));
+        }
+        if (entry.status == ENGINE_ENTRY_INSPECTED &&
+            entry.has_app_bridge_start_app &&
+            entry.app_bridge_start_app_virtual_address >= plan.virtual_page_base) {
+            const uint64_t delta = entry.app_bridge_start_app_virtual_address -
+                                   plan.virtual_page_base;
+            if (delta < plan.image_bytes && delta <= UINTPTR_MAX -
+                (uintptr_t)reservation.mapped)
+                log_line(log, "app_bridge_start_app_unmapped_candidate_address=0x%llx",
                          (unsigned long long)((uintptr_t)reservation.mapped + delta));
         }
         EngineStage stage = {0};

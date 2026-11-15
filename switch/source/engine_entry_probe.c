@@ -131,6 +131,22 @@ static bool scan_symbols(FILE *file, uint64_t symbols_offset, uint64_t count,
         } else if (strcmp(name, "ANativeActivity_onCreate") == 0) {
             result->has_native_activity_oncreate = true;
             result->native_activity_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeGLInterface_nativeGameGlobalInit") == 0) {
+            result->has_app_bridge_global_init = true;
+            result->app_bridge_global_init_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2InitWithParams") == 0) {
+            result->has_app_bridge_v2_init = true;
+            result->app_bridge_v2_init_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeStartLuaAppDM") == 0) {
+            result->has_app_bridge_lua_shell_start = true;
+            result->app_bridge_lua_shell_start_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartAppWithParams") == 0) {
+            result->has_app_bridge_start_app = true;
+            result->app_bridge_start_app_virtual_address = address;
         }
     }
     return true;

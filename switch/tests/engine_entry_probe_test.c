@@ -69,31 +69,34 @@ static void make_fixture(unsigned char *image)
     // Section #1: .dynsym -> linked string table #2.
     put32(image + 0x350 + 4, 11);
     put64(image + 0x350 + 24, 0x240);
-    put64(image + 0x350 + 32, 96);
+    put64(image + 0x350 + 32, 192);
     put32(image + 0x350 + 40, 2);
     put64(image + 0x350 + 56, 24);
 
     put32(image + 0x390 + 4, 3); // SHT_STRTAB
-    put64(image + 0x390 + 24, 0x600);
-    put64(image + 0x390 + 32, 256);
-    memcpy(image + 0x601, "JNI_OnLoad", 11);
-    memcpy(image + 0x60c, "ANativeActivity_onCreate", 25);
-    const char activity_entry[] =
-        "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode";
-    memcpy(image + 0x625, activity_entry, sizeof(activity_entry));
-
-    put32(image + 0x258, 1); // .dynsym #1 name
-    image[0x258 + 4] = 2; // STT_FUNC
-    put16(image + 0x258 + 6, 1); // defined section
-    put64(image + 0x258 + 8, 0x1120);
-    put32(image + 0x270, 12); // .dynsym #2 name
-    image[0x270 + 4] = 2;
-    put16(image + 0x270 + 6, 1);
-    put64(image + 0x270 + 8, 0x1130);
-    put32(image + 0x288, 37); // .dynsym #3 long AGDK JNI name
-    image[0x288 + 4] = 2;
-    put16(image + 0x288 + 6, 1);
-    put64(image + 0x288 + 8, 0x1140);
+    put64(image + 0x390 + 24, 0x900);
+    put64(image + 0x390 + 32, 768);
+    static const char *const names[] = {
+        "JNI_OnLoad",
+        "ANativeActivity_onCreate",
+        "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode",
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeGameGlobalInit",
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2InitWithParams",
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeStartLuaAppDM",
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartAppWithParams"
+    };
+    uint32_t string_offset = 1;
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        const size_t length = strlen(names[i]) + 1;
+        assert(string_offset + length <= 768);
+        memcpy(image + 0x900 + string_offset, names[i], length);
+        const size_t symbol_offset = 0x240 + (i + 1) * 24;
+        put32(image + symbol_offset, string_offset);
+        image[symbol_offset + 4] = 2; // STT_FUNC
+        put16(image + symbol_offset + 6, 1); // defined in RX segment
+        put64(image + symbol_offset + 8, 0x1120 + i * 16);
+        string_offset += (uint32_t)length;
+    }
 }
 
 static EngineEntryProbe run_fixture(const unsigned char *image)
@@ -115,8 +118,8 @@ static void stripped_dynamic_fixture(unsigned char *image, bool gnu)
     put64(image + 120 + 32, 96);
     put64(image + 120 + 40, 96);
     dynamic(image, 0, 6, 0x1240); // DT_SYMTAB
-    dynamic(image, 1, 5, 0x1600); // DT_STRTAB
-    dynamic(image, 2, 10, 256); // DT_STRSZ
+    dynamic(image, 1, 5, 0x1900); // DT_STRTAB
+    dynamic(image, 2, 10, 768); // DT_STRSZ
     dynamic(image, 3, gnu ? 0x6ffffef5 : 4, 0x1700);
     dynamic(image, 4, 11, 24); // DT_SYMENT
     dynamic(image, 5, 0, 0);
@@ -127,10 +130,14 @@ static void stripped_dynamic_fixture(unsigned char *image, bool gnu)
         put32(image + 0x718, 1); // bucket starts at index 1
         put32(image + 0x71c, 0); // first chain element
         put32(image + 0x720, 0);
-        put32(image + 0x724, 1); // last hashed symbol (#3)
+        put32(image + 0x724, 0);
+        put32(image + 0x728, 0);
+        put32(image + 0x72c, 0);
+        put32(image + 0x730, 0);
+        put32(image + 0x734, 1); // last hashed symbol (#7)
     } else {
         put32(image + 0x700, 1); // SysV bucket count
-        put32(image + 0x704, 4); // SysV symbol count
+        put32(image + 0x704, 8); // SysV symbol count
     }
 }
 
@@ -145,6 +152,14 @@ int main(void)
            result.native_activity_virtual_address == 0x1130);
     assert(result.has_game_activity_initialize_native &&
            result.game_activity_initialize_native_virtual_address == 0x1140);
+    assert(result.has_app_bridge_global_init &&
+           result.app_bridge_global_init_virtual_address == 0x1150);
+    assert(result.has_app_bridge_v2_init &&
+           result.app_bridge_v2_init_virtual_address == 0x1160);
+    assert(result.has_app_bridge_lua_shell_start &&
+           result.app_bridge_lua_shell_start_virtual_address == 0x1170);
+    assert(result.has_app_bridge_start_app &&
+           result.app_bridge_start_app_virtual_address == 0x1180);
     assert(result.has_init && result.init_virtual_address == 0x1100);
     assert(result.has_init_array && result.init_array_entries == 2);
     assert(result.init_array_virtual_address == 0x1200);
@@ -157,10 +172,19 @@ int main(void)
     assert(result.has_jni_onload && result.has_native_activity_oncreate);
     assert(result.has_game_activity_initialize_native &&
            result.game_activity_initialize_native_virtual_address == 0x1140);
+    assert(result.has_app_bridge_start_app);
     stripped_dynamic_fixture(fixture, true);
     result = run_fixture(fixture);
     assert(result.status == ENGINE_ENTRY_INSPECTED);
     assert(result.has_game_activity_initialize_native);
+    assert(result.has_app_bridge_v2_init && result.has_app_bridge_lua_shell_start);
+
+    // The correct exported symbol must be defined in executable PT_LOAD.
+    put64(fixture + 0x2e8 + 8, 0x900000);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED &&
+           !result.has_app_bridge_start_app && result.has_app_bridge_v2_init);
+    stripped_dynamic_fixture(fixture, true);
 
     // Reject exported function addresses outside executable load segments.
     put64(fixture + 0x288 + 8, 0x900000);

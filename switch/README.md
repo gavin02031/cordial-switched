@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.61 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.62 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.61 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.62 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -391,6 +391,16 @@ then check:
    stays pinned. Host tests verify ABI argument order and local-ref cleanup
    with a synthetic function. **This does not initialise the full Android
    Java application, connect EGL to Roblox or render a login screen**.
+   v0.62 follows Cordial's independently recorded Android startup and
+   [`render-gate.md`](../docs/analysis/render-gate.md): the actual home-shell
+   graphics path is NativeGLInterface's **App Bridge V2**, not the AGDK
+   GameActivity surface lifecycle. L3 now detects four *real* App Bridge
+   exports (`nativeGameGlobalInit`, `nativeAppBridgeV2InitWithParams`,
+   `nativeAppBridgeStartLuaAppDM`, `nativeAppBridgeV2StartAppWithParams`) and
+   reports whether each name was inspected or unknown, including the ELF
+   virtual addresses. These are **read-only**: required AutoValue InitParams,
+   StartAppParams, real surface/lifecycle and app services are not yet in
+   the Horizon JNI VM. The engine home shell is not started by v0.62.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
