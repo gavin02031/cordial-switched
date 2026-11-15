@@ -18,6 +18,10 @@ bool engine_execution_rx_target(const EngineMemoryPlan *plan,
     const uint64_t offset = virtual_address - plan->virtual_page_base;
     if (offset >= plan->image_bytes || offset > UINTPTR_MAX - runtime_base)
         return false;
+    // AArch64 instructions are 4-byte aligned. Reject malformed exports and
+    // misaligned load biases before converting an RX address into a call target.
+    if ((virtual_address & 3u) || ((runtime_base + offset) & 3u))
+        return false;
     for (size_t i = 0; i < plan->run_count; i++) {
         const EngineMemoryRun *run = &plan->runs[i];
         if (run->permission == ENGINE_MEMORY_READ_EXECUTE &&
