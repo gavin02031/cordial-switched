@@ -31,6 +31,13 @@ jobs:
             switch/tests/engine_entry_probe_test.c switch/source/engine_entry_probe.c \
             -o /tmp/cordial-engine-entry-probe-test
           /tmp/cordial-engine-entry-probe-test
+      - name: Test guarded JNI_OnLoad execution boundary with synthetic function
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_execution_attempt_test.c \
+            switch/source/engine_execution_attempt.c \
+            switch/source/engine_memory_plan.c -o /tmp/morrow-entry-call-test
+          /tmp/morrow-entry-call-test
       - name: Test non-executable ARM64 segment staging
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

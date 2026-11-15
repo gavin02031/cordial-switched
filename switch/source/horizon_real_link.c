@@ -33,6 +33,7 @@
 #include "android_thread_lifecycle_compat.h"
 #include "elf_probe.h"
 #include "engine_entry_probe.h"
+#include "engine_execution_attempt.h"
 #include "engine_memory_plan.h"
 #include "engine_stage.h"
 #include "engine_tls_scratch.h"
@@ -41,6 +42,11 @@
 #include "horizon_code_memory.h"
 
 static HorizonCodeMemory reservation;
+// JNI_OnLoad can register callbacks whose function pointers live in the
+// mapped library. After entering it, neither the RX mapping nor its source
+// can safely be unloaded by a second L3; the OS reclaims both on app exit.
+static bool engine_entry_started;
+static bool engine_mapping_pinned;
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)
 {
@@ -227,7 +233,7 @@ static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
     engine_tls_scratch_release(&template_image);
 }
 
-void horizon_real_link_run(RealLinkResult *result)
+void horizon_real_link_run(RealLinkResult *result, bool request_execution)
 {
     if (!result) return;
     memset(result, 0, sizeof(*result));
@@ -242,9 +248,13 @@ void horizon_real_link_run(RealLinkResult *result)
         return;
     }
     log_line(log, "# Morrow native engine entry readiness attempt");
-    log_line(log, "# No engine entry call without complete relocations and Android runtime.");
-    log_line(log, "engine_executed=no");
-    log_line(log, "engine_mapped_executable=no");
+    log_line(log, "# JNI_OnLoad is opt-in and blocked unless strict mapping and runtime gates pass.");
+    log_line(log, "engine_execution_requested=%s", request_execution ? "yes" : "no");
+    if (engine_mapping_pinned) {
+        detail(result, "Engine code mapping held. Restart Morrow before retrying.");
+        log_line(log, "blocker=prior_engine_mapping_requires_process_restart");
+        goto done;
+    }
     bool java_surface_bound = false;
 #ifdef MORROW_HAS_JNIVM
     java_surface_bound = morrow_jni_runtime_surface_bound();
@@ -334,7 +344,7 @@ void horizon_real_link_run(RealLinkResult *result)
     log_line(log, "jni_asset_reference_alias_resolution=%s",
              jni_provider_ready ? "known_vm_references_only" : "unavailable");
     log_line(log, "jni_game_activity_bootstrap_implemented=no");
-    log_line(log, "jni_onload_call_eligible=no");
+    log_line(log, "jni_onload_call_eligible=requires_runtime_preflight");
     log_line(log, "native_egl_gles_symbols_linked=%s",
              android_egl_gles_compat_has_backend() ? "yes" : "no");
     log_line(log, "native_egl_gles_symbol_catalogue=%u",
@@ -478,8 +488,66 @@ void horizon_real_link_run(RealLinkResult *result)
         if (ready) {
             result->stage_prepared = true;
             detail(result, "Strict link passed; Android JNI/graphics runtime still missing.");
-            log_line(log, "event=nx_stage_prepared_not_executed");
-            log_line(log, "execution_gate=blocked_android_jni_graphics_runtime");
+            log_line(log, "event=strict_stage_prepared");
+            if (!request_execution)
+                log_line(log, "execution_gate=not_requested");
+            if (request_execution) {
+                bool vm_ready = false, env_ready = false, activity_ready = false;
+                void *vm = NULL;
+#ifdef MORROW_HAS_JNIVM
+                vm = morrow_jni_runtime_java_vm();
+                vm_ready = vm != NULL;
+                env_ready = morrow_jni_runtime_jni_env() != NULL;
+                activity_ready = morrow_jni_runtime_game_activity_ready();
+#endif
+                // Evaluate mapping eligibility prospectively: no privileged
+                // map syscall runs until the constructor/TLS/runtime gates pass.
+                const EngineExecutionDecision candidate = engine_execution_decide(
+                    true, true, true, &probe, &entry, &plan,
+                    (uint64_t)(uintptr_t)reservation.mapped,
+                    vm_ready, env_ready, activity_ready);
+                log_line(log, "experimental_jni_onload_preflight=%s", candidate.reason);
+                if (!candidate.eligible) {
+                    log_line(log, "experimental_jni_onload_called=no");
+                } else if (stage.image_size != plan.image_bytes ||
+                           stage.lowest_virtual_address != plan.virtual_page_base ||
+                           stage.intended_runtime_base !=
+                               (uint64_t)(uintptr_t)reservation.mapped) {
+                    log_line(log, "experimental_jni_onload_blocker=stage_plan_mismatch");
+                } else {
+                    Result map_error = 0;
+                    log_line(log, "event=experimental_engine_rx_mapping_started");
+                    if (!horizon_code_memory_map_reserved(&plan, stage.image,
+                                                          &reservation, &map_error)) {
+                        log_line(log, "experimental_jni_onload_blocker=rx_mapping_failed");
+                        log_line(log, "experimental_mapping_kernel_result=0x%08X",
+                                 (unsigned)map_error);
+                        if (reservation.active) {
+                            // A kernel rollback error can leave the image
+                            // mapped. Never free its backing source or try
+                            // another guest map in the same process.
+                            engine_mapping_pinned = true;
+                            stage.image = NULL;
+                            log_line(log, "blocker=mapped_code_rollback_failed_restart_required");
+                        }
+                    } else {
+                        // Engine-owned JNI registrations can outlive the call.
+                        // Retain both mappings even if JNI_OnLoad returns error.
+                        engine_entry_started = true;
+                        engine_mapping_pinned = true;
+                        stage.image = NULL;
+                        log_line(log, "engine_mapped_executable=yes");
+                        log_line(log, "event=entering_real_engine_jni_onload");
+                        detail(result, "Entered Roblox JNI_OnLoad; inspect link report and restart.");
+                        const int32_t version = engine_execution_call_jni_onload(
+                            candidate.target, vm);
+                        log_line(log, "event=real_engine_jni_onload_returned");
+                        log_line(log, "engine_jni_onload_return=0x%08X", (unsigned)version);
+                        log_line(log, "experimental_jni_onload_called=yes");
+                        log_line(log, "engine_gameplay_started=no");
+                    }
+                }
+            }
         } else {
             detail(result, "Real engine entry blocked; see complete link report.");
             // Strict binding stops at the first unknown symbol. Continue a
@@ -510,7 +578,7 @@ void horizon_real_link_run(RealLinkResult *result)
         }
         engine_stage_release(&stage);
     }
-    if (reservation.reservation) {
+    if (reservation.reservation && !engine_mapping_pinned) {
         if (!horizon_code_memory_unmap(&reservation, &kernel_error)) {
             detail(result, "Failed to release reserved code address.");
             log_line(log, "blocker=reservation_release_failed");
@@ -523,10 +591,11 @@ void horizon_real_link_run(RealLinkResult *result)
     fclose(file);
 
 done:
-    log_line(log, "engine_entry_called=no");
+    log_line(log, "engine_entry_called=%s", engine_entry_started ? "yes" : "no");
     log_line(log, "game_activity_initialize_native_called=no");
-    log_line(log, "engine_executed=no");
-    log_line(log, "engine_mapped_executable=no");
+    log_line(log, "engine_executed=%s", engine_entry_started ? "yes" : "no");
+    log_line(log, "engine_mapped_executable=%s",
+             reservation.active ? "yes" : "no");
     const bool all_written = !ferror(log);
     result->log_saved = all_written && fclose(log) == 0;
     if (!all_written) fclose(log);

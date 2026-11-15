@@ -11,8 +11,10 @@ typedef struct {
     char detail[112];
 } RealLinkResult;
 
-// A strict, opt-in final-base RELOCATION preflight of the user-supplied
-// Android ARM64 ELF. Never maps it RX or executes any Roblox instruction.
-void horizon_real_link_run(RealLinkResult *result);
+// L3 performs strict final-base relocation diagnostics. Holding ZL with L3
+// additionally requests an experimental JNI_OnLoad call, only if *all* live
+// mapping, JNI, constructors and TLS preconditions have been verified.
+// The engine may still crash; a successful return does not imply gameplay.
+void horizon_real_link_run(RealLinkResult *result, bool request_execution);
 
 #endif
