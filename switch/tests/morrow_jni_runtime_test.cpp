@@ -196,18 +196,17 @@ int main()
         assert(id && main_env->GetIntField(insets, id) == 0);
     }
     main_env->DeleteLocalRef(insets);
-    // Pinned libjnivm's CallMethod itself retains a temporary GetObjectClass
-    // local each time. Guard against adding a *second* hidden local in our
-    // callbacks; a future libjnivm fix reducing this count is welcome.
+    // The local JNI patch must release the GetObjectClass reference from
+    // CallMethod and IsInstanceOf; deleting our result leaves no hidden locals.
     jnivm::ENV *real_env = jnivm::ENV::FromJNIEnv(main_env);
     const size_t locals_before = real_env->localframe.front().size();
     for (unsigned i = 0; i < 64; ++i) {
         jobject repeated = main_env->CallObjectMethod(static_cast<jobject>(activity), method);
-        assert(repeated);
+        assert(repeated && main_env->IsInstanceOf(repeated, insets_class));
         main_env->DeleteLocalRef(repeated);
     }
     const size_t locals_after = real_env->localframe.front().size();
-    assert(locals_after >= locals_before && locals_after - locals_before <= 64);
+    assert(locals_after == locals_before);
 
     WorkerResult worker = {bridge, main_env, native_vm, nullptr,
                            activity, set_window_flags};
@@ -298,8 +297,7 @@ int main()
         main_env->DeleteLocalRef(repeated);
     }
     const size_t assets_locals_after = real_env->localframe.front().size();
-    assert(assets_locals_after >= assets_locals_before &&
-           assets_locals_after - assets_locals_before <= 64);
+    assert(assets_locals_after == assets_locals_before);
     jobject alias = main_env->NewLocalRef(static_cast<jobject>(asset_java));
     assert(alias && main_env->IsSameObject(alias, static_cast<jobject>(asset_java)));
     assert(from_java(main_env, alias) == native_manager);
