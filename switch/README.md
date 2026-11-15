@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.68 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.69 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -41,7 +41,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.68 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.69 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -55,6 +55,8 @@ and exposes a typed `LocalStorageManager.getAllocatableBytes()` response
 measured from the mounted Switch SD card (only if its free-space query succeeds),
 plus `GameActivity.getResources().getDisplayMetrics()` with real Horizon
 surface dimensions and an explicitly neutral 1× Android layout scale,
+and `Resources.getConfiguration()` with matching live portrait/landscape,
+width/height dp, and Switch touchscreen values while the surface is bound,
 exposes the asset manager via GameActivity's `getAssets` JNI callback only if bound,
 and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
 report records `jni_vm_provider_installed`, `jni_game_activity_object_registered`,
@@ -473,6 +475,17 @@ then check:
    calls without leaking references, resize values and null after unbind.
    Roblox has not consumed these values on Switch; login and gameplay remain
    unimplemented.
+   v0.69 also populates the existing typed `Configuration` object from the
+   actual bound Horizon Surface (size, orientation, smallest dimension). It
+   keeps the same 1× 160-dpi **layout baseline** as `DisplayMetrics`, a neutral
+   `fontScale=1.0`, and `touchscreen=FINGER` because the Switch Lite has a
+   touchscreen. Viewport-dependent fields revert to unknown on unbind; a
+   resize updates the existing Configuration identity. `Resources` now offers
+   a typed `getConfiguration()` returning that actual runtime object only
+   while a Surface exists. Unmeasured hardware, UI-mode and carrier fields
+   stay unknown. These are Android-JNI compatibility improvements verified
+   with synthetic host tests—not proof of real Roblox Java bootstrap, login,
+   rendering, or game join on Switch.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

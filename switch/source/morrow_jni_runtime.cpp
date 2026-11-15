@@ -85,9 +85,9 @@ bool parse_system_locale(const char *tag, SystemLocale *parsed)
     return true;
 }
 
-// GameActivity reads the Java Configuration fields and LocaleList before it
-// reaches the game's native callbacks. Unknown values remain explicitly zero;
-// neither a device locale nor dp/density is inferred from 720p pixels.
+// GameActivity reads Java Configuration fields and LocaleList before native
+// callbacks. Unmeasured values remain unknown; the Surface later provides
+// actual viewport geometry under an explicit neutral 1x density policy.
 class HorizonLocale : public jnivm::Object {
 public:
     std::shared_ptr<jnivm::String> language, script, country, variant;
@@ -141,11 +141,34 @@ public:
     jint orientation = 0, screenHeightDp = 0, screenLayout = 0;
     jint screenWidthDp = 0, smallestScreenWidthDp = 0, touchscreen = 0;
     jint uiMode = 0;
-    jfloat fontScale = 0;
+    // 1x UI scale is an explicit layout policy, not measured physical DPI.
+    // The Lite does have a touchscreen, even though Android input routing is
+    // not implemented here yet.
+    jfloat fontScale = 1.0f;
     std::shared_ptr<HorizonLocaleList> locale_list;
 
     explicit HorizonConfiguration(const SystemLocale &locale)
-        : locale_list(std::make_shared<HorizonLocaleList>(locale)) {}
+        : locale_list(std::make_shared<HorizonLocaleList>(locale))
+    {
+        touchscreen = 3; // android.content.res.Configuration.TOUCHSCREEN_FINGER
+    }
+
+    // Called only while start_mutex is held. A Configuration is a live Java
+    // object: keeping its identity across a Surface resize lets the guest
+    // observe the new geometry without orphaning a previously returned ref.
+    void updateViewport(int32_t width, int32_t height)
+    {
+        if (width <= 0 || height <= 0) {
+            densityDpi = orientation = screenHeightDp = 0;
+            screenWidthDp = smallestScreenWidthDp = 0;
+            return;
+        }
+        densityDpi = 160; // Corresponds to DisplayMetrics.density == 1.0f.
+        orientation = width >= height ? 2 : 1; // LANDSCAPE / PORTRAIT.
+        screenWidthDp = width;
+        screenHeightDp = height;
+        smallestScreenWidthDp = width < height ? width : height;
+    }
 
     std::shared_ptr<HorizonLocaleList> getLocales(jnivm::ENV *)
     {
@@ -213,6 +236,16 @@ public:
 
 class HorizonResources : public jnivm::Object {
 public:
+    std::shared_ptr<HorizonConfiguration> getConfiguration(jnivm::ENV *)
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        // No invented Configuration: it must have been registered by the
+        // native runtime, and the Activity must have a real display.
+        if (!surface_window || !configuration_owner)
+            return nullptr;
+        return configuration_owner;
+    }
+
     std::shared_ptr<HorizonDisplayMetrics> getDisplayMetrics(jnivm::ENV *)
     {
         std::lock_guard<std::mutex> lock(start_mutex);
@@ -225,6 +258,8 @@ public:
     {
         HorizonDisplayMetrics::Register(env);
         auto klass = env->GetClass<HorizonResources>("android/content/res/Resources");
+        klass->HookInstanceFunction(env, "getConfiguration",
+                                    &HorizonResources::getConfiguration);
         klass->HookInstanceFunction(env, "getDisplayMetrics",
                                     &HorizonResources::getDisplayMetrics);
     }
@@ -603,10 +638,10 @@ public:
     {
         ZeroInsets::Register(env); // Needed for the method's JNI descriptor.
         HorizonClassLoader::Register(env);
+        HorizonConfiguration::Register(env);
         HorizonResources::Register(env);
         env->GetClass<HorizonSurface>("android/view/Surface");
         env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
-        HorizonConfiguration::Register(env);
         env->GetClass<HorizonGameActivity>("com/google/androidgamesdk/GameActivity");
         auto klass = env->GetClass("com/google/androidgamesdk/GameActivity");
         klass->HookInstanceFunction(env, "getClassLoader",
@@ -917,6 +952,8 @@ extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
             release_init_params_locked();
         surface_width = width;
         surface_height = height;
+        if (configuration_owner)
+            configuration_owner->updateViewport(width, height);
         return surface_reference;
     }
     try {
@@ -945,6 +982,8 @@ extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
         surface_window = horizon_window;
         surface_width = width;
         surface_height = height;
+        if (configuration_owner)
+            configuration_owner->updateViewport(width, height);
         jni->DeleteLocalRef(local);
         return global;
     } catch (...) {
@@ -972,6 +1011,8 @@ extern "C" bool morrow_jni_runtime_unbind_surface(void)
     surface_reference = nullptr;
     surface_window = nullptr;
     surface_width = surface_height = 0;
+    if (configuration_owner)
+        configuration_owner->updateViewport(0, 0);
     surface_owner.reset();
     resources_owner.reset();
     return true;
@@ -1147,6 +1188,7 @@ extern "C" void *morrow_jni_runtime_configuration(void)
     try {
         jnivm::ENV *env = runtime->GetEnv().get();
         auto owner = std::make_shared<HorizonConfiguration>(system_locale);
+        owner->updateViewport(surface_width, surface_height);
         JNIEnv *jni = env->GetJNIEnv();
         jobject local = jnivm::JNITypes<std::shared_ptr<HorizonConfiguration>>::ToJNIType(
             env, owner);

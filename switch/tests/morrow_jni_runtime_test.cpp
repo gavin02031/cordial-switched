@@ -391,7 +391,9 @@ int main()
     assert(resources_class && metrics_class);
     jmethodID get_display_metrics = main_env->GetMethodID(
         resources_class, "getDisplayMetrics", "()Landroid/util/DisplayMetrics;");
-    assert(get_display_metrics);
+    jmethodID get_resources_configuration = main_env->GetMethodID(
+        resources_class, "getConfiguration", "()Landroid/content/res/Configuration;");
+    assert(get_display_metrics && get_resources_configuration);
     jobject resources = main_env->CallObjectMethod(
         static_cast<jobject>(activity), resources_method);
     assert(resources && main_env->IsInstanceOf(resources, resources_class));
@@ -399,6 +401,28 @@ int main()
         static_cast<jobject>(activity), resources_method);
     assert(resources_again && main_env->IsSameObject(resources, resources_again));
     main_env->DeleteLocalRef(resources_again);
+    jobject resource_configuration = main_env->CallObjectMethod(
+        resources, get_resources_configuration);
+    assert(resource_configuration && main_env->IsSameObject(
+        resource_configuration, static_cast<jobject>(configuration)));
+    main_env->DeleteLocalRef(resource_configuration);
+    jfieldID config_density = main_env->GetFieldID(config_class, "densityDpi", "I");
+    jfieldID config_orientation = main_env->GetFieldID(config_class, "orientation", "I");
+    jfieldID config_width = main_env->GetFieldID(config_class, "screenWidthDp", "I");
+    jfieldID config_height = main_env->GetFieldID(config_class, "screenHeightDp", "I");
+    jfieldID config_smallest = main_env->GetFieldID(
+        config_class, "smallestScreenWidthDp", "I");
+    jfieldID config_touch = main_env->GetFieldID(config_class, "touchscreen", "I");
+    jfieldID config_font = main_env->GetFieldID(config_class, "fontScale", "F");
+    assert(config_density && config_orientation && config_width && config_height &&
+           config_smallest && config_touch && config_font);
+    assert(main_env->GetIntField(config_alias, config_density) == 160);
+    assert(main_env->GetIntField(config_alias, config_orientation) == 2);
+    assert(main_env->GetIntField(config_alias, config_width) == 1280);
+    assert(main_env->GetIntField(config_alias, config_height) == 720);
+    assert(main_env->GetIntField(config_alias, config_smallest) == 720);
+    assert(main_env->GetIntField(config_alias, config_touch) == 3);
+    assert(main_env->GetFloatField(config_alias, config_font) == 1.0f);
     jfieldID width_pixels = main_env->GetFieldID(metrics_class, "widthPixels", "I");
     jfieldID height_pixels = main_env->GetFieldID(metrics_class, "heightPixels", "I");
     jfieldID density = main_env->GetFieldID(metrics_class, "density", "F");
@@ -446,9 +470,27 @@ int main()
     assert(resized_metrics && main_env->GetIntField(resized_metrics, width_pixels) == 960);
     assert(main_env->GetIntField(resized_metrics, height_pixels) == 540);
     main_env->DeleteLocalRef(resized_metrics);
+    assert(main_env->GetIntField(config_alias, config_width) == 960);
+    assert(main_env->GetIntField(config_alias, config_height) == 540);
+    assert(main_env->GetIntField(config_alias, config_smallest) == 540);
+    assert(main_env->GetIntField(config_alias, config_orientation) == 2);
+    assert(morrow_jni_runtime_bind_horizon_surface(&horizon_window, 540, 960) == surface);
+    assert(width(guest) == 540 && height(guest) == 960);
+    assert(main_env->GetIntField(config_alias, config_width) == 540);
+    assert(main_env->GetIntField(config_alias, config_height) == 960);
+    assert(main_env->GetIntField(config_alias, config_smallest) == 540);
+    assert(main_env->GetIntField(config_alias, config_orientation) == 1);
     assert(morrow_jni_runtime_unbind_surface());
     assert(!morrow_jni_runtime_surface_bound());
     assert(!main_env->CallObjectMethod(resources, get_display_metrics));
+    assert(!main_env->CallObjectMethod(resources, get_resources_configuration));
+    assert(main_env->GetIntField(config_alias, config_density) == 0);
+    assert(main_env->GetIntField(config_alias, config_orientation) == 0);
+    assert(main_env->GetIntField(config_alias, config_width) == 0);
+    assert(main_env->GetIntField(config_alias, config_height) == 0);
+    assert(main_env->GetIntField(config_alias, config_smallest) == 0);
+    assert(main_env->GetIntField(config_alias, config_touch) == 3);
+    assert(main_env->GetFloatField(config_alias, config_font) == 1.0f);
     assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), resources_method));
     main_env->DeleteLocalRef(resources);
     main_env->DeleteLocalRef(resources_class);
@@ -673,15 +715,13 @@ int main()
     assert(main_env->IsInstanceOf(config_alias, config_class));
     jobject config_alias_2 = main_env->NewLocalRef(config_alias);
     assert(config_alias_2 && main_env->IsSameObject(config_alias, config_alias_2));
-    // AGDK reads these fields during initializeNativeCode. Unknown display
-    // and locale metadata must stay unknown, while JNI field access must be
-    // genuinely typed and writable rather than a fabricated getter stub.
+    // The Surface is now unbound, so measured viewport fields return to
+    // unknown. Untested Android metadata remains unknown and writable.
     for (const char *field : {
              "colorMode", "densityDpi", "fontWeightAdjustment",
              "hardKeyboardHidden", "keyboard", "keyboardHidden", "mcc", "mnc",
              "navigation", "navigationHidden", "orientation", "screenHeightDp",
-             "screenLayout", "screenWidthDp", "smallestScreenWidthDp",
-             "touchscreen", "uiMode"}) {
+             "screenLayout", "screenWidthDp", "smallestScreenWidthDp", "uiMode"}) {
         jfieldID id = main_env->GetFieldID(config_class, field, "I");
         assert(id && main_env->GetIntField(config_alias, id) == 0);
         main_env->SetIntField(config_alias, id, 42);
@@ -689,10 +729,14 @@ int main()
         main_env->SetIntField(config_alias, id, 0);
     }
     jfieldID scale = main_env->GetFieldID(config_class, "fontScale", "F");
-    assert(scale && main_env->GetFloatField(config_alias, scale) == 0.0f);
+    assert(scale && main_env->GetFloatField(config_alias, scale) == 1.0f);
     main_env->SetFloatField(config_alias, scale, 1.25f);
     assert(main_env->GetFloatField(config_alias_2, scale) == 1.25f);
-    main_env->SetFloatField(config_alias, scale, 0.0f);
+    main_env->SetFloatField(config_alias, scale, 1.0f);
+    assert(main_env->GetIntField(config_alias, config_touch) == 3);
+    main_env->SetIntField(config_alias, config_touch, 42);
+    assert(main_env->GetIntField(config_alias_2, config_touch) == 42);
+    main_env->SetIntField(config_alias, config_touch, 3);
     jclass locale_list_class = main_env->FindClass("android/os/LocaleList");
     jclass locale_class = main_env->FindClass("java/util/Locale");
     assert(locale_list_class && locale_class);
@@ -751,6 +795,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad, storage, measured display metrics, LocaleList, ClassLoader and references passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad, storage, live viewport Configuration, DisplayMetrics, LocaleList, ClassLoader and references passed");
     return 0;
 }

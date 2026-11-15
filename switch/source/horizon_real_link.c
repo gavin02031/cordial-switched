@@ -347,9 +347,11 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_line(log, "jni_java_configuration_object_registered=%s",
              java_configuration_bound ? "yes" : "no");
     log_line(log, "jni_java_configuration_primitive_fields=%s",
-             java_configuration_bound ? "18_registered_unknown_values" : "unavailable");
+             java_configuration_bound ?
+             (java_surface_bound ? "18_registered_viewport_1x_layout" :
+                                   "18_registered_no_surface_geometry") : "unavailable");
     log_line(log, "jni_java_configuration_locales=%s",
-             java_configuration_bound ? "empty_list_until_device_locale_known" : "unavailable");
+             java_configuration_bound ? "device_locale_if_available" : "unavailable");
     log_line(log, "android_java_asset_manager_root=optional_user_assets");
     log_line(log, "android_asset_configuration_registered=no");
     log_line(log, "android_configuration_ndk_functions=9");
@@ -444,6 +446,9 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
              game_activity_ready ? "bound_read_only_manager_or_null" : "unavailable");
     log_line(log, "jni_game_activity_get_resources_callback=%s",
              game_activity_ready ? "measured_horizon_surface_or_null" : "unavailable");
+    log_line(log, "jni_resources_get_configuration_callback=%s",
+             java_configuration_bound && java_surface_bound ?
+             "live_viewport_configuration" : "null_until_both_bound");
     log_line(log, "jni_display_metrics_density=neutral_1x_not_physical_dpi");
     log_line(log, "jni_game_activity_window_ime_callbacks=%s",
              game_activity_ready ? "registered_observation_only" : "unavailable");
