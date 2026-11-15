@@ -107,6 +107,33 @@ static EngineEntryProbe run_fixture(const unsigned char *image)
     return result;
 }
 
+static void stripped_dynamic_fixture(unsigned char *image, bool gnu)
+{
+    make_fixture(image);
+    put64(image + 40, 0); // Deliberately no ELF section headers.
+    put16(image + 60, 0);
+    put64(image + 120 + 32, 96);
+    put64(image + 120 + 40, 96);
+    dynamic(image, 0, 6, 0x1240); // DT_SYMTAB
+    dynamic(image, 1, 5, 0x1600); // DT_STRTAB
+    dynamic(image, 2, 10, 256); // DT_STRSZ
+    dynamic(image, 3, gnu ? 0x6ffffef5 : 4, 0x1700);
+    dynamic(image, 4, 11, 24); // DT_SYMENT
+    dynamic(image, 5, 0, 0);
+    if (gnu) {
+        put32(image + 0x700, 1); // GNU bucket count
+        put32(image + 0x704, 1); // first hashed symbol index
+        put32(image + 0x708, 1); // bloom word count
+        put32(image + 0x718, 1); // bucket starts at index 1
+        put32(image + 0x71c, 0); // first chain element
+        put32(image + 0x720, 0);
+        put32(image + 0x724, 1); // last hashed symbol (#3)
+    } else {
+        put32(image + 0x700, 1); // SysV bucket count
+        put32(image + 0x704, 4); // SysV symbol count
+    }
+}
+
 int main(void)
 {
     unsigned char fixture[FIXTURE_SIZE];
@@ -121,6 +148,37 @@ int main(void)
     assert(result.has_init && result.init_virtual_address == 0x1100);
     assert(result.has_init_array && result.init_array_entries == 2);
     assert(result.init_array_virtual_address == 0x1200);
+
+    // Android libraries frequently strip section headers while preserving
+    // PT_DYNAMIC; both standard dynamic hash formats must still be inspectable.
+    stripped_dynamic_fixture(fixture, false);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED);
+    assert(result.has_jni_onload && result.has_native_activity_oncreate);
+    assert(result.has_game_activity_initialize_native &&
+           result.game_activity_initialize_native_virtual_address == 0x1140);
+    stripped_dynamic_fixture(fixture, true);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED);
+    assert(result.has_game_activity_initialize_native);
+
+    // Reject exported function addresses outside executable load segments.
+    put64(fixture + 0x288 + 8, 0x900000);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED &&
+           !result.has_game_activity_initialize_native);
+
+    // Malformed or incomplete hash metadata must remain unknown, not absent.
+    stripped_dynamic_fixture(fixture, true);
+    put32(fixture + 0x718, 0xffffffff);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_NO_DYNAMIC_SYMBOLS);
+    stripped_dynamic_fixture(fixture, false);
+    put32(fixture + 0x704, 0xffffffff);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_NO_DYNAMIC_SYMBOLS);
+
+    make_fixture(fixture);
 
     // Do not mistake a missing section table for an absent JNI entry.
     put64(fixture + 40, 0);

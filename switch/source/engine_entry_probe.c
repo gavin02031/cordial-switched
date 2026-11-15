@@ -16,6 +16,12 @@ enum {
     PT_DYNAMIC = 2,
     PF_X = 1,
     DT_NULL = 0,
+    DT_HASH = 4,
+    DT_STRTAB = 5,
+    DT_SYMTAB = 6,
+    DT_STRSZ = 10,
+    DT_SYMENT = 11,
+    DT_GNU_HASH = 0x6ffffef5,
     DT_INIT = 12,
     DT_INIT_ARRAY = 25,
     DT_INIT_ARRAYSZ = 27,
@@ -27,9 +33,25 @@ enum {
 };
 
 typedef struct {
-    uint64_t start, end;
+    uint64_t start, end, file_offset, file_size;
     bool executable;
 } EntrySegment;
+
+static bool virtual_to_file(const EntrySegment *segments, unsigned count,
+                            uint64_t address, uint64_t size, uint64_t *offset)
+{
+    for (unsigned i = 0; i < count; i++) {
+        const EntrySegment *s = &segments[i];
+        if (address < s->start) continue;
+        const uint64_t delta = address - s->start;
+        if (delta <= s->file_size && size <= s->file_size - delta &&
+            s->file_offset <= UINT64_MAX - delta) {
+            *offset = s->file_offset + delta;
+            return true;
+        }
+    }
+    return false;
+}
 
 static uint16_t u16(const unsigned char *p)
 {
@@ -66,6 +88,93 @@ static bool executable_address(const EntrySegment *segments, unsigned count,
         if (segments[i].executable && address >= segments[i].start &&
             address < segments[i].end)
             return true;
+    return false;
+}
+
+static bool scan_symbols(FILE *file, uint64_t symbols_offset, uint64_t count,
+                         uint64_t strings_offset, uint64_t strings_size,
+                         uint64_t file_length, const EntrySegment *segments,
+                         unsigned segment_count, EngineEntryProbe *result)
+{
+    if (count > MAX_SYMBOL_COUNT || strings_size > MAX_STRTAB_BYTES ||
+        !in_file(symbols_offset, count * 24, file_length) ||
+        !in_file(strings_offset, strings_size, file_length)) {
+        fail(result, ENGINE_ENTRY_INVALID, "Invalid dynamic symbol bounds.");
+        return false;
+    }
+    for (uint64_t i = 0; i < count; i++) {
+        unsigned char symbol[24];
+        if (!read_at(file, symbols_offset + i * 24, symbol, sizeof(symbol))) {
+            fail(result, ENGINE_ENTRY_IO_ERROR, "Cannot read dynamic symbol.");
+            return false;
+        }
+        const uint32_t name_offset = u32(symbol);
+        if (name_offset >= strings_size || u16(symbol + 6) == 0 ||
+            (symbol[4] & 0xf) != 2) continue;
+        const uint64_t address = u64(symbol + 8);
+        if (!executable_address(segments, segment_count, address)) continue;
+        char name[128] = {0};
+        uint64_t remaining = strings_size - name_offset;
+        if (remaining > sizeof(name)) remaining = sizeof(name);
+        if (!read_at(file, strings_offset + name_offset, name, (size_t)remaining)) {
+            fail(result, ENGINE_ENTRY_IO_ERROR, "Cannot read symbol name.");
+            return false;
+        }
+        if (!memchr(name, 0, (size_t)remaining)) continue;
+        if (strcmp(name, "JNI_OnLoad") == 0) {
+            result->has_jni_onload = true;
+            result->jni_onload_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode") == 0) {
+            result->has_game_activity_initialize_native = true;
+            result->game_activity_initialize_native_virtual_address = address;
+        } else if (strcmp(name, "ANativeActivity_onCreate") == 0) {
+            result->has_native_activity_oncreate = true;
+            result->native_activity_virtual_address = address;
+        }
+    }
+    return true;
+}
+
+// Hash table metadata gives a bounded symbol count without ELF section headers.
+// This diagnostic only reads bytes; it never executes a discovered entry point.
+static bool dynamic_symbol_count(FILE *file, uint64_t hash_va, bool gnu,
+                                 const EntrySegment *segments, unsigned n,
+                                 uint64_t *count)
+{
+    uint64_t at;
+    unsigned char header[16];
+    if (!virtual_to_file(segments, n, hash_va, gnu ? 16 : 8, &at) ||
+        !read_at(file, at, header, gnu ? 16 : 8)) return false;
+    if (!gnu) {
+        *count = u32(header + 4);
+        return *count > 0 && *count <= MAX_SYMBOL_COUNT;
+    }
+    const uint64_t buckets = u32(header), first = u32(header + 4);
+    const uint64_t bloom = u32(header + 8);
+    if (!buckets || buckets > MAX_SYMBOL_COUNT || !bloom ||
+        bloom > MAX_SYMBOL_COUNT || first > MAX_SYMBOL_COUNT) return false;
+    const uint64_t bucket_va = hash_va + 16 + bloom * 8;
+    if (bucket_va < hash_va || !virtual_to_file(segments, n, bucket_va,
+                                                buckets * 4, &at)) return false;
+    uint64_t max_bucket = 0;
+    for (uint64_t i = 0; i < buckets; i++) {
+        unsigned char word[4];
+        if (!read_at(file, at + i * 4, word, sizeof(word))) return false;
+        if (u32(word) > max_bucket) max_bucket = u32(word);
+    }
+    if (!max_bucket) { *count = first; return first <= MAX_SYMBOL_COUNT; }
+    if (max_bucket < first || max_bucket >= MAX_SYMBOL_COUNT) return false;
+    const uint64_t chain_va = bucket_va + buckets * 4;
+    if (chain_va < bucket_va) return false;
+    for (uint64_t i = max_bucket; i < MAX_SYMBOL_COUNT; i++) {
+        const uint64_t entry_va = chain_va + (i - first) * 4;
+        if (entry_va < chain_va || !virtual_to_file(segments, n, entry_va, 4, &at))
+            return false;
+        unsigned char word[4];
+        if (!read_at(file, at, word, sizeof(word))) return false;
+        if (u32(word) & 1) { *count = i + 1; return true; }
+    }
     return false;
 }
 
@@ -124,6 +233,7 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
         }
         if (type == PT_LOAD)
             segments[segment_count++] = (EntrySegment){vaddr, vaddr + memsz,
+                                                        offset, filesz,
                                                         (u32(ph + 4) & PF_X) != 0};
         else if (type == PT_DYNAMIC) {
             dynamic_offset = offset;
@@ -137,6 +247,8 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
     }
 
     uint64_t init_array_size = 0;
+    uint64_t symtab_va = 0, strtab_va = 0, strsz = 0, syment = 0;
+    uint64_t hash_va = 0, gnu_hash_va = 0;
     for (uint64_t i = 0; i < dynamic_size / 16; i++) {
         unsigned char entry[16];
         if (!read_at(file, dynamic_offset + i * 16, entry, sizeof(entry))) {
@@ -153,6 +265,18 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
             result->init_array_virtual_address = value;
         } else if (tag == DT_INIT_ARRAYSZ) {
             init_array_size = value;
+        } else if (tag == DT_SYMTAB) {
+            symtab_va = value;
+        } else if (tag == DT_STRTAB) {
+            strtab_va = value;
+        } else if (tag == DT_STRSZ) {
+            strsz = value;
+        } else if (tag == DT_SYMENT) {
+            syment = value;
+        } else if (tag == DT_HASH) {
+            hash_va = value;
+        } else if (tag == DT_GNU_HASH) {
+            gnu_hash_va = value;
         }
     }
     if ((result->has_init && !executable_address(segments, segment_count,
@@ -168,8 +292,28 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
     const uint64_t shoff = u64(header + 40);
     const unsigned shnum = u16(header + 60);
     if (!shoff || !shnum) {
-        fail(result, ENGINE_ENTRY_NO_DYNAMIC_SYMBOLS,
-             "Section headers stripped; JNI symbol unknown, not absent.");
+        uint64_t count = 0, symbols_offset = 0, strings_offset = 0;
+        bool counted = false;
+        if (hash_va)
+            counted = dynamic_symbol_count(file, hash_va, false, segments,
+                                           segment_count, &count);
+        if (!counted && gnu_hash_va)
+            counted = dynamic_symbol_count(file, gnu_hash_va, true, segments,
+                                           segment_count, &count);
+        if (counted && symtab_va && strtab_va && syment == 24 && strsz &&
+            virtual_to_file(segments, segment_count, symtab_va, count * 24,
+                            &symbols_offset) &&
+            virtual_to_file(segments, segment_count, strtab_va, strsz,
+                            &strings_offset)) {
+            if (!scan_symbols(file, symbols_offset, count, strings_offset,
+                              strsz, (uint64_t)length, segments, segment_count,
+                              result)) return;
+            fail(result, ENGINE_ENTRY_INSPECTED,
+                 "Stripped ARM64 ELF exports inspected via dynamic hash.");
+        } else {
+            fail(result, ENGINE_ENTRY_NO_DYNAMIC_SYMBOLS,
+                 "Stripped ELF exports uninspectable; JNI entry unknown, not absent.");
+        }
         return;
     }
     if (shnum > MAX_SECTION_HEADERS ||
@@ -212,42 +356,9 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
             fail(result, ENGINE_ENTRY_INVALID, "Invalid dynamic symbol strings.");
             return;
         }
-        for (uint64_t i = 0; i < symbols_size / 24; i++) {
-            unsigned char symbol[24];
-            if (!read_at(file, symbols_offset + i * 24, symbol, sizeof(symbol))) {
-                fail(result, ENGINE_ENTRY_IO_ERROR, "Cannot read dynamic symbol.");
-                return;
-            }
-            const uint32_t name_offset = u32(symbol);
-            if (name_offset >= strings_size || u16(symbol + 6) == 0 ||
-                (symbol[4] & 0xf) != 2)
-                continue; // Undefined symbol or non-function metadata.
-            const uint64_t address = u64(symbol + 8);
-            if (!executable_address(segments, segment_count, address)) continue;
-            // The exported AGDK GameActivity entry is substantially longer
-            // than JNI_OnLoad. Truncating names to 31 bytes silently hid the
-            // actual Android startup target from the diagnostic.
-            char name[128] = {0};
-            uint64_t remaining = strings_size - name_offset;
-            if (remaining > sizeof(name)) remaining = sizeof(name);
-            if (!read_at(file, strings_offset + name_offset, name,
-                         (size_t)remaining)) {
-                fail(result, ENGINE_ENTRY_IO_ERROR, "Cannot read symbol name.");
-                return;
-            }
-            if (!memchr(name, 0, (size_t)remaining)) continue;
-            if (strcmp(name, "JNI_OnLoad") == 0) {
-                result->has_jni_onload = true;
-                result->jni_onload_virtual_address = address;
-            } else if (strcmp(name,
-                     "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode") == 0) {
-                result->has_game_activity_initialize_native = true;
-                result->game_activity_initialize_native_virtual_address = address;
-            } else if (strcmp(name, "ANativeActivity_onCreate") == 0) {
-                result->has_native_activity_oncreate = true;
-                result->native_activity_virtual_address = address;
-            }
-        }
+        if (!scan_symbols(file, symbols_offset, symbols_size / 24,
+                          strings_offset, strings_size, (uint64_t)length,
+                          segments, segment_count, result)) return;
     }
     result->status = dynsym_seen ? ENGINE_ENTRY_INSPECTED
                                  : ENGINE_ENTRY_NO_DYNAMIC_SYMBOLS;

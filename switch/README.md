@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.57 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.58 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.57 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.58 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -341,6 +341,12 @@ then check:
    unmapped final-base candidate, if present; it explicitly says the call is
    ineligible and was not attempted. The host ELF test rejects truncated
    names and addresses outside executable load segments.
+   v0.58 also discovers exported engine entry points when Android has stripped
+   ELF section headers, using bounded SysV `DT_HASH` or GNU `DT_GNU_HASH`
+   metadata from `PT_DYNAMIC`. Both paths are covered by synthetic ARM64 ELF
+   tests, including malformed hash tables and nonexecutable candidates. If
+   neither hash table is usable, the entry remains **unknown**, never falsely
+   reported absent. This is read-only discovery, not Roblox execution.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
