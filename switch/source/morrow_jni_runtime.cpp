@@ -10,6 +10,8 @@
 #include <memory>
 #include <mutex>
 #include <cstdio>
+#include <cctype>
+#include <algorithm>
 
 namespace {
 
@@ -28,15 +30,71 @@ std::shared_ptr<AssetManagerObject> asset_owner;
 jobject asset_reference;
 std::string asset_directory;
 
+// Horizon's settings service supplies a BCP-47 language code. Keep that
+// value separate from Android's unrelated locale defaults: an unavailable
+// service must leave the Java LocaleList empty, not invent en-US.
+struct SystemLocale {
+    std::string tag, language, script, country;
+};
+SystemLocale system_locale;
+
+bool parse_system_locale(const char *tag, SystemLocale *parsed)
+{
+    if (!tag || !parsed) return false;
+    const std::string value(tag);
+    if (value.size() < 2 || value.size() > 16) return false;
+    SystemLocale candidate;
+    candidate.tag = value;
+    size_t start = 0;
+    unsigned part = 0;
+    while (start < value.size()) {
+        const size_t end = value.find('-', start);
+        const std::string segment = value.substr(
+            start, end == std::string::npos ? std::string::npos : end - start);
+        const bool letters = !segment.empty() &&
+            std::all_of(segment.begin(), segment.end(), [](unsigned char c) {
+                return std::isalpha(c) && c < 128;
+            });
+        const bool digits = !segment.empty() &&
+            std::all_of(segment.begin(), segment.end(), [](unsigned char c) {
+                return std::isdigit(c) && c < 128;
+            });
+        if (part == 0 && letters && (segment.size() == 2 || segment.size() == 3))
+            candidate.language = segment;
+        else if (part > 0 && candidate.script.empty() && candidate.country.empty() &&
+                 letters && segment.size() == 4)
+            candidate.script = segment;
+        else if (part > 0 && candidate.country.empty() &&
+                 ((letters && segment.size() == 2) ||
+                  (digits && segment.size() == 3)))
+            candidate.country = segment;
+        else
+            return false;
+        ++part;
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    if (part == 0 || value.back() == '-') return false;
+    *parsed = std::move(candidate);
+    return true;
+}
+
 // GameActivity reads the Java Configuration fields and LocaleList before it
 // reaches the game's native callbacks. Unknown values remain explicitly zero;
 // neither a device locale nor dp/density is inferred from 720p pixels.
 class HorizonLocale : public jnivm::Object {
 public:
-    std::shared_ptr<jnivm::String> getLanguage(jnivm::ENV *) { return nullptr; }
-    std::shared_ptr<jnivm::String> getScript(jnivm::ENV *) { return nullptr; }
-    std::shared_ptr<jnivm::String> getCountry(jnivm::ENV *) { return nullptr; }
-    std::shared_ptr<jnivm::String> getVariant(jnivm::ENV *) { return nullptr; }
+    std::shared_ptr<jnivm::String> language, script, country, variant;
+    explicit HorizonLocale(const SystemLocale &locale)
+        : language(std::make_shared<jnivm::String>(locale.language)),
+          script(std::make_shared<jnivm::String>(locale.script)),
+          country(std::make_shared<jnivm::String>(locale.country)),
+          variant(std::make_shared<jnivm::String>("")) {}
+
+    std::shared_ptr<jnivm::String> getLanguage(jnivm::ENV *) { return language; }
+    std::shared_ptr<jnivm::String> getScript(jnivm::ENV *) { return script; }
+    std::shared_ptr<jnivm::String> getCountry(jnivm::ENV *) { return country; }
+    std::shared_ptr<jnivm::String> getVariant(jnivm::ENV *) { return variant; }
 
     static void Register(jnivm::ENV *env)
     {
@@ -50,8 +108,16 @@ public:
 
 class HorizonLocaleList : public jnivm::Object {
 public:
-    jint size(jnivm::ENV *) { return 0; }
-    std::shared_ptr<HorizonLocale> get(jnivm::ENV *, jint) { return nullptr; }
+    std::shared_ptr<HorizonLocale> primary;
+    explicit HorizonLocaleList(const SystemLocale &locale)
+    {
+        if (!locale.tag.empty()) primary = std::make_shared<HorizonLocale>(locale);
+    }
+    jint size(jnivm::ENV *) { return primary ? 1 : 0; }
+    std::shared_ptr<HorizonLocale> get(jnivm::ENV *, jint index)
+    {
+        return index == 0 ? primary : nullptr;
+    }
 
     static void Register(jnivm::ENV *env)
     {
@@ -70,8 +136,10 @@ public:
     jint screenWidthDp = 0, smallestScreenWidthDp = 0, touchscreen = 0;
     jint uiMode = 0;
     jfloat fontScale = 0;
-    std::shared_ptr<HorizonLocaleList> locale_list =
-        std::make_shared<HorizonLocaleList>();
+    std::shared_ptr<HorizonLocaleList> locale_list;
+
+    explicit HorizonConfiguration(const SystemLocale &locale)
+        : locale_list(std::make_shared<HorizonLocaleList>(locale)) {}
 
     std::shared_ptr<HorizonLocaleList> getLocales(jnivm::ENV *)
     {
@@ -606,6 +674,27 @@ extern "C" bool morrow_jni_runtime_start(void)
     }
 }
 
+extern "C" bool morrow_jni_runtime_bind_system_locale(const char *language_tag)
+{
+    SystemLocale proposed;
+    if (!parse_system_locale(language_tag, &proposed)) return false;
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!runtime || !attached_to_runtime) return false;
+    // A previously handed-out Configuration must not silently change while
+    // engine Java code holds aliases to its LocaleList.
+    if (!system_locale.tag.empty())
+        return proposed.tag == system_locale.tag;
+    if (configuration_reference) return false;
+    system_locale = std::move(proposed);
+    return true;
+}
+
+extern "C" bool morrow_jni_runtime_system_locale_bound(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return !system_locale.tag.empty();
+}
+
 extern "C" void *morrow_jni_runtime_java_vm(void)
 {
     std::lock_guard<std::mutex> lock(start_mutex);
@@ -908,7 +997,7 @@ extern "C" void *morrow_jni_runtime_configuration(void)
         return configuration_reference;
     try {
         jnivm::ENV *env = runtime->GetEnv().get();
-        auto owner = std::make_shared<HorizonConfiguration>();
+        auto owner = std::make_shared<HorizonConfiguration>(system_locale);
         JNIEnv *jni = env->GetJNIEnv();
         jobject local = jnivm::JNITypes<std::shared_ptr<HorizonConfiguration>>::ToJNIType(
             env, owner);

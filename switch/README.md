@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.65 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.66 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -41,14 +41,16 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.65 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.66 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
 typed JNI `android/view/Surface` global reference with the host-owned Horizon
 window, optionally binds a typed JNI
 `android/content/res/AssetManager` to an existing read-only SD directory,
-registers a stable typed Java `android/content/res/Configuration` identity,
+registers a stable typed Java `android/content/res/Configuration` identity
+whose `getLocales()` now carries the **actual Switch system language** when
+the settings service is available (no fallback language is fabricated),
 exposes the asset manager via GameActivity's `getAssets` JNI callback only if bound,
 and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
 report records `jni_vm_provider_installed`, `jni_game_activity_object_registered`,
@@ -439,6 +441,14 @@ then check:
    runtime. Host tests exercise JNI fields, getters, common platform
    identity, repeated reads and reference cleanup. **Neither this object
    nor the real Roblox App Bridge is called during the diagnostic.**
+   v0.66 queries the actual Horizon settings language when Loader's L3
+   initialises the JNI runtime. The Java `Configuration.getLocales()` now
+   returns one typed `Locale` with real language, script and region parts;
+   missing settings leave the list empty. Invalid tags and changes after
+   Configuration creation are refused. The L3 report records
+   `jni_system_locale_bound`; host JNI tests verify methods and repeated
+   local-reference cleanup. Android density, classpath, authentication and
+   full App Bridge startup remain unavailable.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

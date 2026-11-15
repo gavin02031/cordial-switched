@@ -13,6 +13,24 @@
 #include "morrow_gles_smoke.h"
 #ifdef MORROW_HAS_JNIVM
 #include "morrow_jni_runtime.h"
+
+static void bind_switch_system_locale(void)
+{
+    // libnx reads the real console setting; the packed language code is an
+    // eight-byte ASCII tag, not an Android emulator locale or an IP guess.
+    if (R_FAILED(setInitialize()))
+        return;
+    u64 language_code = 0;
+    const Result status = setGetSystemLanguage(&language_code);
+    setExit();
+    if (R_FAILED(status))
+        return;
+    char language_tag[9];
+    for (unsigned i = 0; i < 8; i++)
+        language_tag[i] = (char)((language_code >> (8 * i)) & 0xff);
+    language_tag[8] = '\0';
+    morrow_jni_runtime_bind_system_locale(language_tag);
+}
 #endif
 
 // Keep the existing stage-XX naming while recording a fuller preflight trace.
@@ -234,6 +252,7 @@ int main(void)
             // Register a genuine Java reference to the host-owned window,
             // but do not create another EGL context while SDL is drawing.
             if (morrow_jni_runtime_start()) {
+                bind_switch_system_locale();
                 morrow_jni_runtime_game_activity();
                 morrow_jni_runtime_bind_horizon_surface(
                     nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);

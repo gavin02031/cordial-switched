@@ -139,6 +139,8 @@ int main()
     assert(morrow_jni_runtime_release_app_bridge_init_params());
     assert(!morrow_jni_runtime_configuration_bound());
     assert(!morrow_jni_runtime_configuration());
+    assert(!morrow_jni_runtime_system_locale_bound());
+    assert(!morrow_jni_runtime_bind_system_locale("en-US"));
     MorrowJniOnLoadProbe onload = {};
     assert(!morrow_jni_runtime_probe_onload(&onload));
     assert(!onload.vm_available);
@@ -148,6 +150,13 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(nullptr));
     assert(morrow_jni_runtime_start());
     assert(morrow_jni_runtime_start());
+    for (const char *invalid : {"", "en_US", "en-US-", "en-US-extra",
+                                "english-US", "en-1234", "en-??", "zh-Hans-INVALID"})
+        assert(!morrow_jni_runtime_bind_system_locale(invalid));
+    assert(morrow_jni_runtime_bind_system_locale("es-419"));
+    assert(morrow_jni_runtime_bind_system_locale("es-419"));
+    assert(!morrow_jni_runtime_bind_system_locale("en-US"));
+    assert(morrow_jni_runtime_system_locale_bound());
     assert(android_jni_vm_bridge_has_provider());
     auto *native_vm = static_cast<JavaVM *>(morrow_jni_runtime_java_vm());
     assert(native_vm);
@@ -612,13 +621,41 @@ int main()
     jmethodID locales_get = main_env->GetMethodID(
         locale_list_class, "get", "(I)Ljava/util/Locale;");
     assert(locales_method && locales_size && locales_get);
-    for (const char *method_name : {"getLanguage", "getScript", "getCountry", "getVariant"})
-        assert(main_env->GetMethodID(locale_class, method_name,
-                                    "()Ljava/lang/String;"));
+    jmethodID locale_language = main_env->GetMethodID(
+        locale_class, "getLanguage", "()Ljava/lang/String;");
+    jmethodID locale_script = main_env->GetMethodID(
+        locale_class, "getScript", "()Ljava/lang/String;");
+    jmethodID locale_country = main_env->GetMethodID(
+        locale_class, "getCountry", "()Ljava/lang/String;");
+    jmethodID locale_variant = main_env->GetMethodID(
+        locale_class, "getVariant", "()Ljava/lang/String;");
+    assert(locale_language && locale_script && locale_country && locale_variant);
     jobject locales = main_env->CallObjectMethod(config_alias, locales_method);
     assert(locales && main_env->IsInstanceOf(locales, locale_list_class));
-    assert(main_env->CallIntMethod(locales, locales_size) == 0);
-    assert(!main_env->CallObjectMethod(locales, locales_get, 0));
+    assert(main_env->CallIntMethod(locales, locales_size) == 1);
+    assert(!main_env->CallObjectMethod(locales, locales_get, -1));
+    assert(!main_env->CallObjectMethod(locales, locales_get, 1));
+    const size_t locale_locals_before = real_env->localframe.front().size();
+    for (unsigned i = 0; i < 64; ++i) {
+        jobject locale = main_env->CallObjectMethod(locales, locales_get, 0);
+        assert(locale && main_env->IsInstanceOf(locale, locale_class));
+        const struct { jmethodID method; const char *expected; } fields[] = {
+            {locale_language, "es"}, {locale_script, ""},
+            {locale_country, "419"}, {locale_variant, ""}
+        };
+        for (const auto &field : fields) {
+            jstring result = static_cast<jstring>(main_env->CallObjectMethod(
+                locale, field.method));
+            assert(result);
+            const char *contents = main_env->GetStringUTFChars(result, nullptr);
+            assert(contents && !strcmp(contents, field.expected));
+            main_env->ReleaseStringUTFChars(result, contents);
+            main_env->DeleteLocalRef(result);
+        }
+        main_env->DeleteLocalRef(locale);
+    }
+    assert(!main_env->ExceptionCheck());
+    assert(real_env->localframe.front().size() == locale_locals_before);
     main_env->DeleteLocalRef(locales);
     main_env->DeleteLocalRef(locale_class);
     main_env->DeleteLocalRef(locale_list_class);
@@ -633,6 +670,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad, Configuration fields, empty LocaleList, ClassLoader and references passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad, Configuration fields, system LocaleList, ClassLoader and references passed");
     return 0;
 }

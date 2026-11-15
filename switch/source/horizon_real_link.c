@@ -393,6 +393,12 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
 #endif
     log_line(log, "jni_game_activity_object_registered=%s",
              game_activity_ready ? "yes" : "no");
+#ifdef MORROW_HAS_JNIVM
+    log_line(log, "jni_system_locale_bound=%s",
+             morrow_jni_runtime_system_locale_bound() ? "yes" : "no");
+#else
+    log_line(log, "jni_system_locale_bound=no");
+#endif
     log_line(log, "jni_game_activity_class_loader=%s",
              game_activity_ready ? "registered_classes_only" : "unavailable");
     log_line(log, "jni_apk_classpath_installed=no");

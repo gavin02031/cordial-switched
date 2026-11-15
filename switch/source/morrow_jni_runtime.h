@@ -12,6 +12,12 @@ extern "C" {
 // not the complete Android services or an executable Roblox engine image.
 bool morrow_jni_runtime_start(void);
 
+// Use an actual Horizon settings-service BCP-47 language tag (for example
+// en-US, zh-Hans or es-419). Invalid tags and rebinding after Configuration
+// creation fail closed. No language is assumed if the settings service fails.
+bool morrow_jni_runtime_bind_system_locale(const char *language_tag);
+bool morrow_jni_runtime_system_locale_bound(void);
+
 // Return the actual libjnivm JavaVM, not the separate diagnostic invocation
 // bridge. JNIEnv::GetJavaVM must return the same JavaVM passed to JNI_OnLoad.
 void *morrow_jni_runtime_java_vm(void);
@@ -71,8 +77,8 @@ bool morrow_jni_runtime_app_bridge_init_params_bound(void);
 bool morrow_jni_runtime_release_app_bridge_init_params(void);
 
 // Typed, stable Java Configuration identity for the eventual GameActivity
-// native initialiser. This is deliberately not an invented Android Resources
-// object or populated Configuration: screen/locale data remain unavailable.
+// native initialiser. A real system locale is exposed through getLocales when
+// bound before creation. Android density, dp and resource state remain absent.
 void *morrow_jni_runtime_configuration(void);
 bool morrow_jni_runtime_configuration_bound(void);
 bool morrow_jni_runtime_release_configuration(void);
