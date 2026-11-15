@@ -69,15 +69,18 @@ static void make_fixture(unsigned char *image)
     // Section #1: .dynsym -> linked string table #2.
     put32(image + 0x350 + 4, 11);
     put64(image + 0x350 + 24, 0x240);
-    put64(image + 0x350 + 32, 72);
+    put64(image + 0x350 + 32, 96);
     put32(image + 0x350 + 40, 2);
     put64(image + 0x350 + 56, 24);
 
     put32(image + 0x390 + 4, 3); // SHT_STRTAB
-    put64(image + 0x390 + 24, 0x290);
-    put64(image + 0x390 + 32, 64);
-    memcpy(image + 0x291, "JNI_OnLoad", 11);
-    memcpy(image + 0x29c, "ANativeActivity_onCreate", 25);
+    put64(image + 0x390 + 24, 0x600);
+    put64(image + 0x390 + 32, 256);
+    memcpy(image + 0x601, "JNI_OnLoad", 11);
+    memcpy(image + 0x60c, "ANativeActivity_onCreate", 25);
+    const char activity_entry[] =
+        "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode";
+    memcpy(image + 0x625, activity_entry, sizeof(activity_entry));
 
     put32(image + 0x258, 1); // .dynsym #1 name
     image[0x258 + 4] = 2; // STT_FUNC
@@ -87,6 +90,10 @@ static void make_fixture(unsigned char *image)
     image[0x270 + 4] = 2;
     put16(image + 0x270 + 6, 1);
     put64(image + 0x270 + 8, 0x1130);
+    put32(image + 0x288, 37); // .dynsym #3 long AGDK JNI name
+    image[0x288 + 4] = 2;
+    put16(image + 0x288 + 6, 1);
+    put64(image + 0x288 + 8, 0x1140);
 }
 
 static EngineEntryProbe run_fixture(const unsigned char *image)
@@ -109,6 +116,8 @@ int main(void)
     assert(result.has_jni_onload && result.jni_onload_virtual_address == 0x1120);
     assert(result.has_native_activity_oncreate &&
            result.native_activity_virtual_address == 0x1130);
+    assert(result.has_game_activity_initialize_native &&
+           result.game_activity_initialize_native_virtual_address == 0x1140);
     assert(result.has_init && result.init_virtual_address == 0x1100);
     assert(result.has_init_array && result.init_array_entries == 2);
     assert(result.init_array_virtual_address == 0x1200);
@@ -117,13 +126,29 @@ int main(void)
     put64(fixture + 40, 0);
     result = run_fixture(fixture);
     assert(result.status == ENGINE_ENTRY_NO_DYNAMIC_SYMBOLS);
-    assert(!result.has_jni_onload && result.has_init);
+    assert(!result.has_jni_onload && !result.has_game_activity_initialize_native &&
+           result.has_init);
     make_fixture(fixture);
 
     // Undefined symbols are imports, not engine entry points.
     put16(fixture + 0x258 + 6, 0);
     result = run_fixture(fixture);
     assert(result.status == ENGINE_ENTRY_INSPECTED && !result.has_jni_onload);
+    make_fixture(fixture);
+
+    // A truncated string entry cannot masquerade as a complete export name.
+    put64(fixture + 0x390 + 32, 37 +
+          strlen("Java_com_google_androidgamesdk_GameActivity_initializeNativeCode"));
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED &&
+           !result.has_game_activity_initialize_native);
+    make_fixture(fixture);
+
+    // A named function outside RX load segments is not an executable entry.
+    put64(fixture + 0x288 + 8, 0x900000);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED &&
+           !result.has_game_activity_initialize_native);
     make_fixture(fixture);
 
     // An exported symbol in a non-executable segment is not callable.

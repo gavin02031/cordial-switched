@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.56 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.57 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.56 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.57 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -334,6 +334,13 @@ then check:
    and rebinding in the real-VM host test. L3 reports whether it exists.
    The object does not invent resource tables, density or locale values,
    and Roblox's entry point is still not called.
+   v0.57 corrects entry discovery to inspect the full exported
+   `Java_com_google_androidgamesdk_GameActivity_initializeNativeCode` name,
+   the actual activity initialiser identified by Cordial's Android startup
+   tracing. The read-only L3 report records the export, virtual address and
+   unmapped final-base candidate, if present; it explicitly says the call is
+   ineligible and was not attempted. The host ELF test rejects truncated
+   names and addresses outside executable load segments.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

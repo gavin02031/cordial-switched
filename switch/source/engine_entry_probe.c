@@ -224,7 +224,10 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
                 continue; // Undefined symbol or non-function metadata.
             const uint64_t address = u64(symbol + 8);
             if (!executable_address(segments, segment_count, address)) continue;
-            char name[32] = {0};
+            // The exported AGDK GameActivity entry is substantially longer
+            // than JNI_OnLoad. Truncating names to 31 bytes silently hid the
+            // actual Android startup target from the diagnostic.
+            char name[128] = {0};
             uint64_t remaining = strings_size - name_offset;
             if (remaining > sizeof(name)) remaining = sizeof(name);
             if (!read_at(file, strings_offset + name_offset, name,
@@ -232,10 +235,14 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
                 fail(result, ENGINE_ENTRY_IO_ERROR, "Cannot read symbol name.");
                 return;
             }
-            if (!memchr(name, 0, sizeof(name))) continue;
+            if (!memchr(name, 0, (size_t)remaining)) continue;
             if (strcmp(name, "JNI_OnLoad") == 0) {
                 result->has_jni_onload = true;
                 result->jni_onload_virtual_address = address;
+            } else if (strcmp(name,
+                     "Java_com_google_androidgamesdk_GameActivity_initializeNativeCode") == 0) {
+                result->has_game_activity_initialize_native = true;
+                result->game_activity_initialize_native_virtual_address = address;
             } else if (strcmp(name, "ANativeActivity_onCreate") == 0) {
                 result->has_native_activity_oncreate = true;
                 result->native_activity_virtual_address = address;

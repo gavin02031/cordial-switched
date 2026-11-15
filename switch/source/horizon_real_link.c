@@ -390,6 +390,14 @@ void horizon_real_link_run(RealLinkResult *result)
     if (entry.status == ENGINE_ENTRY_INSPECTED && entry.has_jni_onload)
         log_line(log, "jni_onload_virtual_address=0x%llx",
                  (unsigned long long)entry.jni_onload_virtual_address);
+    log_line(log, "game_activity_initialize_native_exported=%s",
+             entry.status != ENGINE_ENTRY_INSPECTED ? "unknown" :
+             entry.has_game_activity_initialize_native ? "yes" : "no");
+    if (entry.status == ENGINE_ENTRY_INSPECTED &&
+        entry.has_game_activity_initialize_native)
+        log_line(log, "game_activity_initialize_native_virtual_address=0x%llx",
+                 (unsigned long long)entry.game_activity_initialize_native_virtual_address);
+    log_line(log, "game_activity_initialize_native_call_eligible=no");
     log_line(log, "native_activity_exported=%s",
              entry.status != ENGINE_ENTRY_INSPECTED ? "unknown" :
              entry.has_native_activity_oncreate ? "yes" : "no");
@@ -440,6 +448,16 @@ void horizon_real_link_run(RealLinkResult *result)
             if (delta < plan.image_bytes && delta <= UINTPTR_MAX -
                 (uintptr_t)reservation.mapped)
                 log_line(log, "jni_onload_unmapped_candidate_address=0x%llx",
+                         (unsigned long long)((uintptr_t)reservation.mapped + delta));
+        }
+        if (entry.status == ENGINE_ENTRY_INSPECTED &&
+            entry.has_game_activity_initialize_native &&
+            entry.game_activity_initialize_native_virtual_address >= plan.virtual_page_base) {
+            const uint64_t delta = entry.game_activity_initialize_native_virtual_address -
+                                   plan.virtual_page_base;
+            if (delta < plan.image_bytes && delta <= UINTPTR_MAX -
+                (uintptr_t)reservation.mapped)
+                log_line(log, "game_activity_initialize_native_unmapped_candidate_address=0x%llx",
                          (unsigned long long)((uintptr_t)reservation.mapped + delta));
         }
         EngineStage stage = {0};
@@ -506,6 +524,7 @@ void horizon_real_link_run(RealLinkResult *result)
 
 done:
     log_line(log, "engine_entry_called=no");
+    log_line(log, "game_activity_initialize_native_called=no");
     log_line(log, "engine_executed=no");
     log_line(log, "engine_mapped_executable=no");
     const bool all_written = !ferror(log);

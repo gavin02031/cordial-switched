@@ -15,10 +15,12 @@ typedef enum {
 typedef struct {
     EngineEntryProbeStatus status;
     bool has_jni_onload;
+    bool has_game_activity_initialize_native;
     bool has_native_activity_oncreate;
     bool has_init;
     bool has_init_array;
     uint64_t jni_onload_virtual_address;
+    uint64_t game_activity_initialize_native_virtual_address;
     uint64_t native_activity_virtual_address;
     uint64_t init_virtual_address;
     uint64_t init_array_virtual_address;
