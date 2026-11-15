@@ -54,6 +54,9 @@ static bool game_activity_entry_called;
 static uintptr_t live_game_activity_target;
 static uintptr_t live_app_bridge_targets[6];
 static bool app_bridge_attempt_consumed;
+static bool app_bridge_sequence_returned;
+static uintptr_t live_main_thread_message_target;
+static bool main_thread_message_attempt_consumed;
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)
 {
@@ -269,7 +272,83 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_line(log, "# JNI_OnLoad is opt-in and blocked unless strict mapping and runtime gates pass.");
     log_line(log, "engine_execution_action=%s",
              action == 1 ? "jni_onload" : action == 2 ? "game_activity" :
-             action == 3 ? "app_bridge_v2" : "diagnostic");
+             action == 3 ? "app_bridge_v2" :
+             action == 4 ? "app_bridge_main_thread_message_once" : "diagnostic");
+    if (action == 4) {
+        log_line(log, "message_pump_mode=manual_one_shot_not_android_lifecycle");
+        log_line(log, "app_bridge_sequence_returned=%s",
+                 app_bridge_sequence_returned ? "yes" : "no");
+        log_line(log, "main_thread_message_mapped_rx_ready=%s",
+                 live_main_thread_message_target ? "yes" : "no");
+        if (!engine_mapping_pinned || !engine_jni_onload_succeeded ||
+            !app_bridge_sequence_returned) {
+            detail(result, "Run successful JNI_OnLoad and App Bridge first.");
+            log_line(log, "blocker=app_bridge_sequence_not_ready");
+            goto done;
+        }
+        if (!live_main_thread_message_target) {
+            detail(result, "Message callback absent or not in mapped RX pages.");
+            log_line(log, "blocker=message_callback_not_executable");
+            goto done;
+        }
+        if (main_thread_message_attempt_consumed) {
+            detail(result, "Message callback already attempted; restart Morrow.");
+            log_line(log, "blocker=main_thread_message_already_attempted");
+            goto done;
+        }
+#ifdef MORROW_HAS_JNIVM
+        if (!morrow_jni_runtime_jni_env()) {
+            detail(result, "Message callback blocked: JNI environment missing.");
+            log_line(log, "blocker=message_callback_jni_environment_missing");
+            goto done;
+        }
+        // No background thread or repeating UI-frame callback: the observed
+        // ABI expects main-thread ownership, and Android event-loop readiness
+        // cannot be claimed on Horizon yet. One user-requested call per boot.
+        main_thread_message_attempt_consumed = true;
+        if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
+                                      "app_bridge_main_thread_message_once",
+                                      result->log_path)) {
+            detail(result, "Message callback blocked: crash marker failed.");
+            log_line(log, "blocker=crash_journal_not_durable");
+            goto done;
+        }
+        log_line(log, "event=entering_nativeCallMessagesFromMainThread");
+        if (fflush(log) != 0 || fsync(fileno(log)) != 0) {
+            engine_run_journal_finish(ENGINE_REPORT_DIR);
+            detail(result, "Message callback blocked: SD report sync failed.");
+            log_line(log, "blocker=link_report_not_durable");
+            goto done;
+        }
+        MorrowAppBridgeCallResult callback = {0};
+        const bool returned = morrow_jni_runtime_call_app_bridge(
+            live_main_thread_message_target,
+            MORROW_APP_BRIDGE_MAIN_THREAD_MESSAGES, &callback);
+        const bool marker_cleared = engine_run_journal_finish(ENGINE_REPORT_DIR);
+        log_line(log, "main_thread_message_invoked=%s",
+                 callback.entry_invoked ? "yes" : "no");
+        log_line(log, "main_thread_message_returned=%s",
+                 callback.entry_returned ? "yes" : "no");
+        log_line(log, "main_thread_message_java_exception=%s",
+                 callback.java_exception_pending ? "yes" : "no");
+        log_line(log, "main_thread_message_cpp_exception=%s",
+                 callback.cpp_exception_caught ? "yes" : "no");
+        log_line(log, "main_thread_message_crash_marker_cleared=%s",
+                 marker_cleared ? "yes" : "no");
+        log_line(log, "roblox_login_verified=no");
+        log_line(log, "roblox_frame_presented=no");
+        if (marker_cleared && returned && !callback.java_exception_pending)
+            detail(result, "Message callback returned; no Roblox frame verified.");
+        else {
+            detail(result, "Message callback failed; inspect numbered report.");
+            log_line(log, "blocker=message_callback_failed");
+        }
+#else
+        detail(result, "JNI-enabled Morrow artifact required for message callback.");
+        log_line(log, "blocker=jni_runtime_not_compiled");
+#endif
+        goto done;
+    }
     if (action == 3) {
         log_line(log, "app_bridge_prior_jni_onload_succeeded=%s",
                  engine_jni_onload_succeeded ? "yes" : "no");
@@ -346,6 +425,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 break;
             }
             if (i == 5) {
+                app_bridge_sequence_returned = true;
                 log_line(log, "app_bridge_sequence_returned=yes");
                 detail(result, "Six native entries returned; no gameplay verified.");
             }
@@ -879,6 +959,13 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 log_line(log, "app_bridge_step_%u_mapped_rx_ready=%s", i + 1,
                                          live_app_bridge_targets[i] ? "yes" : "no");
                             }
+                            if (entry.has_app_bridge_main_thread_messages)
+                                engine_execution_rx_target(&plan,
+                                    (uint64_t)(uintptr_t)reservation.mapped,
+                                    entry.app_bridge_main_thread_messages_virtual_address,
+                                    &live_main_thread_message_target);
+                            log_line(log, "main_thread_message_mapped_rx_ready=%s",
+                                     live_main_thread_message_target ? "yes" : "no");
                         }
                         log_line(log, "engine_gameplay_started=no");
                     }

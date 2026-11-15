@@ -1429,7 +1429,7 @@ extern "C" bool morrow_jni_runtime_call_app_bridge(
     if (!result) return false;
     *result = {};
     if (!entry || step < MORROW_APP_BRIDGE_GLOBAL_INIT ||
-        step > MORROW_APP_BRIDGE_START_APP) return false;
+        step > MORROW_APP_BRIDGE_MAIN_THREAD_MESSAGES) return false;
 
     // Prepare the existing typed objects before taking the runtime lock.
     // Their public constructors acquire the same lock internally.

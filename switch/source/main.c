@@ -264,8 +264,13 @@ int main(void)
         }
         if (state.page == UI_LOADER && (pressed & HidNpadButton_ZR))
             try_engine_stage(&state);
-        if (state.page == UI_LOADER && (pressed & HidNpadButton_StickR))
-            horizon_loader_smoke_run(&state.loader_smoke);
+        if (state.page == UI_LOADER && (pressed & HidNpadButton_StickR)) {
+            const u64 held = padGetButtons(&pad);
+            if ((held & HidNpadButton_ZL) && (held & HidNpadButton_ZR))
+                horizon_real_link_run(&state.real_link, 4u);
+            else
+                horizon_loader_smoke_run(&state.loader_smoke);
+        }
         if (state.page == UI_LOADER && (pressed & HidNpadButton_StickL)) {
 #ifdef MORROW_HAS_JNIVM
             // Register a genuine Java reference to the host-owned window,

@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.72 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.73 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -41,7 +41,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.72 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.73 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -107,12 +107,19 @@ frame, a game session, or compatibility with Roblox servers**.
 recorded Android launch trace and the open-source Mocktail capability resolver
 ([komaruworld/mocktail](https://github.com/komaruworld/mocktail)), not a
 successful Switch execution. The loader additionally audits the optional
-`nativeCallMessagesFromMainThread` export; no main-thread message pump is
-invoked yet because a correct Android lifecycle loop is unavailable. A
-six-call return is **not** evidence of engine boot or authentication.
+`nativeCallMessagesFromMainThread` export. **v0.73 adds ZL + ZR + R3** as a
+*separate* opt-in, one-shot attempt of that JNI callback after all six bridge
+steps returned successfully in the same process. This call is made on the UI
+thread only after its mapped RX address is verified, with a new persistent
+crash breadcrumb and numbered report. It is **not a recurring Android event
+loop**: no lifecycle or frame-present validation exists, and a returning
+callback is **not** evidence of engine boot or authentication. The callback
+may crash or hang on incomplete Android services. Restart Morrow before
+trying the risky sequence again.
 
 Before **any** experimental engine entry (JNI_OnLoad, AGDK GameActivity or
-each of the six App Bridge steps), v0.72 syncs both its numbered link log
+each of the six App Bridge steps and v0.73's one-shot message callback),
+Morrow syncs both its numbered link log
 and an `engine-in-progress.txt` marker to SD. If the process crashes,
 freezes and is force-quit, or loses power before the call returns, the next
 successful Morrow launch archives that marker as `crash-XX.txt`, preserving
@@ -201,6 +208,9 @@ then check:
    **ZR + L3** GameActivity initialiser attempt after successful `JNI_OnLoad`.
    **ZL + ZR + L3** attempts six App Bridge V2 native exports
    after successful `JNI_OnLoad`, with persistent crash breadcrumbs.
+   **ZL + ZR + R3** separately attempts a single native main-thread message
+   callback, only after all six App Bridge entries returned. This is an
+   experimental diagnostic, not a complete event loop or login implementation.
    Neither operation is a gameplay or login implementation. A real engine still needs Android
    TLS, constructors, complete JNI and graphics.
    Starting with v0.27, this same report checks whether a separate, aligned

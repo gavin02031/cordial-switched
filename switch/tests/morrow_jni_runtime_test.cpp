@@ -59,7 +59,7 @@ static unsigned native_activity_calls;
 static jclass expected_bridge_class;
 static jobject expected_bridge_init_params, expected_bridge_start_params;
 static jobject expected_bridge_surface, expected_bridge_platform;
-static unsigned native_bridge_calls[6];
+static unsigned native_bridge_calls[7];
 
 static void synthetic_bridge_global(JNIEnv *env, jclass klass)
 {
@@ -95,6 +95,11 @@ static void synthetic_bridge_start(JNIEnv *env, jclass klass, jobject params)
     assert(env && env->IsSameObject(klass, expected_bridge_class));
     assert(env->IsSameObject(params, expected_bridge_start_params));
     ++native_bridge_calls[5];
+}
+static void synthetic_bridge_main_thread_messages(JNIEnv *env, jclass klass)
+{
+    assert(env && env->IsSameObject(klass, expected_bridge_class));
+    ++native_bridge_calls[6];
 }
 
 static jlong synthetic_game_activity_init(JNIEnv *env, jobject activity,
@@ -678,10 +683,11 @@ int main()
         reinterpret_cast<uintptr_t>(&synthetic_bridge_init),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_lua),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_surface),
-        reinterpret_cast<uintptr_t>(&synthetic_bridge_start)
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_start),
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_main_thread_messages)
     };
     for (unsigned trial = 0; trial < 32; ++trial) {
-        for (unsigned step = 0; step < 6; ++step) {
+        for (unsigned step = 0; step < 7; ++step) {
             MorrowAppBridgeCallResult call = {};
             assert(morrow_jni_runtime_call_app_bridge(bridge_functions[step],
                 static_cast<MorrowAppBridgeStep>(step), &call));
@@ -689,8 +695,12 @@ int main()
                    !call.java_exception_pending && !call.cpp_exception_caught);
         }
     }
-    for (unsigned step = 0; step < 6; ++step)
+    for (unsigned step = 0; step < 7; ++step)
         assert(native_bridge_calls[step] == 32);
+    MorrowAppBridgeCallResult rejected_step = {};
+    assert(!morrow_jni_runtime_call_app_bridge(bridge_functions[6],
+        static_cast<MorrowAppBridgeStep>(7), &rejected_step));
+    assert(!rejected_step.entry_invoked && !rejected_step.entry_returned);
     assert(real_env->localframe.front().size() == bridge_call_locals_before);
     main_env->DeleteLocalRef(expected_bridge_platform);
     expected_bridge_platform = expected_bridge_surface = nullptr;
@@ -698,7 +708,7 @@ int main()
     expected_bridge_class = nullptr;
     expected_bridge_init_params = expected_bridge_start_params = nullptr;
     // The existing AutoValue getter test below uses the same local-frame
-    // baseline and must still pass after 192 separate native boundary calls.
+    // baseline and must still pass after 224 separate native boundary calls.
     const size_t bridge_after_calls = real_env->localframe.front().size();
     assert(bridge_after_calls == bridge_locals_before);
     for (unsigned i = 0; i < 32; ++i) {

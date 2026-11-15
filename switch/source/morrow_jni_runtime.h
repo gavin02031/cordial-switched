@@ -141,7 +141,8 @@ typedef enum {
     MORROW_APP_BRIDGE_V2_INIT,
     MORROW_APP_BRIDGE_LUA_SHELL,
     MORROW_APP_BRIDGE_SURFACE_UPDATE,
-    MORROW_APP_BRIDGE_START_APP
+    MORROW_APP_BRIDGE_START_APP,
+    MORROW_APP_BRIDGE_MAIN_THREAD_MESSAGES
 } MorrowAppBridgeStep;
 
 typedef struct {
@@ -151,9 +152,11 @@ typedef struct {
     bool cpp_exception_caught;
 } MorrowAppBridgeCallResult;
 
-// Deliberate experimental native invocation with six observed static
+// Deliberate experimental native invocation with seven observed static
 // NativeGLInterface JNI ABIs. Surface update takes a real libjnivm Surface
 // and PlatformParams; both are owned by the current Horizon runtime.
+// The main-thread message callback is separate, opt-in, and not a substitute
+// for an Android activity loop or recurring message-pump lifecycle.
 // Params are partial, not a verified Android
 // bootstrap. This does not supply account authentication or a game session.
 // Caller must preflight a previously mapped and validated RX entry, and
