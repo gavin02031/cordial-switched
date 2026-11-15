@@ -12,6 +12,18 @@ extern "C" {
 // not the complete Android services or an executable Roblox engine image.
 bool morrow_jni_runtime_start(void);
 
+// Supply measured free space from the mounted Switch SD filesystem before
+// starting the VM. A missing measurement leaves LocalStorageManager absent;
+// zero bytes is accepted only when the filesystem actually reports zero.
+bool morrow_jni_runtime_bind_storage_available_bytes(int64_t bytes);
+bool morrow_jni_runtime_storage_available_bytes(int64_t *bytes);
+
+// Real Java LocalStorageManager receiver for future Roblox storage init,
+// exposing its measured getAllocatableBytes()J method through JNI. Neither
+// this object nor its method starts the engine's storage subsystem.
+void *morrow_jni_runtime_local_storage_manager(void);
+bool morrow_jni_runtime_release_local_storage_manager(void);
+
 // Use an actual Horizon settings-service BCP-47 language tag (for example
 // en-US, zh-Hans or es-419). Invalid tags and rebinding after Configuration
 // creation fail closed. No language is assumed if the settings service fails.

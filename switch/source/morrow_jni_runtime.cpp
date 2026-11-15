@@ -38,6 +38,12 @@ struct SystemLocale {
 };
 SystemLocale system_locale;
 
+// The engine asks LocalStorageManager for actual allocatable space before
+// creating its content cache. The mounted SD filesystem supplies this value;
+// an unavailable reading must not be silently replaced with a fake capacity.
+int64_t sd_available_bytes;
+bool sd_space_known;
+
 bool parse_system_locale(const char *tag, SystemLocale *parsed)
 {
     if (!tag || !parsed) return false;
@@ -176,6 +182,26 @@ public:
 };
 std::shared_ptr<HorizonConfiguration> configuration_owner;
 jobject configuration_reference;
+
+class HorizonLocalStorageManager : public jnivm::Object {
+public:
+    jlong available_bytes;
+
+    explicit HorizonLocalStorageManager(int64_t bytes) : available_bytes(bytes) {}
+
+    jlong getAllocatableBytes(jnivm::ENV *) { return available_bytes; }
+
+    static void Register(jnivm::ENV *env)
+    {
+        auto klass = env->GetClass<HorizonLocalStorageManager>(
+            "com/roblox/client/LocalStorageManager");
+        klass->HookInstanceFunction(env, "getAllocatableBytes",
+                                    &HorizonLocalStorageManager::getAllocatableBytes);
+    }
+};
+
+std::shared_ptr<HorizonLocalStorageManager> local_storage_owner;
+jobject local_storage_reference;
 
 // Cordial's observed Android launch trace reaches StartAppParams.surface
 // through App Bridge V2, not through AGDK's GameActivity window lifecycle.
@@ -440,6 +466,8 @@ public:
             "com/roblox/engine/jni/autovalue/StartAppParams",
             "com/google/androidgamesdk/GameActivity"
         };
+        if (sd_space_known && path == "com/roblox/client/LocalStorageManager")
+            return env->GetClass(path.c_str());
         for (const char *entry : known)
             if (path == entry)
                 return env->GetClass(entry);
@@ -657,6 +685,8 @@ extern "C" bool morrow_jni_runtime_start(void)
         HorizonGameActivity::Register(candidate->GetEnv().get());
         HorizonStartAppParams::Register(candidate->GetEnv().get());
         HorizonInitParams::Register(candidate->GetEnv().get());
+        if (sd_space_known)
+            HorizonLocalStorageManager::Register(candidate->GetEnv().get());
         candidate->GetEnv()->GetClass("dev/morrow/diagnostics/OnLoadProbe");
         const AndroidJniVmProvider provider = {get_env, attach, detach, nullptr};
         if (!android_jni_vm_bridge_install_provider(&provider, candidate.get()))
@@ -672,6 +702,62 @@ extern "C" bool morrow_jni_runtime_start(void)
         // An allocation or JNI exception cannot cross the C entry point.
         return false;
     }
+}
+
+extern "C" bool morrow_jni_runtime_bind_storage_available_bytes(int64_t bytes)
+{
+    if (bytes < 0) return false;
+    std::lock_guard<std::mutex> lock(start_mutex);
+    // The measurement must precede the VM, which may expose a stable Java
+    // receiver to native engine callbacks. No hidden live rebinding.
+    if (runtime) return false;
+    sd_available_bytes = bytes;
+    sd_space_known = true;
+    return true;
+}
+
+extern "C" bool morrow_jni_runtime_storage_available_bytes(int64_t *bytes)
+{
+    if (!bytes) return false;
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!sd_space_known) return false;
+    *bytes = sd_available_bytes;
+    return true;
+}
+
+extern "C" void *morrow_jni_runtime_local_storage_manager(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!runtime || !attached_to_runtime || !sd_space_known)
+        return nullptr;
+    if (local_storage_reference)
+        return local_storage_reference;
+    try {
+        jnivm::ENV *env = runtime->GetEnv().get();
+        auto owner = std::make_shared<HorizonLocalStorageManager>(sd_available_bytes);
+        JNIEnv *jni = env->GetJNIEnv();
+        jobject local = jnivm::JNITypes<std::shared_ptr<HorizonLocalStorageManager>>::ToJNIType(
+            env, owner);
+        jobject global = jni->NewGlobalRef(local);
+        jni->DeleteLocalRef(local);
+        if (!global) return nullptr;
+        local_storage_owner = std::move(owner);
+        local_storage_reference = global;
+        return global;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+extern "C" bool morrow_jni_runtime_release_local_storage_manager(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!local_storage_reference) return true;
+    if (!runtime || !attached_to_runtime) return false;
+    runtime->GetJNIEnv()->DeleteGlobalRef(local_storage_reference);
+    local_storage_reference = nullptr;
+    local_storage_owner.reset();
+    return true;
 }
 
 extern "C" bool morrow_jni_runtime_bind_system_locale(const char *language_tag)

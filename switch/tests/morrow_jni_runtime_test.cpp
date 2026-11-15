@@ -139,6 +139,17 @@ int main()
     assert(morrow_jni_runtime_release_app_bridge_init_params());
     assert(!morrow_jni_runtime_configuration_bound());
     assert(!morrow_jni_runtime_configuration());
+    int64_t measured_bytes = -1;
+    assert(!morrow_jni_runtime_storage_available_bytes(&measured_bytes));
+    assert(!morrow_jni_runtime_storage_available_bytes(nullptr));
+    assert(!morrow_jni_runtime_local_storage_manager());
+    assert(!morrow_jni_runtime_bind_storage_available_bytes(-1));
+    // The synthetic measurement is provided by the host test, not a guessed
+    // Android disk size. The Switch path uses fsFsGetFreeSpace instead.
+    const int64_t available_bytes = INT64_C(3) * 1024 * 1024 * 1024;
+    assert(morrow_jni_runtime_bind_storage_available_bytes(available_bytes));
+    assert(morrow_jni_runtime_storage_available_bytes(&measured_bytes));
+    assert(measured_bytes == available_bytes);
     assert(!morrow_jni_runtime_system_locale_bound());
     assert(!morrow_jni_runtime_bind_system_locale("en-US"));
     MorrowJniOnLoadProbe onload = {};
@@ -150,6 +161,7 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(nullptr));
     assert(morrow_jni_runtime_start());
     assert(morrow_jni_runtime_start());
+    assert(!morrow_jni_runtime_bind_storage_available_bytes(available_bytes));
     for (const char *invalid : {"", "en_US", "en-US-", "en-US-extra",
                                 "english-US", "en-1234", "en-??", "zh-Hans-INVALID"})
         assert(!morrow_jni_runtime_bind_system_locale(invalid));
@@ -166,6 +178,30 @@ int main()
     auto *main_env = static_cast<JNIEnv *>(env);
     assert(main_env && main_env->GetVersion() == JNI_VERSION_1_6);
     assert(morrow_jni_runtime_jni_env() == main_env);
+    void *storage = morrow_jni_runtime_local_storage_manager();
+    assert(storage && morrow_jni_runtime_local_storage_manager() == storage);
+    jclass storage_class = main_env->FindClass("com/roblox/client/LocalStorageManager");
+    assert(storage_class && main_env->IsInstanceOf(static_cast<jobject>(storage),
+                                                   storage_class));
+    jmethodID allocatable = main_env->GetMethodID(
+        storage_class, "getAllocatableBytes", "()J");
+    assert(allocatable);
+    jnivm::ENV *storage_env = jnivm::ENV::FromJNIEnv(main_env);
+    const size_t space_locals_before = storage_env->localframe.front().size();
+    for (unsigned i = 0; i < 64; ++i) {
+        assert(main_env->CallLongMethod(static_cast<jobject>(storage), allocatable) ==
+               available_bytes);
+        assert(!main_env->ExceptionCheck());
+    }
+    assert(storage_env->localframe.front().size() == space_locals_before);
+    jobject storage_alias = main_env->NewLocalRef(static_cast<jobject>(storage));
+    assert(storage_alias && main_env->IsSameObject(storage_alias,
+                                                   static_cast<jobject>(storage)));
+    assert(morrow_jni_runtime_release_local_storage_manager());
+    assert(morrow_jni_runtime_release_local_storage_manager());
+    assert(main_env->CallLongMethod(storage_alias, allocatable) == available_bytes);
+    main_env->DeleteLocalRef(storage_alias);
+    main_env->DeleteLocalRef(storage_class);
     JavaVM *returned_vm = nullptr;
     assert(main_env->GetJavaVM(&returned_vm) == JNI_OK);
     assert(returned_vm == native_vm);
@@ -670,6 +706,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad, Configuration fields, system LocaleList, ClassLoader and references passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad, measured LocalStorageManager, LocaleList, ClassLoader and references passed");
     return 0;
 }

@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.66 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.67 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -41,7 +41,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.66 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.67 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -51,6 +51,8 @@ window, optionally binds a typed JNI
 registers a stable typed Java `android/content/res/Configuration` identity
 whose `getLocales()` now carries the **actual Switch system language** when
 the settings service is available (no fallback language is fabricated),
+and exposes a typed `LocalStorageManager.getAllocatableBytes()` response
+measured from the mounted Switch SD card (only if its free-space query succeeds),
 exposes the asset manager via GameActivity's `getAssets` JNI callback only if bound,
 and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
 report records `jni_vm_provider_installed`, `jni_game_activity_object_registered`,
@@ -449,6 +451,16 @@ then check:
    `jni_system_locale_bound`; host JNI tests verify methods and repeated
    local-reference cleanup. Android density, classpath, authentication and
    full App Bridge startup remain unavailable.
+   v0.67 measures real available SD-card space using libnx's mounted
+   `FsFileSystem`, before starting libjnivm. With a successful filesystem
+   query it registers a stable, typed `com/roblox/client/LocalStorageManager`
+   instance and its observed `getAllocatableBytes()J` callback. A failed
+   query leaves this service absent rather than claiming the card has zero
+   free bytes. The L3 report records `jni_storage_free_space_measured`,
+   `jni_storage_available_bytes`, and `jni_local_storage_manager_registered`.
+   Host tests call the real JNI long method repeatedly and verify reference
+   lifetime. The game's native storage initialiser is **not** called yet;
+   this does not download Roblox assets, display login, or join experiences.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

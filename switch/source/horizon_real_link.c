@@ -396,9 +396,20 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
 #ifdef MORROW_HAS_JNIVM
     log_line(log, "jni_system_locale_bound=%s",
              morrow_jni_runtime_system_locale_bound() ? "yes" : "no");
+    int64_t sd_bytes = 0;
+    const bool sd_measured = morrow_jni_runtime_storage_available_bytes(&sd_bytes);
+    log_line(log, "jni_storage_free_space_measured=%s",
+             sd_measured ? "yes" : "no");
+    if (sd_measured)
+        log_line(log, "jni_storage_available_bytes=%lld", (long long)sd_bytes);
+    log_line(log, "jni_local_storage_manager_registered=%s",
+             morrow_jni_runtime_local_storage_manager() ? "yes" : "no");
 #else
     log_line(log, "jni_system_locale_bound=no");
+    log_line(log, "jni_storage_free_space_measured=no");
+    log_line(log, "jni_local_storage_manager_registered=no");
 #endif
+    log_line(log, "roblox_storage_initialised=no");
     log_line(log, "jni_game_activity_class_loader=%s",
              game_activity_ready ? "registered_classes_only" : "unavailable");
     log_line(log, "jni_apk_classpath_installed=no");

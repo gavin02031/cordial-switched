@@ -31,6 +31,17 @@ static void bind_switch_system_locale(void)
     language_tag[8] = '\0';
     morrow_jni_runtime_bind_system_locale(language_tag);
 }
+
+static void bind_switch_sd_free_space(void)
+{
+    // fsdev owns the already-mounted SD service. Do not open a second mount,
+    // guess the card's capacity, or count internal NAND as game-cache space.
+    FsFileSystem *sd = fsdevGetDeviceFileSystem("sdmc");
+    if (!sd) return;
+    s64 bytes = -1;
+    if (R_SUCCEEDED(fsFsGetFreeSpace(sd, "/", &bytes)) && bytes >= 0)
+        morrow_jni_runtime_bind_storage_available_bytes(bytes);
+}
 #endif
 
 // Keep the existing stage-XX naming while recording a fuller preflight trace.
@@ -251,9 +262,11 @@ int main(void)
 #ifdef MORROW_HAS_JNIVM
             // Register a genuine Java reference to the host-owned window,
             // but do not create another EGL context while SDL is drawing.
+            bind_switch_sd_free_space();
             if (morrow_jni_runtime_start()) {
                 bind_switch_system_locale();
                 morrow_jni_runtime_game_activity();
+                morrow_jni_runtime_local_storage_manager();
                 morrow_jni_runtime_bind_horizon_surface(
                     nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
                 morrow_jni_runtime_bind_asset_manager(
@@ -303,6 +316,7 @@ int main(void)
 
 #ifdef MORROW_HAS_JNIVM
     // Unbind Java owners before their host assets/display can go away.
+    morrow_jni_runtime_release_local_storage_manager();
     morrow_jni_runtime_unbind_asset_manager();
     morrow_jni_runtime_unbind_surface();
     morrow_jni_runtime_release_configuration();
