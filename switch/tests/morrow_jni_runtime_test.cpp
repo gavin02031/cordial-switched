@@ -390,6 +390,48 @@ int main()
     assert(morrow_jni_runtime_release_configuration());
     assert(!morrow_jni_runtime_configuration_bound());
     assert(main_env->IsInstanceOf(config_alias, config_class));
+    jobject config_alias_2 = main_env->NewLocalRef(config_alias);
+    assert(config_alias_2 && main_env->IsSameObject(config_alias, config_alias_2));
+    // AGDK reads these fields during initializeNativeCode. Unknown display
+    // and locale metadata must stay unknown, while JNI field access must be
+    // genuinely typed and writable rather than a fabricated getter stub.
+    for (const char *field : {
+             "colorMode", "densityDpi", "fontWeightAdjustment",
+             "hardKeyboardHidden", "keyboard", "keyboardHidden", "mcc", "mnc",
+             "navigation", "navigationHidden", "orientation", "screenHeightDp",
+             "screenLayout", "screenWidthDp", "smallestScreenWidthDp",
+             "touchscreen", "uiMode"}) {
+        jfieldID id = main_env->GetFieldID(config_class, field, "I");
+        assert(id && main_env->GetIntField(config_alias, id) == 0);
+        main_env->SetIntField(config_alias, id, 42);
+        assert(main_env->GetIntField(config_alias_2, id) == 42);
+        main_env->SetIntField(config_alias, id, 0);
+    }
+    jfieldID scale = main_env->GetFieldID(config_class, "fontScale", "F");
+    assert(scale && main_env->GetFloatField(config_alias, scale) == 0.0f);
+    main_env->SetFloatField(config_alias, scale, 1.25f);
+    assert(main_env->GetFloatField(config_alias_2, scale) == 1.25f);
+    main_env->SetFloatField(config_alias, scale, 0.0f);
+    jclass locale_list_class = main_env->FindClass("android/os/LocaleList");
+    jclass locale_class = main_env->FindClass("java/util/Locale");
+    assert(locale_list_class && locale_class);
+    jmethodID locales_method = main_env->GetMethodID(
+        config_class, "getLocales", "()Landroid/os/LocaleList;");
+    jmethodID locales_size = main_env->GetMethodID(locale_list_class, "size", "()I");
+    jmethodID locales_get = main_env->GetMethodID(
+        locale_list_class, "get", "(I)Ljava/util/Locale;");
+    assert(locales_method && locales_size && locales_get);
+    for (const char *method_name : {"getLanguage", "getScript", "getCountry", "getVariant"})
+        assert(main_env->GetMethodID(locale_class, method_name,
+                                    "()Ljava/lang/String;"));
+    jobject locales = main_env->CallObjectMethod(config_alias, locales_method);
+    assert(locales && main_env->IsInstanceOf(locales, locale_list_class));
+    assert(main_env->CallIntMethod(locales, locales_size) == 0);
+    assert(!main_env->CallObjectMethod(locales, locales_get, 0));
+    main_env->DeleteLocalRef(locales);
+    main_env->DeleteLocalRef(locale_class);
+    main_env->DeleteLocalRef(locale_list_class);
+    main_env->DeleteLocalRef(config_alias_2);
     void *next_configuration = morrow_jni_runtime_configuration();
     assert(next_configuration && !main_env->IsSameObject(
         config_alias, static_cast<jobject>(next_configuration)));
@@ -400,6 +442,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad, typed Configuration, ClassLoader and reference lifecycle passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad, Configuration fields, empty LocaleList, ClassLoader and references passed");
     return 0;
 }

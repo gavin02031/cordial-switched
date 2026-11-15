@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.59 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.60 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.59 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.60 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -134,7 +134,7 @@ then check:
    This option saves `link-XX.txt` in the same folder. Normal L3 does not
    map the Roblox image as executable, call an engine initialiser, sign in,
    or join a game. The v0.59 **ZL + L3** experiment may map and call the real
-   `JNI_OnLoad` only after its safety checks pass; it does not attempt the
+`JNI_OnLoad` only after its safety checks pass; it does not attempt the
    GameActivity initialiser or gameplay. A real engine still needs Android
    TLS, constructors, complete JNI and graphics.
    Starting with v0.27, this same report checks whether a separate, aligned
@@ -366,6 +366,14 @@ then check:
    Only then does it map the real user-supplied library executable and call
    that export once. Successful *host tests* use a Morrow-owned JNI function,
    not Roblox; no real engine execution on Switch has been observed yet.
+   v0.60 registers all 18 primitive JNI `Configuration` fields required by
+   GameActivity's configuration read, plus typed `getLocales`, `LocaleList`
+   and `Locale` method signatures. The configuration remains unpopulated
+   where a real device locale, density or Android resource service is not
+   known: it exposes zero/empty values, **not fabricated Android metadata**.
+   The strict JNI provider test checks field identity, types and the empty
+   locale list using the actual pinned VM. GameActivity launch and Roblox
+   login are still not implemented.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

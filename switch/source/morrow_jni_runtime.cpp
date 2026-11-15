@@ -26,10 +26,84 @@ std::shared_ptr<AssetManagerObject> asset_owner;
 jobject asset_reference;
 std::string asset_directory;
 
-// GameActivity's native initialiser takes a Configuration object separately
-// from the NDK AConfiguration view of an AssetManager. We own only its Java
-// identity here; no locale, density or Android resource system is invented.
-class HorizonConfiguration : public jnivm::Object {};
+// GameActivity reads the Java Configuration fields and LocaleList before it
+// reaches the game's native callbacks. Unknown values remain explicitly zero;
+// neither a device locale nor dp/density is inferred from 720p pixels.
+class HorizonLocale : public jnivm::Object {
+public:
+    std::shared_ptr<jnivm::String> getLanguage(jnivm::ENV *) { return nullptr; }
+    std::shared_ptr<jnivm::String> getScript(jnivm::ENV *) { return nullptr; }
+    std::shared_ptr<jnivm::String> getCountry(jnivm::ENV *) { return nullptr; }
+    std::shared_ptr<jnivm::String> getVariant(jnivm::ENV *) { return nullptr; }
+
+    static void Register(jnivm::ENV *env)
+    {
+        auto klass = env->GetClass<HorizonLocale>("java/util/Locale");
+        klass->HookInstanceFunction(env, "getLanguage", &HorizonLocale::getLanguage);
+        klass->HookInstanceFunction(env, "getScript", &HorizonLocale::getScript);
+        klass->HookInstanceFunction(env, "getCountry", &HorizonLocale::getCountry);
+        klass->HookInstanceFunction(env, "getVariant", &HorizonLocale::getVariant);
+    }
+};
+
+class HorizonLocaleList : public jnivm::Object {
+public:
+    jint size(jnivm::ENV *) { return 0; }
+    std::shared_ptr<HorizonLocale> get(jnivm::ENV *, jint) { return nullptr; }
+
+    static void Register(jnivm::ENV *env)
+    {
+        auto klass = env->GetClass<HorizonLocaleList>("android/os/LocaleList");
+        klass->HookInstanceFunction(env, "size", &HorizonLocaleList::size);
+        klass->HookInstanceFunction(env, "get", &HorizonLocaleList::get);
+    }
+};
+
+class HorizonConfiguration : public jnivm::Object {
+public:
+    jint colorMode = 0, densityDpi = 0, fontWeightAdjustment = 0;
+    jint hardKeyboardHidden = 0, keyboard = 0, keyboardHidden = 0;
+    jint mcc = 0, mnc = 0, navigation = 0, navigationHidden = 0;
+    jint orientation = 0, screenHeightDp = 0, screenLayout = 0;
+    jint screenWidthDp = 0, smallestScreenWidthDp = 0, touchscreen = 0;
+    jint uiMode = 0;
+    jfloat fontScale = 0;
+    std::shared_ptr<HorizonLocaleList> locale_list =
+        std::make_shared<HorizonLocaleList>();
+
+    std::shared_ptr<HorizonLocaleList> getLocales(jnivm::ENV *)
+    {
+        return locale_list;
+    }
+
+    static void Register(jnivm::ENV *env)
+    {
+        HorizonLocale::Register(env);
+        HorizonLocaleList::Register(env);
+        auto klass = env->GetClass<HorizonConfiguration>("android/content/res/Configuration");
+#define HOOK_CONFIG_FIELD(name) klass->HookInstance(env, #name, &HorizonConfiguration::name)
+        HOOK_CONFIG_FIELD(colorMode);
+        HOOK_CONFIG_FIELD(densityDpi);
+        HOOK_CONFIG_FIELD(fontScale);
+        HOOK_CONFIG_FIELD(fontWeightAdjustment);
+        HOOK_CONFIG_FIELD(hardKeyboardHidden);
+        HOOK_CONFIG_FIELD(keyboard);
+        HOOK_CONFIG_FIELD(keyboardHidden);
+        HOOK_CONFIG_FIELD(mcc);
+        HOOK_CONFIG_FIELD(mnc);
+        HOOK_CONFIG_FIELD(navigation);
+        HOOK_CONFIG_FIELD(navigationHidden);
+        HOOK_CONFIG_FIELD(orientation);
+        HOOK_CONFIG_FIELD(screenHeightDp);
+        HOOK_CONFIG_FIELD(screenLayout);
+        HOOK_CONFIG_FIELD(screenWidthDp);
+        HOOK_CONFIG_FIELD(smallestScreenWidthDp);
+        HOOK_CONFIG_FIELD(touchscreen);
+        HOOK_CONFIG_FIELD(uiMode);
+#undef HOOK_CONFIG_FIELD
+        klass->HookInstanceFunction(env, "getLocales", &HorizonConfiguration::getLocales);
+    }
+};
 std::shared_ptr<HorizonConfiguration> configuration_owner;
 jobject configuration_reference;
 
@@ -66,6 +140,7 @@ public:
             "java/lang/ClassLoader", "android/view/Surface",
             "android/content/res/AssetManager", "androidx/core/graphics/Insets",
             "android/content/res/Configuration",
+            "android/os/LocaleList", "java/util/Locale",
             "com/google/androidgamesdk/GameActivity"
         };
         for (const char *entry : known)
@@ -145,7 +220,7 @@ public:
         HorizonClassLoader::Register(env);
         env->GetClass<HorizonSurface>("android/view/Surface");
         env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
-        env->GetClass<HorizonConfiguration>("android/content/res/Configuration");
+        HorizonConfiguration::Register(env);
         env->GetClass<HorizonGameActivity>("com/google/androidgamesdk/GameActivity");
         auto klass = env->GetClass("com/google/androidgamesdk/GameActivity");
         klass->HookInstanceFunction(env, "getClassLoader",

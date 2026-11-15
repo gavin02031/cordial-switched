@@ -276,6 +276,10 @@ void horizon_real_link_run(RealLinkResult *result, bool request_execution)
 #endif
     log_line(log, "jni_java_configuration_object_registered=%s",
              java_configuration_bound ? "yes" : "no");
+    log_line(log, "jni_java_configuration_primitive_fields=%s",
+             java_configuration_bound ? "18_registered_unknown_values" : "unavailable");
+    log_line(log, "jni_java_configuration_locales=%s",
+             java_configuration_bound ? "empty_list_until_device_locale_known" : "unavailable");
     log_line(log, "android_java_asset_manager_root=optional_user_assets");
     log_line(log, "android_asset_configuration_registered=no");
     log_line(log, "android_configuration_ndk_functions=9");
