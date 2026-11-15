@@ -260,6 +260,12 @@ void horizon_real_link_run(RealLinkResult *result)
 #endif
     log_line(log, "android_java_asset_manager_registered=%s",
              java_assets_bound ? "yes" : "no");
+    bool java_configuration_bound = false;
+#ifdef MORROW_HAS_JNIVM
+    java_configuration_bound = morrow_jni_runtime_configuration_bound();
+#endif
+    log_line(log, "jni_java_configuration_object_registered=%s",
+             java_configuration_bound ? "yes" : "no");
     log_line(log, "android_java_asset_manager_root=optional_user_assets");
     log_line(log, "android_asset_configuration_registered=no");
     log_line(log, "android_configuration_ndk_functions=9");

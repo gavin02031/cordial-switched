@@ -53,6 +53,13 @@ void *morrow_jni_runtime_bind_asset_manager(const char *asset_root);
 bool morrow_jni_runtime_asset_manager_bound(void);
 bool morrow_jni_runtime_unbind_asset_manager(void);
 
+// Typed, stable Java Configuration identity for the eventual GameActivity
+// native initialiser. This is deliberately not an invented Android Resources
+// object or populated Configuration: screen/locale data remain unavailable.
+void *morrow_jni_runtime_configuration(void);
+bool morrow_jni_runtime_configuration_bound(void);
+bool morrow_jni_runtime_release_configuration(void);
+
 // GameActivity has typed insets and asset callbacks, a restricted ClassLoader
 // for explicitly registered platform classes, and records two Android
 // window/input requests. No APK classpath, Android window manager or IME

@@ -107,6 +107,8 @@ int main()
     assert(morrow_jni_runtime_java_vm() == nullptr);
     assert(morrow_jni_runtime_jni_env() == nullptr);
     assert(!morrow_jni_runtime_game_activity_ready());
+    assert(!morrow_jni_runtime_configuration_bound());
+    assert(!morrow_jni_runtime_configuration());
     MorrowJniOnLoadProbe onload = {};
     assert(!morrow_jni_runtime_probe_onload(&onload));
     assert(!onload.vm_available);
@@ -151,8 +153,16 @@ int main()
     assert(morrow_jni_runtime_game_activity() == activity);
     jclass activity_class = main_env->FindClass("com/google/androidgamesdk/GameActivity");
     jclass insets_class = main_env->FindClass("androidx/core/graphics/Insets");
-    assert(activity_class && insets_class);
+    jclass config_class = main_env->FindClass("android/content/res/Configuration");
+    assert(activity_class && insets_class && config_class);
     assert(main_env->IsInstanceOf(static_cast<jobject>(activity), activity_class));
+    void *configuration = morrow_jni_runtime_configuration();
+    assert(configuration && morrow_jni_runtime_configuration_bound());
+    assert(morrow_jni_runtime_configuration() == configuration);
+    assert(main_env->IsInstanceOf(static_cast<jobject>(configuration), config_class));
+    jobject config_alias = main_env->NewLocalRef(static_cast<jobject>(configuration));
+    assert(config_alias && main_env->IsSameObject(config_alias,
+                                                  static_cast<jobject>(configuration)));
     jmethodID instance_method = main_env->GetMethodID(
         activity_class, "nativeIncrement", "(I)I");
     assert(instance_method);
@@ -200,14 +210,20 @@ int main()
         loader, find_class, asset_name));
     assert(loaded_asset && main_env->IsSameObject(
         loaded_asset, main_env->FindClass("android/content/res/AssetManager")));
+    jstring configuration_name = main_env->NewStringUTF("android.content.res.Configuration");
+    jclass loaded_configuration = static_cast<jclass>(main_env->CallObjectMethod(
+        loader, load_class, configuration_name));
+    assert(loaded_configuration && main_env->IsSameObject(loaded_configuration, config_class));
     jstring unsupported_name = main_env->NewStringUTF(
         "com.roblox.client.startup.MainGameActivity");
     assert(!main_env->CallObjectMethod(loader, load_class, unsupported_name));
     main_env->DeleteLocalRef(known_name);
     main_env->DeleteLocalRef(asset_name);
     main_env->DeleteLocalRef(unsupported_name);
+    main_env->DeleteLocalRef(configuration_name);
     main_env->DeleteLocalRef(loaded);
     main_env->DeleteLocalRef(loaded_asset);
+    main_env->DeleteLocalRef(loaded_configuration);
     main_env->DeleteLocalRef(loader_again);
     main_env->DeleteLocalRef(loader);
     assert(morrow_jni_runtime_activity_requests(&activity_requests));
@@ -256,6 +272,12 @@ int main()
     }
     const size_t locals_after = real_env->localframe.front().size();
     assert(locals_after == locals_before);
+    for (unsigned i = 0; i < 64; ++i) {
+        jobject repeated_config = main_env->NewLocalRef(static_cast<jobject>(configuration));
+        assert(repeated_config && main_env->IsInstanceOf(repeated_config, config_class));
+        main_env->DeleteLocalRef(repeated_config);
+    }
+    assert(real_env->localframe.front().size() == locals_before);
 
     WorkerResult worker = {bridge, main_env, native_vm, nullptr,
                            activity, set_window_flags};
@@ -365,11 +387,19 @@ int main()
     assert(!open_asset(native_manager, "test.asset", 0));
     close_asset(asset);
     assert(morrow_jni_runtime_unbind_asset_manager());
+    assert(morrow_jni_runtime_release_configuration());
+    assert(!morrow_jni_runtime_configuration_bound());
+    assert(main_env->IsInstanceOf(config_alias, config_class));
+    void *next_configuration = morrow_jni_runtime_configuration();
+    assert(next_configuration && !main_env->IsSameObject(
+        config_alias, static_cast<jobject>(next_configuration)));
+    assert(morrow_jni_runtime_release_configuration());
+    main_env->DeleteLocalRef(config_alias);
     assert(morrow_jni_runtime_release_game_activity());
     assert(!morrow_jni_runtime_game_activity_ready());
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad native (I)I dispatch, bounded ClassLoader and local refs passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad, typed Configuration, ClassLoader and reference lifecycle passed");
     return 0;
 }

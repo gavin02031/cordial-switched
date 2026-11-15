@@ -26,6 +26,13 @@ std::shared_ptr<AssetManagerObject> asset_owner;
 jobject asset_reference;
 std::string asset_directory;
 
+// GameActivity's native initialiser takes a Configuration object separately
+// from the NDK AConfiguration view of an AssetManager. We own only its Java
+// identity here; no locale, density or Android resource system is invented.
+class HorizonConfiguration : public jnivm::Object {};
+std::shared_ptr<HorizonConfiguration> configuration_owner;
+jobject configuration_reference;
+
 class ZeroInsets : public jnivm::Object {
 public:
     jint left = 0, top = 0, right = 0, bottom = 0;
@@ -58,6 +65,7 @@ public:
             "java/lang/Object", "java/lang/Class", "java/lang/String",
             "java/lang/ClassLoader", "android/view/Surface",
             "android/content/res/AssetManager", "androidx/core/graphics/Insets",
+            "android/content/res/Configuration",
             "com/google/androidgamesdk/GameActivity"
         };
         for (const char *entry : known)
@@ -137,6 +145,7 @@ public:
         HorizonClassLoader::Register(env);
         env->GetClass<HorizonSurface>("android/view/Surface");
         env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
+        env->GetClass<HorizonConfiguration>("android/content/res/Configuration");
         env->GetClass<HorizonGameActivity>("com/google/androidgamesdk/GameActivity");
         auto klass = env->GetClass("com/google/androidgamesdk/GameActivity");
         klass->HookInstanceFunction(env, "getClassLoader",
@@ -462,6 +471,50 @@ extern "C" bool morrow_jni_runtime_asset_manager_bound(void)
 {
     std::lock_guard<std::mutex> lock(start_mutex);
     return asset_reference != nullptr;
+}
+
+extern "C" void *morrow_jni_runtime_configuration(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!runtime || !attached_to_runtime)
+        return nullptr;
+    if (configuration_reference)
+        return configuration_reference;
+    try {
+        jnivm::ENV *env = runtime->GetEnv().get();
+        auto owner = std::make_shared<HorizonConfiguration>();
+        JNIEnv *jni = env->GetJNIEnv();
+        jobject local = jnivm::JNITypes<std::shared_ptr<HorizonConfiguration>>::ToJNIType(
+            env, owner);
+        jobject global = jni->NewGlobalRef(local);
+        jni->DeleteLocalRef(local);
+        if (!global)
+            return nullptr;
+        configuration_owner = std::move(owner);
+        configuration_reference = global;
+        return global;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+extern "C" bool morrow_jni_runtime_configuration_bound(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return configuration_reference != nullptr;
+}
+
+extern "C" bool morrow_jni_runtime_release_configuration(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!configuration_reference)
+        return true;
+    if (!runtime || !attached_to_runtime)
+        return false;
+    runtime->GetJNIEnv()->DeleteGlobalRef(configuration_reference);
+    configuration_reference = nullptr;
+    configuration_owner.reset();
+    return true;
 }
 
 extern "C" bool morrow_jni_runtime_unbind_asset_manager(void)

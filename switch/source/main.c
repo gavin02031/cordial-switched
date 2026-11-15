@@ -239,6 +239,7 @@ int main(void)
                     nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
                 morrow_jni_runtime_bind_asset_manager(
                     ENGINE_REPORT_DIR "/assets");
+                morrow_jni_runtime_configuration();
             }
 #endif
             horizon_real_link_run(&state.real_link);
@@ -282,6 +283,7 @@ int main(void)
     // Unbind Java owners before their host assets/display can go away.
     morrow_jni_runtime_unbind_asset_manager();
     morrow_jni_runtime_unbind_surface();
+    morrow_jni_runtime_release_configuration();
     morrow_jni_runtime_release_game_activity();
 #endif
     ui_shutdown();
