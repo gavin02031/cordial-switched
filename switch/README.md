@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.54 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.55 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.54 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.55 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -40,9 +40,9 @@ report records `jni_vm_provider_installed`, `jni_game_activity_object_registered
 independently. It also executes an original Morrow-owned `JNI_OnLoad`-shaped
 callback against that VM and registers, attempts to invoke, then unregisters
 one native method. The `morrow_synthetic_jni_onload_*` fields in `link-XX.txt`
-record each stage. The pinned VM currently **does not dispatch** that registered
-method through `CallStaticIntMethod`, a known blocker. The check does **not**
-call into `libroblox.so`.
+record each stage. The patched VM now dispatches one predeclared `(I)I` native
+through `CallStaticIntMethod`; **other raw JNI signatures are not implemented**
+and `RegisterNatives` rejects them. The check does **not** call into `libroblox.so`.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
@@ -74,6 +74,7 @@ JNI jobs; a fresh local checkout can do so with:
 ```sh
 git submodule update --init third_party/libjnivm
 git -C third_party/libjnivm apply ../../switch/patches/libjnivm-local-refs.patch
+git -C third_party/libjnivm apply ../../switch/patches/libjnivm-native-int-dispatch.patch
 ```
 
 Copy `switch/cordial-switched.nro` to `sdmc:/switch/cordial-switched.nro`,
@@ -318,6 +319,13 @@ then check:
    shows that registered methods cannot yet be called through the JNI static
    invocation table. The failing subcheck stays visible in diagnostics; a green
    cross-build does not prove Roblox's initialiser can execute.
+   v0.55 supplies a narrowly typed registered-native call adapter in the
+   pinned VM. It correctly runs predeclared static and instance `(I)I` JNI
+   methods, with native registration and class-local cleanup verified by
+   repeated host and ASan tests. Unsupported signatures fail registration
+   instead of silently returning zero; this is not general Android ART or
+   a working Roblox bootstrap. The L3 `morrow_synthetic_jni_onload_probe`
+   field now expects `passed` on a functioning opt-in device runtime.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

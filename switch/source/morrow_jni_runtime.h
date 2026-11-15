@@ -30,10 +30,10 @@ typedef struct {
 } MorrowJniOnLoadProbe;
 
 // Call an original, Morrow-owned JNI_OnLoad-shaped function against the real
-// VM and test a native registered by it. The pinned VM accepts RegisterNatives
-// but does not dispatch those raw callbacks through CallStaticIntMethod yet;
-// native_invoked reports that blocker separately rather than faking success.
-// No user library or Roblox code runs; repeats must not retain JNI locals.
+// VM and invoke one registered (I)I native through CallStaticIntMethod. The
+// bounded patched VM rejects other signatures until their ABI can be handled
+// correctly. No user library or Roblox code runs; repeats must not retain
+// JNI locals or native registrations.
 bool morrow_jni_runtime_probe_onload(MorrowJniOnLoadProbe *report);
 
 // A host-owned, live Horizon NWindow can be represented by one stable JNI

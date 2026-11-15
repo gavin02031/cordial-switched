@@ -44,6 +44,13 @@ using AssetOpen = void *(*)(void *, const char *, int);
 using AssetLength = off_t (*)(void *);
 using AssetClose = void (*)(void *);
 
+static jobject expected_instance;
+static jint instance_increment(JNIEnv *env, jobject instance, jint value)
+{
+    assert(env->IsSameObject(instance, expected_instance));
+    return value + 1;
+}
+
 template<typename Callback> static Callback native_window_symbol(const char *name)
 {
     uint64_t address = 0;
@@ -121,9 +128,8 @@ int main()
     JavaVM *returned_vm = nullptr;
     assert(main_env->GetJavaVM(&returned_vm) == JNI_OK);
     assert(returned_vm == native_vm);
-    // A synthetic JNI_OnLoad can register a native, but this pinned libjnivm
-    // doesn't dispatch it via CallStaticIntMethod. Record that failing control
-    // explicitly while checking ABI, cleanup and repeatability.
+    // Registered JNI (I)I callbacks must execute via CallStaticIntMethod,
+    // with their declaring class and calling thread's JNIEnv passed through.
     for (unsigned i = 0; i < 64; ++i) {
         const bool passed = morrow_jni_runtime_probe_onload(&onload);
         if (!passed)
@@ -134,7 +140,7 @@ int main()
                     onload.native_unregistered, onload.local_references_released);
         assert(passed);
         assert(onload.vm_available && onload.jni_onload_accepted &&
-               onload.native_registered && !onload.native_invoked &&
+               onload.native_registered && onload.native_invoked &&
                onload.native_unregistered && onload.local_references_released);
     }
     assert(bridge->functions->get_env(bridge, &env, 0x00010008) ==
@@ -147,6 +153,29 @@ int main()
     jclass insets_class = main_env->FindClass("androidx/core/graphics/Insets");
     assert(activity_class && insets_class);
     assert(main_env->IsInstanceOf(static_cast<jobject>(activity), activity_class));
+    jmethodID instance_method = main_env->GetMethodID(
+        activity_class, "nativeIncrement", "(I)I");
+    assert(instance_method);
+    JNINativeMethod registered = {
+        const_cast<char *>("nativeIncrement"), const_cast<char *>("(I)I"),
+        reinterpret_cast<void *>(&instance_increment)
+    };
+    assert(main_env->RegisterNatives(activity_class, &registered, 1) == JNI_OK);
+    expected_instance = static_cast<jobject>(activity);
+    assert(main_env->CallIntMethod(expected_instance, instance_method, 41) == 42);
+    assert(!main_env->ExceptionCheck());
+    assert(main_env->UnregisterNatives(activity_class) == JNI_OK);
+    expected_instance = nullptr;
+    JNINativeMethod unsupported = {
+        const_cast<char *>("nativeLong"), const_cast<char *>("(J)J"),
+        reinterpret_cast<void *>(&instance_increment)
+    };
+    assert(main_env->RegisterNatives(activity_class, &unsupported, 1) == JNI_ERR);
+    JNINativeMethod undeclared = {
+        const_cast<char *>("nativeUndeclared"), const_cast<char *>("(I)I"),
+        reinterpret_cast<void *>(&instance_increment)
+    };
+    assert(main_env->RegisterNatives(activity_class, &undeclared, 1) == JNI_ERR);
     jmethodID get_loader = main_env->GetMethodID(
         activity_class, "getClassLoader", "()Ljava/lang/ClassLoader;");
     assert(get_loader);
@@ -341,6 +370,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad registration/cleanup passed; registered-native dispatch remains blocked");
+    puts("morrow_jni_runtime_test: JNI_OnLoad native (I)I dispatch, bounded ClassLoader and local refs passed");
     return 0;
 }

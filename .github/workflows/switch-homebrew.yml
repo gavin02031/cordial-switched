@@ -237,6 +237,10 @@ jobs:
         run: |
           git -C third_party/libjnivm apply --check ../../switch/patches/libjnivm-local-refs.patch
           git -C third_party/libjnivm apply ../../switch/patches/libjnivm-local-refs.patch
+      - name: Apply bounded JNI registered-native dispatch
+        run: |
+          git -C third_party/libjnivm apply --check ../../switch/patches/libjnivm-native-int-dispatch.patch
+          git -C third_party/libjnivm apply ../../switch/patches/libjnivm-native-int-dispatch.patch
       - name: Build native JNI VM for provider tests
         run: |
           cmake -S third_party/libjnivm -B /tmp/morrow-jnivm-host \
@@ -274,6 +278,10 @@ jobs:
         run: |
           git -c safe.directory="$GITHUB_WORKSPACE/third_party/libjnivm" -C third_party/libjnivm apply --check ../../switch/patches/libjnivm-local-refs.patch
           git -c safe.directory="$GITHUB_WORKSPACE/third_party/libjnivm" -C third_party/libjnivm apply ../../switch/patches/libjnivm-local-refs.patch
+      - name: Apply bounded JNI registered-native dispatch
+        run: |
+          git -c safe.directory="$GITHUB_WORKSPACE/third_party/libjnivm" -C third_party/libjnivm apply --check ../../switch/patches/libjnivm-native-int-dispatch.patch
+          git -c safe.directory="$GITHUB_WORKSPACE/third_party/libjnivm" -C third_party/libjnivm apply ../../switch/patches/libjnivm-native-int-dispatch.patch
       - name: Cross-compile libjnivm for Horizon ARM64
         run: |
           # switch_rules sets compiler paths from DEVKITPRO; DEVKITA64 is not

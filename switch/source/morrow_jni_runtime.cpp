@@ -219,8 +219,17 @@ int32_t detach(void *context)
 
 uint32_t synthetic_native_calls;
 
-jint synthetic_native_increment(JNIEnv *, jclass, jint value)
+jint synthetic_native_increment(JNIEnv *env, jclass klass, jint value)
 {
+    if (!env || !klass)
+        return JNI_ERR;
+    jclass expected = env->FindClass("dev/morrow/diagnostics/OnLoadProbe");
+    if (!expected)
+        return JNI_ERR;
+    const bool correct_class = env->IsSameObject(klass, expected) == JNI_TRUE;
+    env->DeleteLocalRef(expected);
+    if (!correct_class)
+        return JNI_ERR;
     ++synthetic_native_calls;
     return value + 7;
 }
@@ -236,6 +245,12 @@ jint synthetic_jni_onload(JavaVM *vm, void *)
     jclass klass = env->FindClass("dev/morrow/diagnostics/OnLoadProbe");
     if (!klass)
         return JNI_ERR;
+    // The limited JNI VM needs a known method declaration before it can
+    // attach a native callback without guessing instance/static semantics.
+    if (!env->GetStaticMethodID(klass, "nativeIncrement", "(I)I")) {
+        env->DeleteLocalRef(klass);
+        return JNI_ERR;
+    }
     JNINativeMethod method = {
         const_cast<char *>("nativeIncrement"),
         const_cast<char *>("(I)I"),
@@ -324,7 +339,7 @@ extern "C" bool morrow_jni_runtime_probe_onload(MorrowJniOnLoadProbe *report)
         report->local_references_released =
             runtime->GetEnv()->localframe.front().size() == locals_before;
         return report->jni_onload_accepted && report->native_registered &&
-               report->native_unregistered &&
+               report->native_invoked && report->native_unregistered &&
                report->local_references_released;
     } catch (...) {
         return false;
