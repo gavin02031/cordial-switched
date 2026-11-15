@@ -88,13 +88,13 @@ static void synthetic_bridge_surface(JNIEnv *env, jclass klass,
     assert(env && env->IsSameObject(klass, expected_bridge_class));
     assert(env->IsSameObject(surface, expected_bridge_surface));
     assert(env->IsSameObject(platform, expected_bridge_platform));
-    ++native_bridge_calls[4];
+    ++native_bridge_calls[5];
 }
 static void synthetic_bridge_start(JNIEnv *env, jclass klass, jobject params)
 {
     assert(env && env->IsSameObject(klass, expected_bridge_class));
     assert(env->IsSameObject(params, expected_bridge_start_params));
-    ++native_bridge_calls[5];
+    ++native_bridge_calls[4];
 }
 static void synthetic_bridge_main_thread_messages(JNIEnv *env, jclass klass)
 {
@@ -682,8 +682,8 @@ int main()
         reinterpret_cast<uintptr_t>(&synthetic_bridge_update_adapter),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_init),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_lua),
-        reinterpret_cast<uintptr_t>(&synthetic_bridge_surface),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_start),
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_surface),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_main_thread_messages)
     };
     for (unsigned trial = 0; trial < 32; ++trial) {

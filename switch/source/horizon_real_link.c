@@ -52,7 +52,8 @@ static bool engine_jni_onload_succeeded;
 static bool game_activity_attempt_consumed;
 static bool game_activity_entry_called;
 static uintptr_t live_game_activity_target;
-static uintptr_t live_app_bridge_targets[6];
+static uintptr_t live_app_bridge_targets[5];
+static uintptr_t live_app_bridge_surface_update_target;
 static bool app_bridge_attempt_consumed;
 static bool app_bridge_sequence_returned;
 static uintptr_t live_main_thread_message_target;
@@ -362,7 +363,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             log_line(log, "blocker=app_bridge_already_attempted");
             goto done;
         }
-        for (unsigned i = 0; i < 6; ++i) {
+        for (unsigned i = 0; i < 5; ++i) {
             log_line(log, "app_bridge_step_%u_rx_target=%s", i + 1,
                      live_app_bridge_targets[i] ? "yes" : "no");
             if (!live_app_bridge_targets[i]) {
@@ -371,11 +372,13 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 goto done;
             }
         }
+        log_line(log, "app_bridge_surface_update_rx_target=%s",
+                 live_app_bridge_surface_update_target ? "yes" : "no");
+        log_line(log, "app_bridge_surface_update_invoked=no_no_resize_event");
 #ifdef MORROW_HAS_JNIVM
         const char *const names[] = {
             "nativeGameGlobalInit", "nativeUpdateAdapterInit",
             "nativeAppBridgeV2InitWithParams", "nativeAppBridgeStartLuaAppDM",
-            "nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams",
             "nativeAppBridgeV2StartAppWithParams"
         };
         if (!morrow_jni_runtime_jni_env() ||
@@ -392,7 +395,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         log_line(log, "app_bridge_execution_mode=explicit_experimental_user_request");
         app_bridge_attempt_consumed = true;
         detail(result, "App Bridge attempted; inspect report and crash marker.");
-        for (unsigned i = 0; i < 6; ++i) {
+        for (unsigned i = 0; i < 5; ++i) {
             char phase[92];
             snprintf(phase, sizeof(phase), "app_bridge_%u_%s", i + 1, names[i]);
             if (!engine_run_journal_begin(ENGINE_REPORT_DIR, phase, result->log_path)) {
@@ -424,10 +427,10 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 detail(result, "App Bridge stopped; read last completed step.");
                 break;
             }
-            if (i == 5) {
+            if (i == 4) {
                 app_bridge_sequence_returned = true;
                 log_line(log, "app_bridge_sequence_returned=yes");
-                detail(result, "Six native entries returned; no gameplay verified.");
+                detail(result, "Five native entries returned; no gameplay verified.");
             }
         }
         log_line(log, "roblox_login_verified=no");
@@ -940,7 +943,6 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 entry.has_app_bridge_update_adapter_init,
                                 entry.has_app_bridge_v2_init,
                                 entry.has_app_bridge_lua_shell_start,
-                                entry.has_app_bridge_surface_update,
                                 entry.has_app_bridge_start_app
                             };
                             const uint64_t addresses[] = {
@@ -948,10 +950,9 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 entry.app_bridge_update_adapter_init_virtual_address,
                                 entry.app_bridge_v2_init_virtual_address,
                                 entry.app_bridge_lua_shell_start_virtual_address,
-                                entry.app_bridge_surface_update_virtual_address,
                                 entry.app_bridge_start_app_virtual_address
                             };
-                            for (unsigned i = 0; i < 6; ++i) {
+                            for (unsigned i = 0; i < 5; ++i) {
                                 if (found[i])
                                     engine_execution_rx_target(&plan,
                                         (uint64_t)(uintptr_t)reservation.mapped,
@@ -959,6 +960,14 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 log_line(log, "app_bridge_step_%u_mapped_rx_ready=%s", i + 1,
                                          live_app_bridge_targets[i] ? "yes" : "no");
                             }
+                            if (entry.has_app_bridge_surface_update)
+                                engine_execution_rx_target(&plan,
+                                    (uint64_t)(uintptr_t)reservation.mapped,
+                                    entry.app_bridge_surface_update_virtual_address,
+                                    &live_app_bridge_surface_update_target);
+                            log_line(log, "app_bridge_surface_update_rx_ready=%s",
+                                     live_app_bridge_surface_update_target ? "yes" : "no");
+                            log_line(log, "app_bridge_surface_update_called=no_no_resize_event");
                             if (entry.has_app_bridge_main_thread_messages)
                                 engine_execution_rx_target(&plan,
                                     (uint64_t)(uintptr_t)reservation.mapped,
@@ -1013,7 +1022,28 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     engine_memory_plan_release(&plan);
     fclose(file);
 
-done:
+done:;
+    AndroidGuestGraphicsStats graphics = {0};
+    android_egl_gles_compat_read_guest_stats(&graphics);
+    log_line(log, "guest_egl_window_surface_attempts=%llu",
+             (unsigned long long)graphics.create_surface_attempts);
+    log_line(log, "guest_egl_window_surface_successes=%llu",
+             (unsigned long long)graphics.create_surface_succeeded);
+    log_line(log, "guest_egl_make_current_attempts=%llu",
+             (unsigned long long)graphics.make_current_attempts);
+    log_line(log, "guest_egl_make_current_successes=%llu",
+             (unsigned long long)graphics.make_current_succeeded);
+    log_line(log, "guest_gl_clear_calls=%llu",
+             (unsigned long long)graphics.clear_calls);
+    log_line(log, "guest_egl_swap_attempts=%llu",
+             (unsigned long long)graphics.swap_attempts);
+    log_line(log, "guest_egl_swap_successes=%llu",
+             (unsigned long long)graphics.swap_succeeded);
+    log_line(log, "guest_graphics_pipeline_candidate=%s",
+             graphics.create_surface_succeeded &&
+             graphics.make_current_succeeded &&
+             graphics.clear_calls && graphics.swap_succeeded ? "yes" : "no");
+    log_line(log, "guest_visible_roblox_frame_verified=no");
     log_line(log, "engine_entry_called=%s", engine_entry_started ? "yes" : "no");
     log_line(log, "game_activity_initialize_native_called=%s",
              game_activity_entry_called ? "yes" : "no");

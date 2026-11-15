@@ -20,6 +20,17 @@ int main(void)
     assert(!android_egl_gles_compat_known("ANativeWindow_fromSurface"));
     assert(!android_egl_gles_compat_known(NULL));
 
+    AndroidGuestGraphicsStats before = {0};
+    before.clear_calls = 42;
+    android_egl_gles_compat_read_guest_stats(&before);
+    assert(before.create_surface_attempts == 0 &&
+           before.create_surface_succeeded == 0 &&
+           before.make_current_attempts == 0 &&
+           before.make_current_succeeded == 0 &&
+           before.clear_calls == 0 && before.swap_attempts == 0 &&
+           before.swap_succeeded == 0);
+    android_egl_gles_compat_read_guest_stats(NULL);
+
     uint64_t address = 0xabad1dea;
     assert(!android_egl_gles_compat_has_backend());
     assert(!android_egl_gles_compat_resolve("eglInitialize", NULL, NULL, &address));

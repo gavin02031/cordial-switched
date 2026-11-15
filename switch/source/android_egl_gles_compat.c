@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <stdatomic.h>
 
 #ifdef __SWITCH__
 #include <EGL/egl.h>
@@ -136,12 +137,41 @@ bool android_egl_gles_compat_has_backend(void)
 
 #ifdef __SWITCH__
 static _Thread_local EGLint pending_guest_error = EGL_SUCCESS;
+static atomic_uint_fast64_t create_surface_attempts, create_surface_succeeded;
+static atomic_uint_fast64_t make_current_attempts, make_current_succeeded;
+static atomic_uint_fast64_t clear_calls, swap_attempts, swap_succeeded;
+
+static EGLBoolean tracked_make_current(EGLDisplay display, EGLSurface draw,
+                                       EGLSurface read, EGLContext context)
+{
+    atomic_fetch_add_explicit(&make_current_attempts, 1, memory_order_relaxed);
+    const EGLBoolean succeeded = eglMakeCurrent(display, draw, read, context);
+    if (succeeded == EGL_TRUE)
+        atomic_fetch_add_explicit(&make_current_succeeded, 1, memory_order_relaxed);
+    return succeeded;
+}
+
+static void tracked_gl_clear(GLbitfield mask)
+{
+    atomic_fetch_add_explicit(&clear_calls, 1, memory_order_relaxed);
+    glClear(mask);
+}
+
+static EGLBoolean tracked_swap_buffers(EGLDisplay display, EGLSurface surface)
+{
+    atomic_fetch_add_explicit(&swap_attempts, 1, memory_order_relaxed);
+    const EGLBoolean succeeded = eglSwapBuffers(display, surface);
+    if (succeeded == EGL_TRUE)
+        atomic_fetch_add_explicit(&swap_succeeded, 1, memory_order_relaxed);
+    return succeeded;
+}
 
 static EGLSurface checked_create_window_surface(EGLDisplay display,
                                                 EGLConfig config,
                                                 EGLNativeWindowType guest,
                                                 const EGLint *attributes)
 {
+    atomic_fetch_add_explicit(&create_surface_attempts, 1, memory_order_relaxed);
     void *horizon_window = NULL;
     if (!android_native_window_compat_horizon_handle(
             (const void *)(uintptr_t)guest, &horizon_window)) {
@@ -150,9 +180,12 @@ static EGLSurface checked_create_window_surface(EGLDisplay display,
         pending_guest_error = EGL_BAD_NATIVE_WINDOW;
         return EGL_NO_SURFACE;
     }
-    return eglCreateWindowSurface(display, config,
-                                  (EGLNativeWindowType)horizon_window,
-                                  attributes);
+    const EGLSurface surface = eglCreateWindowSurface(display, config,
+                                  (EGLNativeWindowType)horizon_window, attributes);
+    if (surface != EGL_NO_SURFACE)
+        atomic_fetch_add_explicit(&create_surface_succeeded, 1,
+                                  memory_order_relaxed);
+    return surface;
 }
 
 static EGLint checked_get_error(void)
@@ -176,6 +209,25 @@ static __eglMustCastToProperFunctionPointerType native_get_proc_address(const ch
 }
 #endif
 
+void android_egl_gles_compat_read_guest_stats(AndroidGuestGraphicsStats *stats)
+{
+    if (!stats) return;
+    memset(stats, 0, sizeof(*stats));
+#ifdef __SWITCH__
+    stats->create_surface_attempts =
+        atomic_load_explicit(&create_surface_attempts, memory_order_relaxed);
+    stats->create_surface_succeeded =
+        atomic_load_explicit(&create_surface_succeeded, memory_order_relaxed);
+    stats->make_current_attempts =
+        atomic_load_explicit(&make_current_attempts, memory_order_relaxed);
+    stats->make_current_succeeded =
+        atomic_load_explicit(&make_current_succeeded, memory_order_relaxed);
+    stats->clear_calls = atomic_load_explicit(&clear_calls, memory_order_relaxed);
+    stats->swap_attempts = atomic_load_explicit(&swap_attempts, memory_order_relaxed);
+    stats->swap_succeeded = atomic_load_explicit(&swap_succeeded, memory_order_relaxed);
+#endif
+}
+
 bool android_egl_gles_compat_resolve(const char *name, const char *version,
                                      const char *library, uint64_t *address)
 {
@@ -192,6 +244,18 @@ bool android_egl_gles_compat_resolve(const char *name, const char *version,
     }
     if (strcmp(name, "eglGetError") == 0) {
         *address = (uint64_t)(uintptr_t)&checked_get_error;
+        return true;
+    }
+    if (strcmp(name, "eglMakeCurrent") == 0) {
+        *address = (uint64_t)(uintptr_t)&tracked_make_current;
+        return true;
+    }
+    if (strcmp(name, "eglSwapBuffers") == 0) {
+        *address = (uint64_t)(uintptr_t)&tracked_swap_buffers;
+        return true;
+    }
+    if (strcmp(name, "glClear") == 0) {
+        *address = (uint64_t)(uintptr_t)&tracked_gl_clear;
         return true;
     }
 #define MAP(symbol) \

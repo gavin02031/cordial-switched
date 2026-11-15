@@ -140,8 +140,8 @@ typedef enum {
     MORROW_APP_BRIDGE_UPDATE_ADAPTER_INIT,
     MORROW_APP_BRIDGE_V2_INIT,
     MORROW_APP_BRIDGE_LUA_SHELL,
-    MORROW_APP_BRIDGE_SURFACE_UPDATE,
     MORROW_APP_BRIDGE_START_APP,
+    MORROW_APP_BRIDGE_SURFACE_UPDATE,
     MORROW_APP_BRIDGE_MAIN_THREAD_MESSAGES
 } MorrowAppBridgeStep;
 
@@ -153,7 +153,9 @@ typedef struct {
 } MorrowAppBridgeCallResult;
 
 // Deliberate experimental native invocation with seven observed static
-// NativeGLInterface JNI ABIs. Surface update takes a real libjnivm Surface
+// NativeGLInterface JNI ABIs. Only the first five calls form the app-shell
+// launch sequence; the later surface-update entry is for genuine resize
+// handling, not a prerequisite to starting an app. It takes a real Surface
 // and PlatformParams; both are owned by the current Horizon runtime.
 // The main-thread message callback is separate, opt-in, and not a substitute
 // for an Android activity loop or recurring message-pump lifecycle.
