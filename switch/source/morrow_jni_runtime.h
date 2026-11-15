@@ -69,6 +69,9 @@ bool morrow_jni_runtime_unbind_surface(void);
 // Files are accessed read-only through the existing bounded NDK adapter.
 void *morrow_jni_runtime_bind_asset_manager(const char *asset_root);
 bool morrow_jni_runtime_asset_manager_bound(void);
+// The bound native AAssetManager carries real locale/viewport metadata for
+// AConfiguration_fromAssetManager; this is distinct from Java Configuration.
+bool morrow_jni_runtime_asset_configuration_bound(void);
 bool morrow_jni_runtime_unbind_asset_manager(void);
 
 // Partial, typed App Bridge V2 StartAppParams for the observed Android shell

@@ -353,7 +353,16 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_line(log, "jni_java_configuration_locales=%s",
              java_configuration_bound ? "device_locale_if_available" : "unavailable");
     log_line(log, "android_java_asset_manager_root=optional_user_assets");
-    log_line(log, "android_asset_configuration_registered=no");
+    bool ndk_asset_configuration_ready = false;
+#ifdef MORROW_HAS_JNIVM
+    ndk_asset_configuration_ready = morrow_jni_runtime_asset_configuration_bound();
+#endif
+    log_line(log, "android_asset_configuration_registered=%s",
+             ndk_asset_configuration_ready ? "yes" : "no");
+    log_line(log, "android_asset_configuration_values=%s",
+             !ndk_asset_configuration_ready ? "unavailable" :
+             java_surface_bound ? "measured_1x_viewport_and_known_locale" :
+                                  "known_locale_no_surface_geometry");
     log_line(log, "android_configuration_ndk_functions=9");
     log_line(log, "jni_vm_invocation_abi=%s",
              android_jni_vm_bridge_instance() ? "available" : "unavailable");

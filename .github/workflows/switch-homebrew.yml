@@ -263,11 +263,13 @@ jobs:
             -c switch/source/android_native_window_compat.c -o /tmp/morrow-window.o
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             -c switch/source/android_asset_compat.c -o /tmp/morrow-asset.o
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            -c switch/source/android_configuration_compat.c -o /tmp/morrow-config.o
           c++ -std=gnu++14 -O2 -include string -DEnableJNIVMGC \
             -Ithird_party/libjnivm/include -Iswitch/source \
             switch/tests/morrow_jni_runtime_test.cpp \
             switch/source/morrow_jni_runtime.cpp /tmp/morrow-bridge.o /tmp/morrow-window.o \
-            /tmp/morrow-asset.o \
+            /tmp/morrow-asset.o /tmp/morrow-config.o \
             /tmp/morrow-jnivm-host/libjnivm.a -pthread -ldl \
             -o /tmp/morrow-jni-provider-test
           /tmp/morrow-jni-provider-test

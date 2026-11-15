@@ -3,6 +3,7 @@
 
 #include "android_jni_vm_bridge.h"
 #include "android_asset_compat.h"
+#include "android_configuration_compat.h"
 #include "android_native_window_compat.h"
 #include "morrow_jni_runtime.h"
 
@@ -43,6 +44,11 @@ using AssetFromJava = void *(*)(void *, void *);
 using AssetOpen = void *(*)(void *, const char *, int);
 using AssetLength = off_t (*)(void *);
 using AssetClose = void (*)(void *);
+using NewConfiguration = void *(*)(void);
+using DeleteConfiguration = void (*)(void *);
+using FromAssetManager = void (*)(void *, void *);
+using ConfigurationGetInteger = int32_t (*)(void *);
+using ConfigurationGetLocale = void (*)(void *, char *);
 
 static jobject expected_instance;
 static jobject expected_activity;
@@ -89,6 +95,16 @@ template<typename Callback> static Callback asset_symbol(const char *name)
 {
     uint64_t address = 0;
     assert(android_asset_compat_resolve(name, nullptr, nullptr, &address));
+    Callback callback = nullptr;
+    static_assert(sizeof(callback) == sizeof(address), "pointer width mismatch");
+    std::memcpy(&callback, &address, sizeof(callback));
+    return callback;
+}
+
+template<typename Callback> static Callback configuration_symbol(const char *name)
+{
+    uint64_t address = 0;
+    assert(android_configuration_compat_resolve(name, nullptr, nullptr, &address));
     Callback callback = nullptr;
     static_assert(sizeof(callback) == sizeof(address), "pointer width mismatch");
     std::memcpy(&callback, &address, sizeof(callback));
@@ -520,10 +536,50 @@ int main()
     assert(file && fwrite("hello!", 1, 6, file) == 6 && fclose(file) == 0);
     void *asset_java = morrow_jni_runtime_bind_asset_manager(root);
     assert(asset_java && morrow_jni_runtime_asset_manager_bound());
+    assert(morrow_jni_runtime_asset_configuration_bound());
+    void *configured_native_manager = from_java(main_env, asset_java);
+    assert(configured_native_manager);
+    auto make_ndk_config = configuration_symbol<NewConfiguration>("AConfiguration_new");
+    auto delete_ndk_config = configuration_symbol<DeleteConfiguration>(
+        "AConfiguration_delete");
+    auto from_ndk_assets = configuration_symbol<FromAssetManager>(
+        "AConfiguration_fromAssetManager");
+    auto ndk_width = configuration_symbol<ConfigurationGetInteger>(
+        "AConfiguration_getScreenWidthDp");
+    auto ndk_height = configuration_symbol<ConfigurationGetInteger>(
+        "AConfiguration_getScreenHeightDp");
+    auto ndk_language = configuration_symbol<ConfigurationGetLocale>(
+        "AConfiguration_getLanguage");
+    auto ndk_country = configuration_symbol<ConfigurationGetLocale>(
+        "AConfiguration_getCountry");
+    void *ndk_snapshot = make_ndk_config();
+    assert(ndk_snapshot);
+    from_ndk_assets(ndk_snapshot, configured_native_manager);
+    assert(ndk_width(ndk_snapshot) == 0 && ndk_height(ndk_snapshot) == 0);
+    char ndk_locale[2] = {};
+    ndk_language(ndk_snapshot, ndk_locale);
+    assert(ndk_locale[0] == 'e' && ndk_locale[1] == 's');
+    ndk_country(ndk_snapshot, ndk_locale);
+    assert(ndk_locale[0] == 0 && ndk_locale[1] == 0);
+    AndroidAssetConfiguration ndk_configuration = {};
+    assert(android_asset_compat_get_configuration(configured_native_manager,
+                                                   &ndk_configuration));
+    assert(ndk_configuration.language[0] == 'e' &&
+           ndk_configuration.language[1] == 's');
+    assert(ndk_configuration.country[0] == 0 && ndk_configuration.country[1] == 0);
+    assert(ndk_configuration.screen_width_dp == 0 &&
+           ndk_configuration.screen_height_dp == 0);
+    assert(ndk_configuration.screen_size == 0 && ndk_configuration.nav_hidden == 0);
     assert(!morrow_jni_runtime_app_bridge_start_params()); // No live surface.
     void *app_surface = morrow_jni_runtime_bind_horizon_surface(
         &horizon_window, 1280, 720);
     assert(app_surface);
+    assert(android_asset_compat_get_configuration(configured_native_manager,
+                                                   &ndk_configuration));
+    assert(ndk_configuration.screen_width_dp == 1280 &&
+           ndk_configuration.screen_height_dp == 720);
+    from_ndk_assets(ndk_snapshot, configured_native_manager);
+    assert(ndk_width(ndk_snapshot) == 1280 && ndk_height(ndk_snapshot) == 720);
     void *start_params = morrow_jni_runtime_app_bridge_start_params();
     assert(start_params && morrow_jni_runtime_app_bridge_start_params_bound());
     void *init_params = morrow_jni_runtime_app_bridge_init_params();
@@ -693,11 +749,31 @@ int main()
     main_env->DeleteLocalRef(alias);
     assert(morrow_jni_runtime_bind_asset_manager(root) == asset_java);
     assert(!morrow_jni_runtime_bind_asset_manager("/tmp"));
+    assert(morrow_jni_runtime_bind_horizon_surface(&horizon_window, 960, 540) == app_surface);
+    assert(android_asset_compat_get_configuration(native_manager, &ndk_configuration));
+    assert(ndk_configuration.screen_width_dp == 960 &&
+           ndk_configuration.screen_height_dp == 540);
+    from_ndk_assets(ndk_snapshot, native_manager);
+    assert(ndk_width(ndk_snapshot) == 960 && ndk_height(ndk_snapshot) == 540);
+    assert(morrow_jni_runtime_unbind_surface());
+    assert(android_asset_compat_get_configuration(native_manager, &ndk_configuration));
+    assert(ndk_configuration.screen_width_dp == 0 &&
+           ndk_configuration.screen_height_dp == 0);
+    from_ndk_assets(ndk_snapshot, native_manager);
+    assert(ndk_width(ndk_snapshot) == 0 && ndk_height(ndk_snapshot) == 0);
+    assert(ndk_configuration.language[0] == 'e' &&
+           ndk_configuration.language[1] == 's');
     assert(!open_asset(native_manager, "../test.asset", 0));
     void *asset = open_asset(native_manager, "test.asset", 0);
     assert(asset && asset_length(asset) == 6);
     assert(morrow_jni_runtime_unbind_asset_manager());
     assert(!morrow_jni_runtime_asset_manager_bound());
+    assert(!morrow_jni_runtime_asset_configuration_bound());
+    from_ndk_assets(ndk_snapshot, native_manager);
+    assert(ndk_width(ndk_snapshot) == 0 && ndk_height(ndk_snapshot) == 0);
+    ndk_language(ndk_snapshot, ndk_locale);
+    assert(ndk_locale[0] == 0 && ndk_locale[1] == 0);
+    delete_ndk_config(ndk_snapshot);
     assert(!morrow_jni_runtime_app_bridge_start_params_bound());
     assert(!morrow_jni_runtime_app_bridge_start_params());
     assert(!morrow_jni_runtime_app_bridge_init_params_bound());
@@ -795,6 +871,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad, storage, live viewport Configuration, DisplayMetrics, LocaleList, ClassLoader and references passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad, storage, live Java/NDK Configuration, DisplayMetrics, LocaleList, ClassLoader and references passed");
     return 0;
 }

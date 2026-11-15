@@ -11,6 +11,7 @@
 #include <mutex>
 #include <cstdio>
 #include <cctype>
+#include <cstring>
 #include <algorithm>
 
 namespace {
@@ -29,6 +30,7 @@ class AssetManagerObject : public jnivm::Object {};
 std::shared_ptr<AssetManagerObject> asset_owner;
 jobject asset_reference;
 std::string asset_directory;
+bool ndk_asset_configuration_ready;
 
 // Horizon's settings service supplies a BCP-47 language code. Keep that
 // value separate from Android's unrelated locale defaults: an unavailable
@@ -335,6 +337,49 @@ public:
 };
 
 std::shared_ptr<HorizonPlatformParams> platform_owner;
+
+// Android's NDK AConfiguration_fromAssetManager reads metadata from a native
+// AAssetManager handle, not the Java Configuration we already populate. Keep
+// both representations consistent with the same measured Horizon viewport.
+// Only verified system-language subtags of exactly two characters fit the
+// NDK's two-byte language/country fields; 419 and unknown values stay blank.
+// This does not invent an Android screen-size bucket or navigation mode.
+bool refresh_asset_configuration_locked()
+{
+    ndk_asset_configuration_ready = false;
+    if (!runtime || !attached_to_runtime || !asset_reference)
+        return false;
+    uint64_t address = 0;
+    if (!android_asset_compat_resolve("AAssetManager_fromJava", nullptr,
+                                      nullptr, &address) || !address)
+        return false;
+    using FromJava = void *(*)(void *, void *);
+    static_assert(sizeof(FromJava) == sizeof(address), "native ABI pointer mismatch");
+    FromJava from_java = nullptr;
+    std::memcpy(&from_java, &address, sizeof(from_java));
+    void *native_manager = from_java(runtime->GetJNIEnv(), asset_reference);
+    if (!native_manager)
+        return false;
+
+    AndroidAssetConfiguration values = {};
+    if (system_locale.language.size() == 2) {
+        values.language[0] = system_locale.language[0];
+        values.language[1] = system_locale.language[1];
+    }
+    if (system_locale.country.size() == 2) {
+        values.country[0] = system_locale.country[0];
+        values.country[1] = system_locale.country[1];
+    }
+    if (surface_width > 0 && surface_height > 0) {
+        // DisplayMetrics.density == 1.0f is our explicit UI layout policy;
+        // therefore the measured pixel size also gives the dp dimensions.
+        values.screen_width_dp = surface_width;
+        values.screen_height_dp = surface_height;
+    }
+    ndk_asset_configuration_ready =
+        android_asset_compat_set_configuration(native_manager, &values);
+    return ndk_asset_configuration_ready;
+}
 
 std::shared_ptr<HorizonPlatformParams> platform_for_assets_locked()
 {
@@ -869,6 +914,8 @@ extern "C" bool morrow_jni_runtime_bind_system_locale(const char *language_tag)
         return proposed.tag == system_locale.tag;
     if (configuration_reference) return false;
     system_locale = std::move(proposed);
+    if (asset_reference)
+        refresh_asset_configuration_locked();
     return true;
 }
 
@@ -954,6 +1001,8 @@ extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
         surface_height = height;
         if (configuration_owner)
             configuration_owner->updateViewport(width, height);
+        if (asset_reference)
+            refresh_asset_configuration_locked();
         return surface_reference;
     }
     try {
@@ -984,6 +1033,8 @@ extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,
         surface_height = height;
         if (configuration_owner)
             configuration_owner->updateViewport(width, height);
+        if (asset_reference)
+            refresh_asset_configuration_locked();
         jni->DeleteLocalRef(local);
         return global;
     } catch (...) {
@@ -1013,6 +1064,8 @@ extern "C" bool morrow_jni_runtime_unbind_surface(void)
     surface_width = surface_height = 0;
     if (configuration_owner)
         configuration_owner->updateViewport(0, 0);
+    if (asset_reference)
+        refresh_asset_configuration_locked();
     surface_owner.reset();
     resources_owner.reset();
     return true;
@@ -1031,6 +1084,7 @@ extern "C" void *morrow_jni_runtime_bind_asset_manager(const char *asset_root)
         if (asset_directory != asset_root ||
             !android_asset_compat_bind_manager(asset_reference, asset_root))
             return nullptr;
+        refresh_asset_configuration_locked();
         return asset_reference;
     }
     try {
@@ -1054,6 +1108,7 @@ extern "C" void *morrow_jni_runtime_bind_asset_manager(const char *asset_root)
         asset_directory.swap(chosen_root);
         asset_owner = std::move(owner);
         asset_reference = global;
+        refresh_asset_configuration_locked();
         jni->DeleteLocalRef(local);
         return global;
     } catch (...) {
@@ -1065,6 +1120,12 @@ extern "C" bool morrow_jni_runtime_asset_manager_bound(void)
 {
     std::lock_guard<std::mutex> lock(start_mutex);
     return asset_reference != nullptr;
+}
+
+extern "C" bool morrow_jni_runtime_asset_configuration_bound(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return asset_reference && ndk_asset_configuration_ready;
 }
 
 extern "C" void *morrow_jni_runtime_app_bridge_start_params(void)
@@ -1233,6 +1294,7 @@ extern "C" bool morrow_jni_runtime_unbind_asset_manager(void)
     release_init_params_locked();
     release_start_app_params_locked();
     android_asset_compat_unbind_manager(asset_reference);
+    ndk_asset_configuration_ready = false;
     runtime->GetJNIEnv()->DeleteGlobalRef(asset_reference);
     asset_reference = nullptr;
     asset_directory.clear();

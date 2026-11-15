@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.69 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.70 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -41,7 +41,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.69 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.70 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -486,6 +486,18 @@ then check:
    stay unknown. These are Android-JNI compatibility improvements verified
    with synthetic host tests—not proof of real Roblox Java bootstrap, login,
    rendering, or game join on Switch.
+   v0.70 mirrors the same verified viewport dimensions and device language
+   into the **separate native** `AAssetManager` configuration, which
+   `AConfiguration_fromAssetManager` actually reads. This requires the existing
+   read-only assets directory and a verified JNI manager; it does not grant
+   configuration to a missing manager. Resizing or unbinding the Surface
+   updates the native dimensions, while an available system language supplies
+   only the two-byte NDK language/country fields it can represent (for example,
+   `es-419` retains `es` and leaves the three-digit country unset). Android
+   screen-size bucket and navigation state remain unknown. L3 now separately
+   records whether native asset configuration was registered. Real libjnivm
+   host tests cover its initial, live-resized and unbound states; this still
+   does **not** initialise the Roblox Java app or prove login or game rendering.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

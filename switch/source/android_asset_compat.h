@@ -8,9 +8,11 @@
 extern "C" {
 #endif
 
-// Configuration is supplied by a verified JNI/Android-runtime owner; neither
-// a directory full of assets nor the Switch display implies an Android locale
-// or dp-density. Language/country are exactly two bytes, not terminated.
+// Configuration is supplied by a verified JNI/Android-runtime owner. A bare
+// asset directory implies no locale or dp-density: Morrow's JNI owner can
+// explicitly supply the Switch system language and a neutral 1x viewport
+// layout derived from a real Horizon Surface. Language/country are exactly
+// two bytes, not terminated.
 typedef struct {
     char language[2];
     char country[2];
