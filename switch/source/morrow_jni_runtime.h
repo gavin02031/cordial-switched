@@ -62,6 +62,14 @@ void *morrow_jni_runtime_app_bridge_start_params(void);
 bool morrow_jni_runtime_app_bridge_start_params_bound(void);
 bool morrow_jni_runtime_release_app_bridge_start_params(void);
 
+// Typed, *partial* App Bridge InitParams with shared real PlatformParams and
+// observable device facts. Android app version, User-Agent, API level,
+// country, memory and VR Activity are unknown: this object must not yet be
+// passed to libroblox.so as though Android startup had been completed.
+void *morrow_jni_runtime_app_bridge_init_params(void);
+bool morrow_jni_runtime_app_bridge_init_params_bound(void);
+bool morrow_jni_runtime_release_app_bridge_init_params(void);
+
 // Typed, stable Java Configuration identity for the eventual GameActivity
 // native initialiser. This is deliberately not an invented Android Resources
 // object or populated Configuration: screen/locale data remain unavailable.

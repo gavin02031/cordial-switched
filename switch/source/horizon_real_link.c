@@ -397,11 +397,21 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
              game_activity_ready ? "registered_classes_only" : "unavailable");
     log_line(log, "jni_apk_classpath_installed=no");
     bool partial_app_params = false;
+    bool partial_init_params = false;
 #ifdef MORROW_HAS_JNIVM
     partial_app_params =
         morrow_jni_runtime_app_bridge_start_params() != NULL &&
         morrow_jni_runtime_app_bridge_start_params_bound();
+    partial_init_params =
+        morrow_jni_runtime_app_bridge_init_params() != NULL &&
+        morrow_jni_runtime_app_bridge_init_params_bound();
 #endif
+    log_line(log, "app_bridge_init_params_typed_partial=%s",
+             partial_init_params ? "yes" : "no");
+    log_line(log, "app_bridge_init_params_device_fields=%s",
+             partial_init_params ? "21_typed_some_values_unknown" : "unavailable");
+    log_line(log, "app_bridge_init_params_user_agent=unknown_unset");
+    log_line(log, "app_bridge_init_params_android_api=unknown_unset");
     log_line(log, "app_bridge_start_app_params_typed_partial=%s",
              partial_app_params ? "yes" : "no");
     log_line(log, "app_bridge_start_app_params_surface_from_horizon=%s",

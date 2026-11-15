@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.63 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.64 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.63 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.64 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -413,6 +413,17 @@ then check:
    The `vrContext`, complete `InitParams`/`DeviceParams`, real Java callbacks
    and app lifecycle are **still absent**; the Roblox App Bridge is not yet
    called and no sign-in screen or playable game has been verified.
+   v0.64 registers real libjnivm classes for the observed `InitParams`
+   and its 21 `DeviceParams` fields, sharing the same asset-backed
+   `PlatformParams` object used by `StartAppParams`. It fills only known
+   facts (host name, 64-bit CPU, measured bound surface dimensions and
+   documented Roblox base URL). Android API level, app version, network,
+   locale, memory and User-Agent are unknown and remain unset; no fake
+   Android environment is supplied. The new `app_bridge_init_params_*`
+   fields in `link-XX.txt` distinguish typed objects from a complete
+   runtime. Host tests exercise JNI fields, getters, common platform
+   identity, repeated reads and reference cleanup. **Neither this object
+   nor the real Roblox App Bridge is called during the diagnostic.**
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

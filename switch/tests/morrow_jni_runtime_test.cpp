@@ -134,6 +134,9 @@ int main()
     assert(!morrow_jni_runtime_app_bridge_start_params());
     assert(!morrow_jni_runtime_app_bridge_start_params_bound());
     assert(morrow_jni_runtime_release_app_bridge_start_params());
+    assert(!morrow_jni_runtime_app_bridge_init_params());
+    assert(!morrow_jni_runtime_app_bridge_init_params_bound());
+    assert(morrow_jni_runtime_release_app_bridge_init_params());
     assert(!morrow_jni_runtime_configuration_bound());
     assert(!morrow_jni_runtime_configuration());
     MorrowJniOnLoadProbe onload = {};
@@ -391,6 +394,9 @@ int main()
     assert(app_surface);
     void *start_params = morrow_jni_runtime_app_bridge_start_params();
     assert(start_params && morrow_jni_runtime_app_bridge_start_params_bound());
+    void *init_params = morrow_jni_runtime_app_bridge_init_params();
+    assert(init_params && morrow_jni_runtime_app_bridge_init_params_bound());
+    assert(morrow_jni_runtime_app_bridge_init_params() == init_params);
     assert(morrow_jni_runtime_app_bridge_start_params() == start_params);
     jclass start_class = main_env->FindClass(
         "com/roblox/engine/jni/autovalue/StartAppParams");
@@ -398,6 +404,26 @@ int main()
         "com/roblox/engine/jni/model/PlatformParams");
     assert(start_class && platform_class && main_env->IsInstanceOf(
         static_cast<jobject>(start_params), start_class));
+    jclass init_class = main_env->FindClass(
+        "com/roblox/engine/jni/autovalue/InitParams");
+    jclass device_class = main_env->FindClass(
+        "com/roblox/engine/jni/model/DeviceParams");
+    assert(init_class && device_class && main_env->IsInstanceOf(
+        static_cast<jobject>(init_params), init_class));
+    jfieldID init_platform = main_env->GetFieldID(
+        init_class, "platformParams", "Lcom/roblox/engine/jni/model/PlatformParams;");
+    jmethodID init_platform_method = main_env->GetMethodID(
+        init_class, "platformParams", "()Lcom/roblox/engine/jni/model/PlatformParams;");
+    jfieldID init_device = main_env->GetFieldID(
+        init_class, "deviceParams", "Lcom/roblox/engine/jni/model/DeviceParams;");
+    jmethodID init_device_method = main_env->GetMethodID(
+        init_class, "deviceParams", "()Lcom/roblox/engine/jni/model/DeviceParams;");
+    jmethodID init_url_method = main_env->GetMethodID(
+        init_class, "baseURL", "()Ljava/lang/String;");
+    jmethodID init_agent_method = main_env->GetMethodID(
+        init_class, "userAgent", "()Ljava/lang/String;");
+    assert(init_platform && init_platform_method && init_device && init_device_method &&
+           init_url_method && init_agent_method);
     jfieldID surface_field = main_env->GetFieldID(
         start_class, "surface", "Landroid/view/Surface;");
     jmethodID surface_method = main_env->GetMethodID(
@@ -422,6 +448,43 @@ int main()
         assert(main_env->IsSameObject(method_surface, static_cast<jobject>(app_surface)));
         assert(main_env->IsInstanceOf(field_platform, platform_class));
         assert(main_env->IsSameObject(field_platform, method_platform));
+        jobject init_platform_ref = main_env->GetObjectField(
+            static_cast<jobject>(init_params), init_platform);
+        jobject init_platform_getter = main_env->CallObjectMethod(
+            static_cast<jobject>(init_params), init_platform_method);
+        assert(init_platform_ref && init_platform_getter);
+        assert(main_env->IsSameObject(init_platform_ref, field_platform));
+        assert(main_env->IsSameObject(init_platform_getter, field_platform));
+        jobject device_field = main_env->GetObjectField(
+            static_cast<jobject>(init_params), init_device);
+        jobject device_getter = main_env->CallObjectMethod(
+            static_cast<jobject>(init_params), init_device_method);
+        assert(device_field && device_getter && main_env->IsSameObject(
+            device_field, device_getter));
+        assert(main_env->IsInstanceOf(device_field, device_class));
+        jfieldID device_width = main_env->GetFieldID(
+            device_class, "displayPhysicalWidthPixels", "I");
+        jfieldID device_os = main_env->GetFieldID(
+            device_class, "osVersion", "Ljava/lang/String;");
+        jfieldID memory = main_env->GetFieldID(
+            device_class, "deviceTotalMemoryMB", "I");
+        assert(device_width && device_os && memory);
+        assert(main_env->GetIntField(device_field, device_width) == 1280);
+        assert(main_env->GetIntField(device_field, memory) == 0);
+        assert(!main_env->GetObjectField(device_field, device_os));
+        jstring base_url = static_cast<jstring>(main_env->CallObjectMethod(
+            static_cast<jobject>(init_params), init_url_method));
+        assert(base_url);
+        const char *url_text = main_env->GetStringUTFChars(base_url, nullptr);
+        assert(url_text && !strcmp(url_text, "https://www.roblox.com/"));
+        main_env->ReleaseStringUTFChars(base_url, url_text);
+        assert(!main_env->CallObjectMethod(static_cast<jobject>(init_params),
+                                           init_agent_method));
+        main_env->DeleteLocalRef(base_url);
+        main_env->DeleteLocalRef(device_getter);
+        main_env->DeleteLocalRef(device_field);
+        main_env->DeleteLocalRef(init_platform_ref);
+        main_env->DeleteLocalRef(init_platform_getter);
         void *window = from_surface(main_env, method_surface);
         assert(window && width(window) == 1280 && height(window) == 720);
         release(window);
@@ -449,8 +512,13 @@ int main()
     assert(morrow_jni_runtime_release_app_bridge_start_params());
     assert(!morrow_jni_runtime_app_bridge_start_params_bound());
     assert(morrow_jni_runtime_app_bridge_start_params());
+    assert(morrow_jni_runtime_release_app_bridge_init_params());
+    assert(!morrow_jni_runtime_app_bridge_init_params_bound());
+    assert(morrow_jni_runtime_app_bridge_init_params());
     main_env->DeleteLocalRef(start_class);
     main_env->DeleteLocalRef(platform_class);
+    main_env->DeleteLocalRef(init_class);
+    main_env->DeleteLocalRef(device_class);
     expected_activity = static_cast<jobject>(activity);
     expected_assets = static_cast<jobject>(asset_java);
     expected_configuration = static_cast<jobject>(configuration);
@@ -500,6 +568,8 @@ int main()
     assert(!morrow_jni_runtime_asset_manager_bound());
     assert(!morrow_jni_runtime_app_bridge_start_params_bound());
     assert(!morrow_jni_runtime_app_bridge_start_params());
+    assert(!morrow_jni_runtime_app_bridge_init_params_bound());
+    assert(!morrow_jni_runtime_app_bridge_init_params());
     assert(morrow_jni_runtime_unbind_surface());
     assert(!from_java(main_env, asset_java));
     assert(!from_java(main_env, activity_assets));
