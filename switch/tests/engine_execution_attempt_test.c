@@ -60,6 +60,17 @@ int main(void)
     assert(engine_execution_rx_target(&plan, 0x200000, 0x1180,
                                       &activity_target));
     assert(activity_target == 0x200180);
+    // AArch64 entry points must be 4-byte aligned, including after rebasing.
+    assert(!engine_execution_rx_target(&plan, 0x200000, 0x1181,
+                                       &activity_target));
+    assert(activity_target == 0x200180);
+    assert(!engine_execution_rx_target(&plan, 0x200002, 0x1180,
+                                       &activity_target));
+    assert(activity_target == 0x200180);
+    entry.jni_onload_virtual_address = 0x1101;
+    result = DECIDE(true, true, true, true, true, true);
+    assert(!result.eligible && !strcmp(result.reason, "jni_onload_not_in_rx_pages"));
+    entry.jni_onload_virtual_address = 0x1100;
     assert(!engine_execution_rx_target(&plan, 0x200000, 0x2100,
                                        &activity_target));
 
