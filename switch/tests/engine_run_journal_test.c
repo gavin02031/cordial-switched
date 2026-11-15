@@ -42,11 +42,33 @@ int main(void)
     assert(strstr(output, "crash-02.txt"));
     assert_contains(output, "link_report=link-04.txt");
 
-    char first[192], second[192];
+    // The exclusive guest-message loop may enter the same callback 120
+    // times. Each successful return must free its durable marker so the
+    // next call can be journaled without overwriting any prior crash.
+    for (unsigned i = 1; i <= 120; i++) {
+        char phase[80];
+        snprintf(phase, sizeof(phase), "app_bridge_pump_tick_%03u", i);
+        assert(engine_run_journal_begin(folder, phase, "link-05.txt"));
+        assert(engine_run_journal_finish(folder));
+    }
+    assert(!engine_run_journal_recover(folder, output, sizeof(output)));
+
+    // A new run that dies inside the next callback is recovered with its
+    // exact phase rather than being mistaken for a completed pump cycle.
+    assert(engine_run_journal_begin(folder, "app_bridge_pump_tick_121",
+                                    "link-05.txt"));
+    assert(engine_run_journal_recover(folder, output, sizeof(output)));
+    assert(strstr(output, "crash-03.txt"));
+    assert_contains(output, "phase=app_bridge_pump_tick_121");
+    assert_contains(output, "link_report=link-05.txt");
+
+    char first[192], second[192], third[192];
     snprintf(first, sizeof(first), "%s/crash-01.txt", folder);
     snprintf(second, sizeof(second), "%s/crash-02.txt", folder);
+    snprintf(third, sizeof(third), "%s/crash-03.txt", folder);
     assert(unlink(first) == 0);
     assert(unlink(second) == 0);
+    assert(unlink(third) == 0);
     assert(rmdir(folder) == 0);
     puts("engine crash journal passed");
     return 0;

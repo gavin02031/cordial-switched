@@ -2,6 +2,7 @@
 #define CORDIAL_HORIZON_REAL_LINK_H
 
 #include <stdbool.h>
+#include <stdio.h>
 
 typedef struct {
     bool attempted;
@@ -29,5 +30,13 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action);
 void horizon_real_link_enable_exclusive_graphics(void);
 bool horizon_real_link_jni_onload_ready(void);
 bool horizon_real_link_app_bridge_ready(void);
+
+// Opt-in, bounded main-thread message-pump experiment for the exclusive
+// graphics path only. The caller holds a numbered link report open for
+// append. Every call is synchronously journaled before entering guest code.
+// Returns false on a missing prerequisite, SD logging failure, exception,
+// or an entry that did not return. Max 120 calls per exclusive session.
+bool horizon_real_link_pump_exclusive(FILE *trace, const char *report_path,
+                                      unsigned call_number);
 
 #endif

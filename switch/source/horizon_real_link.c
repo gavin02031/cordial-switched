@@ -59,6 +59,7 @@ static bool app_bridge_sequence_returned;
 static uintptr_t live_main_thread_message_target;
 static bool main_thread_message_attempt_consumed;
 static bool exclusive_graphics_ownership;
+static void log_line(FILE *out, const char *format, ...);
 
 void horizon_real_link_enable_exclusive_graphics(void)
 {
@@ -75,6 +76,67 @@ bool horizon_real_link_jni_onload_ready(void)
 bool horizon_real_link_app_bridge_ready(void)
 {
     return app_bridge_sequence_returned;
+}
+
+bool horizon_real_link_pump_exclusive(FILE *trace, const char *report_path,
+                                      unsigned call_number)
+{
+    if (!trace || !report_path || !*report_path || call_number < 1 ||
+        call_number > 120) return false;
+    if (!exclusive_graphics_ownership || !engine_mapping_pinned ||
+        !engine_jni_onload_succeeded || !app_bridge_sequence_returned ||
+        !live_main_thread_message_target) {
+        log_line(trace, "pump_blocker=engine_or_message_callback_not_ready");
+        return false;
+    }
+#ifdef MORROW_HAS_JNIVM
+    if (!morrow_jni_runtime_jni_env()) {
+        log_line(trace, "pump_blocker=jni_environment_missing");
+        return false;
+    }
+    char phase[80];
+    snprintf(phase, sizeof(phase), "app_bridge_pump_tick_%03u", call_number);
+    if (!engine_run_journal_begin(ENGINE_REPORT_DIR, phase, report_path)) {
+        log_line(trace, "pump_blocker=crash_journal_not_durable");
+        return false;
+    }
+    log_line(trace, "pump_tick_%03u_entered_guest=yes", call_number);
+    if (fflush(trace) != 0 || fsync(fileno(trace)) != 0) {
+        // Guest code has not been entered. Avoid leaving a false crash
+        // breadcrumb if only the report sync failed.
+        engine_run_journal_finish(ENGINE_REPORT_DIR);
+        log_line(trace, "pump_blocker=link_report_not_durable");
+        return false;
+    }
+    MorrowAppBridgeCallResult callback = {0};
+    const bool returned = morrow_jni_runtime_call_app_bridge(
+        live_main_thread_message_target,
+        MORROW_APP_BRIDGE_MAIN_THREAD_MESSAGES, &callback);
+    log_line(trace, "pump_tick_%03u_returned=%s", call_number,
+             returned && callback.entry_returned ? "yes" : "no");
+    log_line(trace, "pump_tick_%03u_java_exception=%s", call_number,
+             callback.java_exception_pending ? "yes" : "no");
+    log_line(trace, "pump_tick_%03u_cpp_exception=%s", call_number,
+             callback.cpp_exception_caught ? "yes" : "no");
+    if (fflush(trace) != 0 || fsync(fileno(trace)) != 0) {
+        log_line(trace, "pump_blocker=guest_return_not_durable");
+        return false;
+    }
+    const bool marker_cleared = engine_run_journal_finish(ENGINE_REPORT_DIR);
+    if (!marker_cleared) {
+        log_line(trace, "pump_blocker=crash_marker_not_cleared");
+        return false;
+    }
+    if (!returned || !callback.entry_invoked || !callback.entry_returned ||
+        callback.java_exception_pending || callback.cpp_exception_caught) {
+        log_line(trace, "pump_blocker=message_callback_failed");
+        return false;
+    }
+    return true;
+#else
+    log_line(trace, "pump_blocker=jni_runtime_not_compiled");
+    return false;
+#endif
 }
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)

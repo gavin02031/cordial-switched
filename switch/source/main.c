@@ -168,31 +168,46 @@ static int exclusive_engine_launch(void)
         return 0;
     }
 
-    RealLinkResult message = {0};
-    horizon_real_link_run(&message, 4u);
-
     // Keep the exclusive output alive for guest-owned rendering threads.
-    // One message callback is not a real Android lifecycle or event pump.
-    // A saved report can distinguish zero guest swaps from actual EGL work.
-    FILE *trace = message.log_path[0] ? fopen(message.log_path, "a") : NULL;
+    // A bounded periodic callback experiment runs on this same main thread,
+    // not on an invented Android worker or an SDL timer. The existing bridge
+    // report captures each durable pump attempt and subsequent EGL activity.
+    FILE *trace = bridge.log_path[0] ? fopen(bridge.log_path, "a") : NULL;
     if (trace) {
         fprintf(trace, "exclusive_display_handoff=after_sdl_shutdown\n");
         fprintf(trace, "exclusive_guest_frames_visible=unverified\n");
+        fprintf(trace, "exclusive_message_pump=bounded_120_calls_at_roughly_10hz\n");
         fflush(trace);
         fsync(fileno(trace));
     }
     padConfigureInput(1, HidNpadStyleSet_NpadStandard);
     PadState pad;
     padInitializeDefault(&pad);
-    unsigned frames = 0, sample = 0;
+    unsigned frames = 0, sample = 0, pump_calls = 0;
+    bool pump_live = trace != NULL;
     exclusive_graphics_snapshot(trace, sample++);
     while (appletMainLoop()) {
         padUpdate(&pad);
         if (padGetButtonsDown(&pad) & HidNpadButton_Plus)
             break;
         svcSleepThread(16000000ULL);
+        frames++;
+        if (pump_live && pump_calls < 120 && frames % 6u == 0) {
+            pump_calls++;
+            pump_live = horizon_real_link_pump_exclusive(
+                trace, bridge.log_path, pump_calls);
+            if (!pump_live) {
+                fprintf(trace, "exclusive_message_pump_stopped_at=%u\n", pump_calls);
+                fflush(trace);
+                fsync(fileno(trace));
+            } else if (pump_calls == 120) {
+                fprintf(trace, "exclusive_message_pump_budget_exhausted=yes\n");
+                fflush(trace);
+                fsync(fileno(trace));
+            }
+        }
         // At most ten minutes of 2-second snapshots; no unbounded SD log.
-        if (++frames % 120u == 0 && sample <= 300)
+        if (frames % 120u == 0 && sample <= 300)
             exclusive_graphics_snapshot(trace, sample++);
     }
     exclusive_graphics_snapshot(trace, sample);
