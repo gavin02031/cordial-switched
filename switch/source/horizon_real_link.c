@@ -58,6 +58,24 @@ static bool app_bridge_attempt_consumed;
 static bool app_bridge_sequence_returned;
 static uintptr_t live_main_thread_message_target;
 static bool main_thread_message_attempt_consumed;
+static bool exclusive_graphics_ownership;
+
+void horizon_real_link_enable_exclusive_graphics(void)
+{
+    // The caller must already have destroyed SDL's renderer and window.
+    // Never toggle this back while guest code or GPU workers may be running.
+    exclusive_graphics_ownership = true;
+}
+
+bool horizon_real_link_jni_onload_ready(void)
+{
+    return engine_jni_onload_succeeded;
+}
+
+bool horizon_real_link_app_bridge_ready(void)
+{
+    return app_bridge_sequence_returned;
+}
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)
 {
@@ -275,6 +293,13 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
              action == 1 ? "jni_onload" : action == 2 ? "game_activity" :
              action == 3 ? "app_bridge_v2" :
              action == 4 ? "app_bridge_main_thread_message_once" : "diagnostic");
+    log_line(log, "exclusive_graphics_ownership=%s",
+             exclusive_graphics_ownership ? "yes" : "no");
+    if (action >= 1 && action <= 4 && !exclusive_graphics_ownership) {
+        detail(result, "Close Morrow UI first: use ZL+ZR+Minus on Loader.");
+        log_line(log, "blocker=ui_sdl_renderer_owns_horizon_window");
+        goto done;
+    }
     if (action == 4) {
         log_line(log, "message_pump_mode=manual_one_shot_not_android_lifecycle");
         log_line(log, "app_bridge_sequence_returned=%s",

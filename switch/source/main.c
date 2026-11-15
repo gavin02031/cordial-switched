@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <SDL.h>
 #include <switch.h>
@@ -13,6 +14,7 @@
 #include "horizon_loader_smoke.h"
 #include "horizon_real_link.h"
 #include "morrow_gles_smoke.h"
+#include "android_egl_gles_compat.h"
 #ifdef MORROW_HAS_JNIVM
 #include "morrow_jni_runtime.h"
 
@@ -116,6 +118,91 @@ static int failure_screen(const char *reason)
     return 1;
 }
 
+#ifdef MORROW_HAS_JNIVM
+static void exclusive_graphics_snapshot(FILE *trace, unsigned sample)
+{
+    if (!trace) return;
+    AndroidGuestGraphicsStats graphics = {0};
+    android_egl_gles_compat_read_guest_stats(&graphics);
+    fprintf(trace,
+            "exclusive_sample_%03u:surface=%llu make_current=%llu "
+            "clear=%llu swap=%llu\n",
+            sample,
+            (unsigned long long)graphics.create_surface_succeeded,
+            (unsigned long long)graphics.make_current_succeeded,
+            (unsigned long long)graphics.clear_calls,
+            (unsigned long long)graphics.swap_succeeded);
+    fflush(trace);
+    fsync(fileno(trace));
+}
+
+static int exclusive_engine_launch(void)
+{
+    // This function is reached ONLY after SDL has destroyed its renderer,
+    // window and video state. The Horizon NWindow can now be owned by guest
+    // EGL without SDL attempting concurrent presents on the same display.
+    horizon_real_link_enable_exclusive_graphics();
+    if (!morrow_jni_runtime_start())
+        return failure_screen("Exclusive engine launch: real JNI VM unavailable.");
+    bind_switch_sd_free_space();
+    bind_switch_system_locale();
+    morrow_jni_runtime_game_activity();
+    morrow_jni_runtime_local_storage_manager();
+    morrow_jni_runtime_bind_horizon_surface(
+        nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
+    morrow_jni_runtime_bind_asset_manager(ENGINE_REPORT_DIR "/assets");
+    morrow_jni_runtime_configuration();
+
+    RealLinkResult onload = {0};
+    horizon_real_link_run(&onload, 1u);
+    if (!horizon_real_link_jni_onload_ready()) {
+        // A reason and log path were saved before leaving the SDL preview.
+        // No guest EGL entry has been attempted by this path yet.
+        return failure_screen("Roblox JNI_OnLoad blocked. Read the newest link-XX.txt on SD.");
+    }
+    RealLinkResult bridge = {0};
+    horizon_real_link_run(&bridge, 3u);
+    if (!horizon_real_link_app_bridge_ready()) {
+        // JNI_OnLoad can register guest callbacks and start native workers.
+        // Exit the process without resurrecting the SDL/console renderer.
+        return 0;
+    }
+
+    RealLinkResult message = {0};
+    horizon_real_link_run(&message, 4u);
+
+    // Keep the exclusive output alive for guest-owned rendering threads.
+    // One message callback is not a real Android lifecycle or event pump.
+    // A saved report can distinguish zero guest swaps from actual EGL work.
+    FILE *trace = message.log_path[0] ? fopen(message.log_path, "a") : NULL;
+    if (trace) {
+        fprintf(trace, "exclusive_display_handoff=after_sdl_shutdown\n");
+        fprintf(trace, "exclusive_guest_frames_visible=unverified\n");
+        fflush(trace);
+        fsync(fileno(trace));
+    }
+    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+    PadState pad;
+    padInitializeDefault(&pad);
+    unsigned frames = 0, sample = 0;
+    exclusive_graphics_snapshot(trace, sample++);
+    while (appletMainLoop()) {
+        padUpdate(&pad);
+        if (padGetButtonsDown(&pad) & HidNpadButton_Plus)
+            break;
+        svcSleepThread(16000000ULL);
+        // At most ten minutes of 2-second snapshots; no unbounded SD log.
+        if (++frames % 120u == 0 && sample <= 300)
+            exclusive_graphics_snapshot(trace, sample++);
+    }
+    exclusive_graphics_snapshot(trace, sample);
+    if (trace) fclose(trace);
+    // Engine mappings and registered callbacks are reclaimed by OS exit;
+    // never destroy JNI/global refs out from under guest rendering threads.
+    return 0;
+}
+#endif
+
 static void page_forward(UiState *state)
 {
     state->page = (UiPage)((state->page + 1) % UI_PAGE_COUNT);
@@ -216,6 +303,7 @@ int main(void)
 
     bool quit = false;
     bool run_gles_smoke = false;
+    bool run_exclusive_engine = false;
     bool was_touching = false;
     const Uint64 frequency = SDL_GetPerformanceFrequency();
     Uint64 sample_start = SDL_GetPerformanceCounter();
@@ -235,9 +323,12 @@ int main(void)
         if (pressed & HidNpadButton_Plus)
             break;
         if (state.page == UI_LOADER && (pressed & HidNpadButton_Minus)) {
-            // SDL owns the window right now. Hand it to Mesa only after all
-            // SDL rendering resources are gone, never while SDL is drawing.
-            run_gles_smoke = true;
+            // Neither the synthetic triangle nor a real guest EGL launch
+            // may share SDL's active renderer. Both paths begin after teardown.
+            const u64 held = padGetButtons(&pad);
+            run_exclusive_engine = (held & HidNpadButton_ZL) &&
+                                   (held & HidNpadButton_ZR);
+            run_gles_smoke = !run_exclusive_engine;
             break;
         }
         if (pressed & (HidNpadButton_A | HidNpadButton_Right | HidNpadButton_R))
@@ -329,17 +420,27 @@ int main(void)
     }
 
 #ifdef MORROW_HAS_JNIVM
-    // Unbind Java owners before their host assets/display can go away.
-    morrow_jni_runtime_release_local_storage_manager();
-    morrow_jni_runtime_unbind_asset_manager();
-    morrow_jni_runtime_unbind_surface();
-    morrow_jni_runtime_release_configuration();
-    morrow_jni_runtime_release_game_activity();
+    if (!run_exclusive_engine) {
+        // A live guest can retain these refs after JNI_OnLoad. Only the
+        // normal UI/synthetic smoke path releases them proactively.
+        morrow_jni_runtime_release_local_storage_manager();
+        morrow_jni_runtime_unbind_asset_manager();
+        morrow_jni_runtime_unbind_surface();
+        morrow_jni_runtime_release_configuration();
+        morrow_jni_runtime_release_game_activity();
+    }
 #endif
     ui_shutdown();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
+    if (run_exclusive_engine) {
+#ifdef MORROW_HAS_JNIVM
+        return exclusive_engine_launch();
+#else
+        return failure_screen("Exclusive engine launch needs the JNI-enabled Morrow build.");
+#endif
+    }
     if (run_gles_smoke)
         morrow_gles_smoke_run();
     return 0;

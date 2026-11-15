@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.74 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.75 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -41,7 +41,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.74 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.75 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -68,7 +68,7 @@ one native method. The `morrow_synthetic_jni_onload_*` fields in `link-XX.txt`
 record each stage. The patched VM now dispatches one predeclared `(I)I` native
 through `CallStaticIntMethod`; **other raw JNI signatures are not implemented**
 and `RegisterNatives` rejects them. Normal **L3** does **not** call into
-`libroblox.so`. Holding **ZL + L3** explicitly requests the experimental real
+`libroblox.so`. **Before v0.75**, holding **ZL + L3** requested the experimental real
 `JNI_OnLoad` call. It will refuse to execute if strict relocation fails, the
 engine has uninitialised PT_TLS or ELF constructors, required JNI objects are
 missing, or its entry is not in RX memory. It writes the precise reason in
@@ -87,7 +87,7 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
-**v0.74 corrects the ZL + ZR + L3 App Bridge V2 experiment**, after
+**v0.74 corrected the ZL + ZR + L3 App Bridge V2 experiment**, after
 successful JNI_OnLoad in the same process. It checks the five launch
 exports against the pinned mapped RX pages and invokes
 the observed JNI signatures in order: `nativeGameGlobalInit`,
@@ -125,6 +125,24 @@ report: checked EGL window creation, successful `eglMakeCurrent`, `glClear`,
 and successful `eglSwapBuffers`. It counts only calls to the graphics ABI
 we expose to the guest, not Morrow's own SDL preview. Even all four positive
 counters are **not proof that a visible Roblox frame reached the screen**.
+
+**v0.75 moves real engine entry behind an exclusive graphics handoff.**
+Older previews attempted JNI startup while Morrow's SDL renderer still
+owned the same Horizon window: that could conflict with the guest EGL context.
+On Loader, hold **ZL + ZR and press Minus**. Morrow closes its SDL UI,
+renderer, and window *before* binding the real JNI Surface and attempting
+`JNI_OnLoad`, the five App Bridge entries, and one main-thread message
+callback. Individual ZL/ZR+L3 and ZL+ZR+R3 native entry calls now fail closed
+while SDL is active; normal L3 diagnostics are unchanged. If JNI startup is
+blocked, a simple console screen directs you to `link-XX.txt`; after JNI
+entry, the process exits if the App Bridge cannot start. If all five entries
+return, the exclusive Horizon window stays available until you press PLUS,
+and Morrow appends bounded 2-second guest EGL activity snapshots to the last
+link report. **INFERRED:** releasing SDL removes a plausible graphics-ownership
+conflict. It does not solve engine TLS, ELF constructors, Android services,
+login, or prove the guest rendered a visible frame. Crashes still leave
+durable step breadcrumbs, and normal **Minus** still runs only the separate
+synthetic GLES triangle smoke test.
 
 Before **any** experimental engine entry (JNI_OnLoad, AGDK GameActivity or
 each of the five App Bridge steps and v0.73's one-shot message callback),
@@ -212,16 +230,13 @@ then check:
    then discards the NX staging bytes and releases the reservation.
    This option saves `link-XX.txt` in the same folder. Normal L3 does not
    map the Roblox image as executable, call an engine initialiser, sign in,
-   or join a game. The v0.59 **ZL + L3** experiment may map and call the real
-   `JNI_OnLoad` only after its safety checks pass. v0.61 adds a separate
-   **ZR + L3** GameActivity initialiser attempt after successful `JNI_OnLoad`.
-   **ZL + ZR + L3** attempts five App Bridge V2 native launch exports
-   after successful `JNI_OnLoad`, with persistent crash breadcrumbs.
-   **ZL + ZR + R3** separately attempts a single native main-thread message
-   callback, only after all five App Bridge entries returned. This is an
-   experimental diagnostic, not a complete event loop or login implementation.
-   Neither operation is a gameplay or login implementation. A real engine still needs Android
-   TLS, constructors, complete JNI and graphics.
+   or join a game. For the v0.75 experimental engine attempt, hold
+   **ZL + ZR + Minus** instead. This quits Morrow's SDL renderer before
+   attempting `JNI_OnLoad`, the five native App Bridge entries, and one
+   message callback, each with durable crash breadcrumbs. The old ZL/ZR+L3
+   and ZL+ZR+R3 native calls are blocked while SDL still owns the display.
+   This is not a gameplay or login implementation. A real engine still needs
+   Android TLS, constructors, complete JNI and graphics.
    Starting with v0.27, this same report checks whether a separate, aligned
    copy of the real library's PT_TLS initializer and a single-module DTV
    shadow can be prepared. These are diagnostic per-thread allocations only;
