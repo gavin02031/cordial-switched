@@ -396,6 +396,21 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_line(log, "jni_game_activity_class_loader=%s",
              game_activity_ready ? "registered_classes_only" : "unavailable");
     log_line(log, "jni_apk_classpath_installed=no");
+    bool partial_app_params = false;
+#ifdef MORROW_HAS_JNIVM
+    partial_app_params =
+        morrow_jni_runtime_app_bridge_start_params() != NULL &&
+        morrow_jni_runtime_app_bridge_start_params_bound();
+#endif
+    log_line(log, "app_bridge_start_app_params_typed_partial=%s",
+             partial_app_params ? "yes" : "no");
+    log_line(log, "app_bridge_start_app_params_surface_from_horizon=%s",
+             partial_app_params ? "yes" : "no");
+    log_line(log, "app_bridge_start_app_params_platform_assets=%s",
+             partial_app_params ? "bound_read_only_directory" : "unavailable");
+    log_line(log, "app_bridge_init_params_complete=no");
+    log_line(log, "app_bridge_android_app_callbacks_complete=no");
+    log_line(log, "app_bridge_account_login_available=no");
     log_line(log, "jni_game_activity_insets_callback=%s",
              game_activity_ready ? "zero_fullscreen_insets_only" : "unavailable");
     log_line(log, "jni_game_activity_get_assets_callback=%s",

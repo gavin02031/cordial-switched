@@ -131,6 +131,9 @@ int main()
     assert(morrow_jni_runtime_java_vm() == nullptr);
     assert(morrow_jni_runtime_jni_env() == nullptr);
     assert(!morrow_jni_runtime_game_activity_ready());
+    assert(!morrow_jni_runtime_app_bridge_start_params());
+    assert(!morrow_jni_runtime_app_bridge_start_params_bound());
+    assert(morrow_jni_runtime_release_app_bridge_start_params());
     assert(!morrow_jni_runtime_configuration_bound());
     assert(!morrow_jni_runtime_configuration());
     MorrowJniOnLoadProbe onload = {};
@@ -331,6 +334,9 @@ int main()
     assert(!morrow_jni_runtime_bind_horizon_surface(&horizon_window, 0, 720));
     void *surface = morrow_jni_runtime_bind_horizon_surface(&horizon_window, 1280, 720);
     assert(surface && morrow_jni_runtime_surface_bound());
+    // The real surface alone is insufficient for App Bridge: an asset
+    // directory is mandatory, and a null Java receiver must not be made up.
+    assert(!morrow_jni_runtime_app_bridge_start_params());
     assert(main_env->IsInstanceOf(static_cast<jobject>(surface),
                                   main_env->FindClass("android/view/Surface")));
     assert(from_surface(main_env, &horizon_window) == nullptr);
@@ -379,6 +385,72 @@ int main()
     assert(file && fwrite("hello!", 1, 6, file) == 6 && fclose(file) == 0);
     void *asset_java = morrow_jni_runtime_bind_asset_manager(root);
     assert(asset_java && morrow_jni_runtime_asset_manager_bound());
+    assert(!morrow_jni_runtime_app_bridge_start_params()); // No live surface.
+    void *app_surface = morrow_jni_runtime_bind_horizon_surface(
+        &horizon_window, 1280, 720);
+    assert(app_surface);
+    void *start_params = morrow_jni_runtime_app_bridge_start_params();
+    assert(start_params && morrow_jni_runtime_app_bridge_start_params_bound());
+    assert(morrow_jni_runtime_app_bridge_start_params() == start_params);
+    jclass start_class = main_env->FindClass(
+        "com/roblox/engine/jni/autovalue/StartAppParams");
+    jclass platform_class = main_env->FindClass(
+        "com/roblox/engine/jni/model/PlatformParams");
+    assert(start_class && platform_class && main_env->IsInstanceOf(
+        static_cast<jobject>(start_params), start_class));
+    jfieldID surface_field = main_env->GetFieldID(
+        start_class, "surface", "Landroid/view/Surface;");
+    jmethodID surface_method = main_env->GetMethodID(
+        start_class, "surface", "()Landroid/view/Surface;");
+    jfieldID platform_field = main_env->GetFieldID(
+        start_class, "platformParams", "Lcom/roblox/engine/jni/model/PlatformParams;");
+    jmethodID platform_method = main_env->GetMethodID(
+        start_class, "platformParams", "()Lcom/roblox/engine/jni/model/PlatformParams;");
+    assert(surface_field && surface_method && platform_field && platform_method);
+    const size_t bridge_locals_before = real_env->localframe.front().size();
+    for (unsigned i = 0; i < 32; ++i) {
+        jobject field_surface = main_env->GetObjectField(
+            static_cast<jobject>(start_params), surface_field);
+        jobject method_surface = main_env->CallObjectMethod(
+            static_cast<jobject>(start_params), surface_method);
+        jobject field_platform = main_env->GetObjectField(
+            static_cast<jobject>(start_params), platform_field);
+        jobject method_platform = main_env->CallObjectMethod(
+            static_cast<jobject>(start_params), platform_method);
+        assert(field_surface && method_surface && field_platform && method_platform);
+        assert(main_env->IsSameObject(field_surface, static_cast<jobject>(app_surface)));
+        assert(main_env->IsSameObject(method_surface, static_cast<jobject>(app_surface)));
+        assert(main_env->IsInstanceOf(field_platform, platform_class));
+        assert(main_env->IsSameObject(field_platform, method_platform));
+        void *window = from_surface(main_env, method_surface);
+        assert(window && width(window) == 1280 && height(window) == 720);
+        release(window);
+        jfieldID touch = main_env->GetFieldID(platform_class, "isTouchDevice", "Z");
+        jfieldID mm = main_env->GetFieldID(platform_class, "viewportWidthMm", "I");
+        jfieldID path = main_env->GetFieldID(
+            platform_class, "assetFolderPath", "Ljava/lang/String;");
+        assert(touch && mm && path);
+        assert(main_env->GetBooleanField(field_platform, touch) == JNI_TRUE);
+        assert(main_env->GetIntField(field_platform, mm) == 0);
+        jobject path_ref = main_env->GetObjectField(field_platform, path);
+        assert(path_ref);
+        const char *path_chars = main_env->GetStringUTFChars(
+            static_cast<jstring>(path_ref), nullptr);
+        assert(path_chars && !strcmp(path_chars, root));
+        main_env->ReleaseStringUTFChars(static_cast<jstring>(path_ref), path_chars);
+        main_env->DeleteLocalRef(path_ref);
+        main_env->DeleteLocalRef(field_surface);
+        main_env->DeleteLocalRef(method_surface);
+        main_env->DeleteLocalRef(field_platform);
+        main_env->DeleteLocalRef(method_platform);
+    }
+    assert(!main_env->ExceptionCheck());
+    assert(real_env->localframe.front().size() == bridge_locals_before);
+    assert(morrow_jni_runtime_release_app_bridge_start_params());
+    assert(!morrow_jni_runtime_app_bridge_start_params_bound());
+    assert(morrow_jni_runtime_app_bridge_start_params());
+    main_env->DeleteLocalRef(start_class);
+    main_env->DeleteLocalRef(platform_class);
     expected_activity = static_cast<jobject>(activity);
     expected_assets = static_cast<jobject>(asset_java);
     expected_configuration = static_cast<jobject>(configuration);
@@ -426,6 +498,9 @@ int main()
     assert(asset && asset_length(asset) == 6);
     assert(morrow_jni_runtime_unbind_asset_manager());
     assert(!morrow_jni_runtime_asset_manager_bound());
+    assert(!morrow_jni_runtime_app_bridge_start_params_bound());
+    assert(!morrow_jni_runtime_app_bridge_start_params());
+    assert(morrow_jni_runtime_unbind_surface());
     assert(!from_java(main_env, asset_java));
     assert(!from_java(main_env, activity_assets));
     assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), assets_method));

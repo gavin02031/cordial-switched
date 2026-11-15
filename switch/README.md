@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.62 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.63 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.62 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.63 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -401,6 +401,18 @@ then check:
    virtual addresses. These are **read-only**: required AutoValue InitParams,
    StartAppParams, real surface/lifecycle and app services are not yet in
    the Horizon JNI VM. The engine home shell is not started by v0.62.
+   v0.63 adds a real JNI `StartAppParams` object and nested `PlatformParams`
+   with fields and getter methods observed in Cordial's Android client.
+   They become available only when **both** an actual Horizon `Surface` and
+   an existing extracted asset directory have been bound. The params refer
+   to the **same** host-owned window as `ANativeWindow_fromSurface`; host
+   tests verify JNI field/getter identity and the real native-window lookup,
+   including repeated references and cleanup. They preserve signed-out
+   identity and leave unknown physical dimensions and theme unset rather than
+   inventing values. L3 reports `app_bridge_start_app_params_typed_partial`.
+   The `vrContext`, complete `InitParams`/`DeviceParams`, real Java callbacks
+   and app lifecycle are **still absent**; the Roblox App Bridge is not yet
+   called and no sign-in screen or playable game has been verified.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

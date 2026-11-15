@@ -53,6 +53,15 @@ void *morrow_jni_runtime_bind_asset_manager(const char *asset_root);
 bool morrow_jni_runtime_asset_manager_bound(void);
 bool morrow_jni_runtime_unbind_asset_manager(void);
 
+// Partial, typed App Bridge V2 StartAppParams for the observed Android shell
+// path. Created only with a live Horizon Surface AND a real asset directory.
+// This proves JNI field/getter and Surface identity, not the other startup
+// prerequisites: InitParams, DeviceParams, callbacks and login remain absent.
+// Do not pass this object to Roblox until those requirements are implemented.
+void *morrow_jni_runtime_app_bridge_start_params(void);
+bool morrow_jni_runtime_app_bridge_start_params_bound(void);
+bool morrow_jni_runtime_release_app_bridge_start_params(void);
+
 // Typed, stable Java Configuration identity for the eventual GameActivity
 // native initialiser. This is deliberately not an invented Android Resources
 // object or populated Configuration: screen/locale data remain unavailable.

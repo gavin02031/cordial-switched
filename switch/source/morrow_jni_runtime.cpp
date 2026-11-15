@@ -107,6 +107,116 @@ public:
 std::shared_ptr<HorizonConfiguration> configuration_owner;
 jobject configuration_reference;
 
+// Cordial's observed Android launch trace reaches StartAppParams.surface
+// through App Bridge V2, not through AGDK's GameActivity window lifecycle.
+// Define the verified Java field types here so future calls can use the real
+// libjnivm JNI table. Unknown Android state is not fabricated: physical size
+// and signed-in identity are absent, and no engine startup uses this yet.
+class HorizonPlatformParams : public jnivm::Object {
+public:
+    std::shared_ptr<jnivm::String> assetFolderPath;
+    jfloat dpiScale = 1.0f; // Neutral scale, not a measured Android density.
+    jboolean isKeyboardDevice = JNI_FALSE;
+    jboolean isMouseDevice = JNI_FALSE;
+    jboolean isTouchDevice = JNI_TRUE; // Switch Lite's actual touchscreen.
+    jint viewportWidthMm = 0, viewportHeightMm = 0; // No physical size reading.
+
+    std::shared_ptr<jnivm::String> get_assetFolderPath(jnivm::ENV *) { return assetFolderPath; }
+    jfloat get_dpiScale(jnivm::ENV *) { return dpiScale; }
+    jboolean get_isKeyboardDevice(jnivm::ENV *) { return isKeyboardDevice; }
+    jboolean get_isMouseDevice(jnivm::ENV *) { return isMouseDevice; }
+    jboolean get_isTouchDevice(jnivm::ENV *) { return isTouchDevice; }
+    jint get_viewportWidthMm(jnivm::ENV *) { return viewportWidthMm; }
+    jint get_viewportHeightMm(jnivm::ENV *) { return viewportHeightMm; }
+
+    static void Register(jnivm::ENV *env)
+    {
+        auto klass = env->GetClass<HorizonPlatformParams>(
+            "com/roblox/engine/jni/model/PlatformParams");
+#define PLATFORM_FIELD(name) klass->HookInstance(env, #name, &HorizonPlatformParams::name)
+        PLATFORM_FIELD(assetFolderPath);
+        PLATFORM_FIELD(dpiScale);
+        PLATFORM_FIELD(isKeyboardDevice);
+        PLATFORM_FIELD(isMouseDevice);
+        PLATFORM_FIELD(isTouchDevice);
+        PLATFORM_FIELD(viewportWidthMm);
+        PLATFORM_FIELD(viewportHeightMm);
+#undef PLATFORM_FIELD
+#define PLATFORM_GETTER(name) klass->HookInstanceFunction(env, #name, &HorizonPlatformParams::get_##name)
+        PLATFORM_GETTER(assetFolderPath);
+        PLATFORM_GETTER(dpiScale);
+        PLATFORM_GETTER(isKeyboardDevice);
+        PLATFORM_GETTER(isMouseDevice);
+        PLATFORM_GETTER(isTouchDevice);
+        PLATFORM_GETTER(viewportWidthMm);
+        PLATFORM_GETTER(viewportHeightMm);
+#undef PLATFORM_GETTER
+    }
+};
+
+class HorizonStartAppParams : public jnivm::Object {
+public:
+    std::shared_ptr<jnivm::String> appStarterPlace, appStarterScript;
+    std::shared_ptr<jnivm::String> selectedTheme, username;
+    std::shared_ptr<HorizonPlatformParams> platformParams;
+    std::shared_ptr<HorizonSurface> surface;
+    jlong appUserId = 0; // No account loaded on Horizon.
+    jboolean isUnder13 = JNI_FALSE; // No signed-in account age to report.
+    jint membershipType = 0;
+
+    std::shared_ptr<jnivm::String> get_appStarterPlace(jnivm::ENV *) { return appStarterPlace; }
+    std::shared_ptr<jnivm::String> get_appStarterScript(jnivm::ENV *) { return appStarterScript; }
+    std::shared_ptr<jnivm::String> get_selectedTheme(jnivm::ENV *) { return selectedTheme; }
+    std::shared_ptr<jnivm::String> get_username(jnivm::ENV *) { return username; }
+    std::shared_ptr<HorizonPlatformParams> get_platformParams(jnivm::ENV *) { return platformParams; }
+    std::shared_ptr<HorizonSurface> get_surface(jnivm::ENV *) { return surface; }
+    jlong get_appUserId(jnivm::ENV *) { return appUserId; }
+    jboolean get_isUnder13(jnivm::ENV *) { return isUnder13; }
+    jint get_membershipType(jnivm::ENV *) { return membershipType; }
+
+    static void Register(jnivm::ENV *env)
+    {
+        HorizonPlatformParams::Register(env);
+        auto klass = env->GetClass<HorizonStartAppParams>(
+            "com/roblox/engine/jni/autovalue/StartAppParams");
+#define APP_FIELD(name) klass->HookInstance(env, #name, &HorizonStartAppParams::name)
+        APP_FIELD(appStarterPlace);
+        APP_FIELD(appStarterScript);
+        APP_FIELD(selectedTheme);
+        APP_FIELD(username);
+        APP_FIELD(platformParams);
+        APP_FIELD(surface);
+        APP_FIELD(appUserId);
+        APP_FIELD(isUnder13);
+        APP_FIELD(membershipType);
+#undef APP_FIELD
+#define APP_GETTER(name) klass->HookInstanceFunction(env, #name, &HorizonStartAppParams::get_##name)
+        APP_GETTER(appStarterPlace);
+        APP_GETTER(appStarterScript);
+        APP_GETTER(selectedTheme);
+        APP_GETTER(username);
+        APP_GETTER(platformParams);
+        APP_GETTER(surface);
+        APP_GETTER(appUserId);
+        APP_GETTER(isUnder13);
+        APP_GETTER(membershipType);
+#undef APP_GETTER
+        // vrContext has no working Android Activity/VR service on Horizon.
+        // Leaving that member unresolved is intentional until it exists.
+    }
+};
+
+std::shared_ptr<HorizonStartAppParams> start_app_owner;
+jobject start_app_reference;
+
+void release_start_app_params_locked()
+{
+    if (!start_app_reference) return;
+    runtime->GetJNIEnv()->DeleteGlobalRef(start_app_reference);
+    start_app_reference = nullptr;
+    start_app_owner.reset();
+}
+
 class ZeroInsets : public jnivm::Object {
 public:
     jint left = 0, top = 0, right = 0, bottom = 0;
@@ -141,6 +251,8 @@ public:
             "android/content/res/AssetManager", "androidx/core/graphics/Insets",
             "android/content/res/Configuration",
             "android/os/LocaleList", "java/util/Locale",
+            "com/roblox/engine/jni/model/PlatformParams",
+            "com/roblox/engine/jni/autovalue/StartAppParams",
             "com/google/androidgamesdk/GameActivity"
         };
         for (const char *entry : known)
@@ -358,6 +470,7 @@ extern "C" bool morrow_jni_runtime_start(void)
         if (!env || !env->functions || env->GetVersion() != JNI_VERSION_1_6)
             return false;
         HorizonGameActivity::Register(candidate->GetEnv().get());
+        HorizonStartAppParams::Register(candidate->GetEnv().get());
         candidate->GetEnv()->GetClass("dev/morrow/diagnostics/OnLoadProbe");
         const AndroidJniVmProvider provider = {get_env, attach, detach, nullptr};
         if (!android_jni_vm_bridge_install_provider(&provider, candidate.get()))
@@ -491,6 +604,7 @@ extern "C" bool morrow_jni_runtime_unbind_surface(void)
         return true;
     if (!runtime || !attached_to_runtime)
         return false;
+    release_start_app_params_locked();
     android_native_window_compat_unbind_surface(surface_reference);
     runtime->GetJNIEnv()->DeleteGlobalRef(surface_reference);
     surface_reference = nullptr;
@@ -548,6 +662,60 @@ extern "C" bool morrow_jni_runtime_asset_manager_bound(void)
     return asset_reference != nullptr;
 }
 
+extern "C" void *morrow_jni_runtime_app_bridge_start_params(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    // A Java Surface alone is not a drawable window: it must still have its
+    // registered NWindow owner. The asset folder has the same ownership rule.
+    if (!runtime || !attached_to_runtime || !surface_reference || !surface_owner ||
+        !asset_reference || asset_directory.empty())
+        return nullptr;
+    if (start_app_reference)
+        return start_app_reference;
+    try {
+        jnivm::ENV *env = runtime->GetEnv().get();
+        auto platform = std::make_shared<HorizonPlatformParams>();
+        platform->assetFolderPath =
+            std::make_shared<jnivm::String>(asset_directory);
+        auto owner = std::make_shared<HorizonStartAppParams>();
+        // The Android app's default shell uses empty starter strings. No
+        // account has been authenticated on Horizon, so username remains
+        // empty rather than borrowing an unrelated player's credentials.
+        owner->appStarterPlace = std::make_shared<jnivm::String>("");
+        owner->appStarterScript = std::make_shared<jnivm::String>("");
+        owner->username = std::make_shared<jnivm::String>("");
+        owner->platformParams = std::move(platform);
+        owner->surface = surface_owner;
+        JNIEnv *jni = env->GetJNIEnv();
+        jobject local = jnivm::JNITypes<std::shared_ptr<HorizonStartAppParams>>::ToJNIType(
+            env, owner);
+        jobject global = jni->NewGlobalRef(local);
+        jni->DeleteLocalRef(local);
+        if (!global) return nullptr;
+        start_app_owner = std::move(owner);
+        start_app_reference = global;
+        return global;
+    } catch (...) {
+        return nullptr;
+    }
+}
+
+extern "C" bool morrow_jni_runtime_app_bridge_start_params_bound(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    return start_app_reference != nullptr && surface_reference != nullptr &&
+           asset_reference != nullptr;
+}
+
+extern "C" bool morrow_jni_runtime_release_app_bridge_start_params(void)
+{
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!start_app_reference) return true;
+    if (!runtime || !attached_to_runtime) return false;
+    release_start_app_params_locked();
+    return true;
+}
+
 extern "C" void *morrow_jni_runtime_configuration(void)
 {
     std::lock_guard<std::mutex> lock(start_mutex);
@@ -599,6 +767,7 @@ extern "C" bool morrow_jni_runtime_unbind_asset_manager(void)
         return true;
     if (!runtime || !attached_to_runtime)
         return false;
+    release_start_app_params_locked();
     android_asset_compat_unbind_manager(asset_reference);
     runtime->GetJNIEnv()->DeleteGlobalRef(asset_reference);
     asset_reference = nullptr;
