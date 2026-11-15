@@ -100,6 +100,10 @@ int main()
     assert(morrow_jni_runtime_java_vm() == nullptr);
     assert(morrow_jni_runtime_jni_env() == nullptr);
     assert(!morrow_jni_runtime_game_activity_ready());
+    MorrowJniOnLoadProbe onload = {};
+    assert(!morrow_jni_runtime_probe_onload(&onload));
+    assert(!onload.vm_available);
+    assert(!morrow_jni_runtime_probe_onload(nullptr));
     MorrowGameActivityRequests activity_requests = {};
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(!morrow_jni_runtime_activity_requests(nullptr));
@@ -117,6 +121,22 @@ int main()
     JavaVM *returned_vm = nullptr;
     assert(main_env->GetJavaVM(&returned_vm) == JNI_OK);
     assert(returned_vm == native_vm);
+    // A synthetic JNI_OnLoad can register a native, but this pinned libjnivm
+    // doesn't dispatch it via CallStaticIntMethod. Record that failing control
+    // explicitly while checking ABI, cleanup and repeatability.
+    for (unsigned i = 0; i < 64; ++i) {
+        const bool passed = morrow_jni_runtime_probe_onload(&onload);
+        if (!passed)
+            fprintf(stderr, "JNI_OnLoad probe %u failed: vm=%d entry=%d registered=%d "
+                    "called=%d unregistered=%d locals=%d\n", i,
+                    onload.vm_available, onload.jni_onload_accepted,
+                    onload.native_registered, onload.native_invoked,
+                    onload.native_unregistered, onload.local_references_released);
+        assert(passed);
+        assert(onload.vm_available && onload.jni_onload_accepted &&
+               onload.native_registered && !onload.native_invoked &&
+               onload.native_unregistered && onload.local_references_released);
+    }
     assert(bridge->functions->get_env(bridge, &env, 0x00010008) ==
            ANDROID_JNI_EVERSION && !env);
 
@@ -321,6 +341,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI, bounded ClassLoader, Activity callbacks and local refs passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad registration/cleanup passed; registered-native dispatch remains blocked");
     return 0;
 }

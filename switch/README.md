@@ -1,7 +1,7 @@
 # Cordial Switched: native Horizon experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.53 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.54 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, an Overview page, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -26,7 +26,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.53 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.54 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -37,7 +37,13 @@ exposes it via GameActivity's `getAssets` JNI callback only if bound,
 and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
 report records `jni_vm_provider_installed`, `jni_game_activity_object_registered`,
 `android_java_surface_registered`, and `android_java_asset_manager_registered`
-independently. **Two implemented Activity callbacks are not a complete
+independently. It also executes an original Morrow-owned `JNI_OnLoad`-shaped
+callback against that VM and registers, attempts to invoke, then unregisters
+one native method. The `morrow_synthetic_jni_onload_*` fields in `link-XX.txt`
+record each stage. The pinned VM currently **does not dispatch** that registered
+method through `CallStaticIntMethod`, a known blocker. The check does **not**
+call into `libroblox.so`.
+**The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
 The Surface adapter now accepts valid local/global aliases to the same Java
@@ -306,6 +312,12 @@ then check:
    Repeated Activity calls and object-type checks now leave no retained locals
    in the patched-VM host test. This does not prove the whole Android runtime
    or Roblox engine is ready; Switch Lite hardware testing remains pending.
+   v0.54 adds a repeatable on-device synthetic `JNI_OnLoad` contract probe to
+   the L3 report. The host test repeats it 64 times, confirming VM ABI,
+   registration, unregistration and JNI-local cleanup. Its negative control
+   shows that registered methods cannot yet be called through the JNI static
+   invocation table. The failing subcheck stays visible in diagnostics; a green
+   cross-build does not prove Roblox's initialiser can execute.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)

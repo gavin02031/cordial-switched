@@ -217,6 +217,35 @@ int32_t detach(void *context)
     return result;
 }
 
+uint32_t synthetic_native_calls;
+
+jint synthetic_native_increment(JNIEnv *, jclass, jint value)
+{
+    ++synthetic_native_calls;
+    return value + 7;
+}
+
+jint synthetic_jni_onload(JavaVM *vm, void *)
+{
+    // A controlled JNI_OnLoad-shaped entry, not an engine call. Exercise the
+    // exact JavaVM* and RegisterNatives ABI an Android library will receive.
+    JNIEnv *env = nullptr;
+    if (!vm || vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK ||
+        !env || env->GetVersion() != JNI_VERSION_1_6)
+        return JNI_ERR;
+    jclass klass = env->FindClass("dev/morrow/diagnostics/OnLoadProbe");
+    if (!klass)
+        return JNI_ERR;
+    JNINativeMethod method = {
+        const_cast<char *>("nativeIncrement"),
+        const_cast<char *>("(I)I"),
+        reinterpret_cast<void *>(&synthetic_native_increment)
+    };
+    const jint result = env->RegisterNatives(klass, &method, 1);
+    env->DeleteLocalRef(klass);
+    return result == JNI_OK ? JNI_VERSION_1_6 : JNI_ERR;
+}
+
 } // namespace
 
 extern "C" bool morrow_jni_runtime_start(void)
@@ -230,6 +259,7 @@ extern "C" bool morrow_jni_runtime_start(void)
         if (!env || !env->functions || env->GetVersion() != JNI_VERSION_1_6)
             return false;
         HorizonGameActivity::Register(candidate->GetEnv().get());
+        candidate->GetEnv()->GetClass("dev/morrow/diagnostics/OnLoadProbe");
         const AndroidJniVmProvider provider = {get_env, attach, detach, nullptr};
         if (!android_jni_vm_bridge_install_provider(&provider, candidate.get()))
             return false;
@@ -256,6 +286,49 @@ extern "C" void *morrow_jni_runtime_jni_env(void)
 {
     std::lock_guard<std::mutex> lock(start_mutex);
     return runtime && attached_to_runtime ? runtime->GetJNIEnv() : nullptr;
+}
+
+extern "C" bool morrow_jni_runtime_probe_onload(MorrowJniOnLoadProbe *report)
+{
+    if (!report)
+        return false;
+    *report = {};
+    std::lock_guard<std::mutex> lock(start_mutex);
+    if (!runtime || !attached_to_runtime)
+        return false;
+
+    try {
+        JavaVM *vm = runtime->GetJavaVM();
+        JNIEnv *env = runtime->GetJNIEnv();
+        report->vm_available = vm && env;
+        if (!report->vm_available)
+            return false;
+        const size_t locals_before = runtime->GetEnv()->localframe.front().size();
+        report->jni_onload_accepted = synthetic_jni_onload(vm, nullptr) == JNI_VERSION_1_6;
+        jclass klass = nullptr;
+        if (report->jni_onload_accepted) {
+            klass = env->FindClass("dev/morrow/diagnostics/OnLoadProbe");
+            if (klass) {
+                jmethodID method = env->GetStaticMethodID(klass, "nativeIncrement", "(I)I");
+                report->native_registered = method != nullptr;
+                if (method) {
+                    const uint32_t calls_before = synthetic_native_calls;
+                    const jint value = env->CallStaticIntMethod(klass, method, 35);
+                    report->native_invoked = value == 42 &&
+                        synthetic_native_calls == calls_before + 1 && !env->ExceptionCheck();
+                }
+                report->native_unregistered = env->UnregisterNatives(klass) == JNI_OK;
+                env->DeleteLocalRef(klass);
+            }
+        }
+        report->local_references_released =
+            runtime->GetEnv()->localframe.front().size() == locals_before;
+        return report->jni_onload_accepted && report->native_registered &&
+               report->native_unregistered &&
+               report->local_references_released;
+    } catch (...) {
+        return false;
+    }
 }
 
 extern "C" void *morrow_jni_runtime_bind_horizon_surface(void *horizon_window,

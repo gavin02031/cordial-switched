@@ -20,6 +20,22 @@ void *morrow_jni_runtime_java_vm(void);
 // Returns NULL before startup or after detaching, never implicitly attaches.
 void *morrow_jni_runtime_jni_env(void);
 
+typedef struct {
+    bool vm_available;
+    bool jni_onload_accepted;
+    bool native_registered;
+    bool native_invoked;
+    bool native_unregistered;
+    bool local_references_released;
+} MorrowJniOnLoadProbe;
+
+// Call an original, Morrow-owned JNI_OnLoad-shaped function against the real
+// VM and test a native registered by it. The pinned VM accepts RegisterNatives
+// but does not dispatch those raw callbacks through CallStaticIntMethod yet;
+// native_invoked reports that blocker separately rather than faking success.
+// No user library or Roblox code runs; repeats must not retain JNI locals.
+bool morrow_jni_runtime_probe_onload(MorrowJniOnLoadProbe *report);
+
 // A host-owned, live Horizon NWindow can be represented by one stable JNI
 // android/view/Surface reference. The caller keeps NWindow alive until unbind.
 // The returned jobject is a real libjnivm global reference, NOT an NWindow.

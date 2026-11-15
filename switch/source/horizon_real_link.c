@@ -268,6 +268,33 @@ void horizon_real_link_run(RealLinkResult *result)
     const bool jni_provider_ready = android_jni_vm_bridge_has_provider();
     log_line(log, "jni_vm_provider_installed=%s", jni_provider_ready ? "yes" : "no");
     log_line(log, "jni_env_provider_connected=%s", jni_provider_ready ? "yes" : "no");
+    bool synthetic_onload_passed = false;
+    bool synthetic_vm_available = false;
+    bool synthetic_entry_accepted = false;
+    bool synthetic_native_invoked = false;
+    bool synthetic_cleanup = false;
+#ifdef MORROW_HAS_JNIVM
+    MorrowJniOnLoadProbe synthetic_onload = {0};
+    synthetic_onload_passed = morrow_jni_runtime_probe_onload(&synthetic_onload);
+    synthetic_vm_available = synthetic_onload.vm_available;
+    synthetic_entry_accepted = synthetic_onload.jni_onload_accepted;
+    synthetic_native_invoked = synthetic_onload.native_invoked;
+    synthetic_cleanup = synthetic_onload.native_unregistered &&
+                        synthetic_onload.local_references_released;
+#endif
+    const char *synthetic_status = !synthetic_vm_available ? "vm_unavailable" :
+                                   !synthetic_onload_passed ? "registration_or_cleanup_failed" :
+                                   !synthetic_native_invoked ? "native_dispatch_missing" : "passed";
+    log_line(log, "morrow_synthetic_jni_onload_probe=%s", synthetic_status);
+    log_line(log, "morrow_synthetic_jni_onload_vm_available=%s",
+             synthetic_vm_available ? "yes" : "no");
+    log_line(log, "morrow_synthetic_jni_onload_entry_accepted=%s",
+             synthetic_entry_accepted ? "yes" : "no");
+    log_line(log, "morrow_synthetic_jni_onload_native_invoked=%s",
+             synthetic_native_invoked ? "yes" : "no");
+    log_line(log, "morrow_synthetic_jni_onload_cleanup=%s",
+             synthetic_cleanup ? "yes" : "no");
+    log_line(log, "morrow_synthetic_jni_onload_roblox_code_executed=no");
     log_line(log, "jni_runtime_hardware_verified=no");
     log_line(log, "jni_engine_class_callbacks_complete=no");
     bool game_activity_ready = false;
