@@ -1435,12 +1435,13 @@ extern "C" bool morrow_jni_runtime_call_app_bridge(
     // Their public constructors acquire the same lock internally.
     if (step == MORROW_APP_BRIDGE_V2_INIT &&
         !morrow_jni_runtime_app_bridge_init_params()) return false;
-    if (step == MORROW_APP_BRIDGE_START_APP &&
+    if ((step == MORROW_APP_BRIDGE_SURFACE_UPDATE ||
+         step == MORROW_APP_BRIDGE_START_APP) &&
         !morrow_jni_runtime_app_bridge_start_params()) return false;
 
     JNIEnv *env = nullptr;
     jclass bridge_class = nullptr;
-    jobject params = nullptr;
+    jobject params = nullptr, surface = nullptr, platform = nullptr;
     {
         std::lock_guard<std::mutex> lock(start_mutex);
         if (!runtime || !attached_to_runtime) return false;
@@ -1450,9 +1451,28 @@ extern "C" bool morrow_jni_runtime_call_app_bridge(
             params = env->NewLocalRef(init_params_reference);
         if (step == MORROW_APP_BRIDGE_START_APP && start_app_reference)
             params = env->NewLocalRef(start_app_reference);
+        if (step == MORROW_APP_BRIDGE_SURFACE_UPDATE && start_app_reference &&
+            surface_reference) {
+            params = env->NewLocalRef(start_app_reference);
+            surface = env->NewLocalRef(surface_reference);
+        }
+    }
+    if (step == MORROW_APP_BRIDGE_SURFACE_UPDATE && params) {
+        jclass params_class = env->FindClass(
+            "com/roblox/engine/jni/autovalue/StartAppParams");
+        if (params_class) {
+            jfieldID field = env->GetFieldID(params_class, "platformParams",
+                "Lcom/roblox/engine/jni/model/PlatformParams;");
+            if (field) platform = env->GetObjectField(params, field);
+            env->DeleteLocalRef(params_class);
+        }
     }
     if (!bridge_class || ((step == MORROW_APP_BRIDGE_V2_INIT ||
-                           step == MORROW_APP_BRIDGE_START_APP) && !params)) {
+                           step == MORROW_APP_BRIDGE_START_APP) && !params) ||
+        (step == MORROW_APP_BRIDGE_SURFACE_UPDATE && (!surface || !platform)) ||
+        env->ExceptionCheck()) {
+        if (platform) env->DeleteLocalRef(platform);
+        if (surface) env->DeleteLocalRef(surface);
         if (params) env->DeleteLocalRef(params);
         if (bridge_class) env->DeleteLocalRef(bridge_class);
         return false;
@@ -1462,7 +1482,10 @@ extern "C" bool morrow_jni_runtime_call_app_bridge(
         // No start_mutex while entering guest code; JNI callbacks may call
         // Java bridge objects, acquire the runtime lock or spawn threads.
         result->entry_invoked = true;
-        if (params) {
+        if (step == MORROW_APP_BRIDGE_SURFACE_UPDATE) {
+            using WithSurface = void (*)(JNIEnv *, jclass, jobject, jobject);
+            reinterpret_cast<WithSurface>(entry)(env, bridge_class, surface, platform);
+        } else if (params) {
             using WithParams = void (*)(JNIEnv *, jclass, jobject);
             reinterpret_cast<WithParams>(entry)(env, bridge_class, params);
         } else {
@@ -1474,6 +1497,8 @@ extern "C" bool morrow_jni_runtime_call_app_bridge(
     } catch (...) {
         result->cpp_exception_caught = true;
     }
+    if (platform) env->DeleteLocalRef(platform);
+    if (surface) env->DeleteLocalRef(surface);
     if (params) env->DeleteLocalRef(params);
     env->DeleteLocalRef(bridge_class);
     return result->entry_returned;

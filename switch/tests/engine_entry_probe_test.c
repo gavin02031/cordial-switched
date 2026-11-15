@@ -75,7 +75,7 @@ static void make_fixture(unsigned char *image)
 
     put32(image + 0x390 + 4, 3); // SHT_STRTAB
     put64(image + 0x390 + 24, 0x900);
-    put64(image + 0x390 + 32, 768);
+    put64(image + 0x390 + 32, 1024);
     static const char *const names[] = {
         "JNI_OnLoad",
         "ANativeActivity_onCreate",
@@ -88,7 +88,7 @@ static void make_fixture(unsigned char *image)
     uint32_t string_offset = 1;
     for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
         const size_t length = strlen(names[i]) + 1;
-        assert(string_offset + length <= 768);
+        assert(string_offset + length <= 1024);
         memcpy(image + 0x900 + string_offset, names[i], length);
         const size_t symbol_offset = 0x240 + (i + 1) * 24;
         put32(image + symbol_offset, string_offset);
@@ -96,6 +96,25 @@ static void make_fixture(unsigned char *image)
         put16(image + symbol_offset + 6, 1); // defined in RX segment
         put64(image + symbol_offset + 8, 0x1120 + i * 16);
         string_offset += (uint32_t)length;
+    }
+}
+
+// Replace three fixture exports without changing the established symbol
+// indices or GNU/SysV hash fixtures. All names are synthetic JNI exports.
+static void add_extended_bridge_symbols(unsigned char *image)
+{
+    static const char *const names[] = {
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeUpdateAdapterInit",
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams",
+        "Java_com_roblox_engine_jni_NativeGLInterface_nativeCallMessagesFromMainThread"
+    };
+    uint32_t offset = 0x200; // Additional strings at 0xb00.
+    for (unsigned i = 0; i < 3; ++i) {
+        size_t length = strlen(names[i]) + 1;
+        assert(offset + length <= 1024);
+        memcpy(image + 0x900 + offset, names[i], length);
+        put32(image + 0x240 + (i + 4) * 24, offset);
+        offset += (uint32_t)length;
     }
 }
 
@@ -119,7 +138,7 @@ static void stripped_dynamic_fixture(unsigned char *image, bool gnu)
     put64(image + 120 + 40, 96);
     dynamic(image, 0, 6, 0x1240); // DT_SYMTAB
     dynamic(image, 1, 5, 0x1900); // DT_STRTAB
-    dynamic(image, 2, 10, 768); // DT_STRSZ
+    dynamic(image, 2, 10, 1024); // DT_STRSZ
     dynamic(image, 3, gnu ? 0x6ffffef5 : 4, 0x1700);
     dynamic(image, 4, 11, 24); // DT_SYMENT
     dynamic(image, 5, 0, 0);
@@ -160,6 +179,32 @@ int main(void)
            result.app_bridge_lua_shell_start_virtual_address == 0x1170);
     assert(result.has_app_bridge_start_app &&
            result.app_bridge_start_app_virtual_address == 0x1180);
+    assert(!result.has_app_bridge_update_adapter_init &&
+           !result.has_app_bridge_surface_update &&
+           !result.has_app_bridge_main_thread_messages);
+    add_extended_bridge_symbols(fixture);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED);
+    assert(result.has_app_bridge_update_adapter_init &&
+           result.app_bridge_update_adapter_init_virtual_address == 0x1150);
+    assert(result.has_app_bridge_surface_update &&
+           result.app_bridge_surface_update_virtual_address == 0x1160);
+    assert(result.has_app_bridge_main_thread_messages &&
+           result.app_bridge_main_thread_messages_virtual_address == 0x1170);
+    assert(!result.has_app_bridge_global_init && !result.has_app_bridge_v2_init);
+    stripped_dynamic_fixture(fixture, false);
+    add_extended_bridge_symbols(fixture);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED &&
+           result.has_app_bridge_update_adapter_init &&
+           result.has_app_bridge_main_thread_messages);
+    stripped_dynamic_fixture(fixture, true);
+    add_extended_bridge_symbols(fixture);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED &&
+           result.has_app_bridge_surface_update);
+    make_fixture(fixture);
+    result = run_fixture(fixture);
     assert(result.has_init && result.init_virtual_address == 0x1100);
     assert(result.has_init_array && result.init_array_entries == 2);
     assert(result.init_array_virtual_address == 0x1200);

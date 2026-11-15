@@ -58,29 +58,43 @@ static const char *expected_path;
 static unsigned native_activity_calls;
 static jclass expected_bridge_class;
 static jobject expected_bridge_init_params, expected_bridge_start_params;
-static unsigned native_bridge_calls[4];
+static jobject expected_bridge_surface, expected_bridge_platform;
+static unsigned native_bridge_calls[6];
 
 static void synthetic_bridge_global(JNIEnv *env, jclass klass)
 {
     assert(env && env->IsSameObject(klass, expected_bridge_class));
     ++native_bridge_calls[0];
 }
+static void synthetic_bridge_update_adapter(JNIEnv *env, jclass klass)
+{
+    assert(env && env->IsSameObject(klass, expected_bridge_class));
+    ++native_bridge_calls[1];
+}
 static void synthetic_bridge_init(JNIEnv *env, jclass klass, jobject params)
 {
     assert(env && env->IsSameObject(klass, expected_bridge_class));
     assert(env->IsSameObject(params, expected_bridge_init_params));
-    ++native_bridge_calls[1];
+    ++native_bridge_calls[2];
 }
 static void synthetic_bridge_lua(JNIEnv *env, jclass klass)
 {
     assert(env && env->IsSameObject(klass, expected_bridge_class));
-    ++native_bridge_calls[2];
+    ++native_bridge_calls[3];
+}
+static void synthetic_bridge_surface(JNIEnv *env, jclass klass,
+                                     jobject surface, jobject platform)
+{
+    assert(env && env->IsSameObject(klass, expected_bridge_class));
+    assert(env->IsSameObject(surface, expected_bridge_surface));
+    assert(env->IsSameObject(platform, expected_bridge_platform));
+    ++native_bridge_calls[4];
 }
 static void synthetic_bridge_start(JNIEnv *env, jclass klass, jobject params)
 {
     assert(env && env->IsSameObject(klass, expected_bridge_class));
     assert(env->IsSameObject(params, expected_bridge_start_params));
-    ++native_bridge_calls[3];
+    ++native_bridge_calls[5];
 }
 
 static jlong synthetic_game_activity_init(JNIEnv *env, jobject activity,
@@ -653,15 +667,21 @@ int main()
     assert(expected_bridge_class);
     expected_bridge_init_params = static_cast<jobject>(init_params);
     expected_bridge_start_params = static_cast<jobject>(start_params);
+    expected_bridge_surface = static_cast<jobject>(app_surface);
+    expected_bridge_platform = main_env->GetObjectField(
+        static_cast<jobject>(start_params), platform_field);
+    assert(expected_bridge_platform);
     const size_t bridge_call_locals_before = real_env->localframe.front().size();
     const uintptr_t bridge_functions[] = {
         reinterpret_cast<uintptr_t>(&synthetic_bridge_global),
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_update_adapter),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_init),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_lua),
+        reinterpret_cast<uintptr_t>(&synthetic_bridge_surface),
         reinterpret_cast<uintptr_t>(&synthetic_bridge_start)
     };
     for (unsigned trial = 0; trial < 32; ++trial) {
-        for (unsigned step = 0; step < 4; ++step) {
+        for (unsigned step = 0; step < 6; ++step) {
             MorrowAppBridgeCallResult call = {};
             assert(morrow_jni_runtime_call_app_bridge(bridge_functions[step],
                 static_cast<MorrowAppBridgeStep>(step), &call));
@@ -669,14 +689,16 @@ int main()
                    !call.java_exception_pending && !call.cpp_exception_caught);
         }
     }
-    for (unsigned step = 0; step < 4; ++step)
+    for (unsigned step = 0; step < 6; ++step)
         assert(native_bridge_calls[step] == 32);
     assert(real_env->localframe.front().size() == bridge_call_locals_before);
+    main_env->DeleteLocalRef(expected_bridge_platform);
+    expected_bridge_platform = expected_bridge_surface = nullptr;
     main_env->DeleteLocalRef(expected_bridge_class);
     expected_bridge_class = nullptr;
     expected_bridge_init_params = expected_bridge_start_params = nullptr;
     // The existing AutoValue getter test below uses the same local-frame
-    // baseline and must still pass after 128 separate native boundary calls.
+    // baseline and must still pass after 192 separate native boundary calls.
     const size_t bridge_after_calls = real_env->localframe.front().size();
     assert(bridge_after_calls == bridge_locals_before);
     for (unsigned i = 0; i < 32; ++i) {

@@ -52,7 +52,7 @@ static bool engine_jni_onload_succeeded;
 static bool game_activity_attempt_consumed;
 static bool game_activity_entry_called;
 static uintptr_t live_game_activity_target;
-static uintptr_t live_app_bridge_targets[4];
+static uintptr_t live_app_bridge_targets[6];
 static bool app_bridge_attempt_consumed;
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)
@@ -283,7 +283,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             log_line(log, "blocker=app_bridge_already_attempted");
             goto done;
         }
-        for (unsigned i = 0; i < 4; ++i) {
+        for (unsigned i = 0; i < 6; ++i) {
             log_line(log, "app_bridge_step_%u_rx_target=%s", i + 1,
                      live_app_bridge_targets[i] ? "yes" : "no");
             if (!live_app_bridge_targets[i]) {
@@ -294,8 +294,10 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         }
 #ifdef MORROW_HAS_JNIVM
         const char *const names[] = {
-            "nativeGameGlobalInit", "nativeAppBridgeV2InitWithParams",
-            "nativeAppBridgeStartLuaAppDM", "nativeAppBridgeV2StartAppWithParams"
+            "nativeGameGlobalInit", "nativeUpdateAdapterInit",
+            "nativeAppBridgeV2InitWithParams", "nativeAppBridgeStartLuaAppDM",
+            "nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams",
+            "nativeAppBridgeV2StartAppWithParams"
         };
         if (!morrow_jni_runtime_jni_env() ||
             !morrow_jni_runtime_asset_manager_bound() ||
@@ -307,10 +309,11 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             goto done;
         }
         log_line(log, "app_bridge_params=partial_missing_android_lifecycle_and_account");
+        log_line(log, "app_bridge_message_pump=not_started_lifecycle_unimplemented");
         log_line(log, "app_bridge_execution_mode=explicit_experimental_user_request");
         app_bridge_attempt_consumed = true;
         detail(result, "App Bridge attempted; inspect report and crash marker.");
-        for (unsigned i = 0; i < 4; ++i) {
+        for (unsigned i = 0; i < 6; ++i) {
             char phase[92];
             snprintf(phase, sizeof(phase), "app_bridge_%u_%s", i + 1, names[i]);
             if (!engine_run_journal_begin(ENGINE_REPORT_DIR, phase, result->log_path)) {
@@ -342,9 +345,9 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 detail(result, "App Bridge stopped; read last completed step.");
                 break;
             }
-            if (i == 3) {
+            if (i == 5) {
                 log_line(log, "app_bridge_sequence_returned=yes");
-                detail(result, "Four native entries returned; no gameplay verified.");
+                detail(result, "Six native entries returned; no gameplay verified.");
             }
         }
         log_line(log, "roblox_login_verified=no");
@@ -657,15 +660,24 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_engine_export(log, "app_bridge_global_init", &entry,
                       entry.has_app_bridge_global_init,
                       entry.app_bridge_global_init_virtual_address);
+    log_engine_export(log, "app_bridge_update_adapter_init", &entry,
+                      entry.has_app_bridge_update_adapter_init,
+                      entry.app_bridge_update_adapter_init_virtual_address);
     log_engine_export(log, "app_bridge_v2_init", &entry,
                       entry.has_app_bridge_v2_init,
                       entry.app_bridge_v2_init_virtual_address);
     log_engine_export(log, "app_bridge_lua_shell_start", &entry,
                       entry.has_app_bridge_lua_shell_start,
                       entry.app_bridge_lua_shell_start_virtual_address);
+    log_engine_export(log, "app_bridge_surface_update", &entry,
+                      entry.has_app_bridge_surface_update,
+                      entry.app_bridge_surface_update_virtual_address);
     log_engine_export(log, "app_bridge_start_app", &entry,
                       entry.has_app_bridge_start_app,
                       entry.app_bridge_start_app_virtual_address);
+    log_engine_export(log, "app_bridge_main_thread_messages", &entry,
+                      entry.has_app_bridge_main_thread_messages,
+                      entry.app_bridge_main_thread_messages_virtual_address);
     log_line(log, "app_bridge_startup_call_eligible=no_missing_real_autovalue_params_and_lifecycle");
     log_line(log, "app_bridge_startup_called=no");
     log_line(log, "elf_dt_init=%s", entry.has_init ? "present" : "absent");
@@ -845,17 +857,21 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             entry.status == ENGINE_ENTRY_INSPECTED) {
                             const bool found[] = {
                                 entry.has_app_bridge_global_init,
+                                entry.has_app_bridge_update_adapter_init,
                                 entry.has_app_bridge_v2_init,
                                 entry.has_app_bridge_lua_shell_start,
+                                entry.has_app_bridge_surface_update,
                                 entry.has_app_bridge_start_app
                             };
                             const uint64_t addresses[] = {
                                 entry.app_bridge_global_init_virtual_address,
+                                entry.app_bridge_update_adapter_init_virtual_address,
                                 entry.app_bridge_v2_init_virtual_address,
                                 entry.app_bridge_lua_shell_start_virtual_address,
+                                entry.app_bridge_surface_update_virtual_address,
                                 entry.app_bridge_start_app_virtual_address
                             };
-                            for (unsigned i = 0; i < 4; ++i) {
+                            for (unsigned i = 0; i < 6; ++i) {
                                 if (found[i])
                                     engine_execution_rx_target(&plan,
                                         (uint64_t)(uintptr_t)reservation.mapped,

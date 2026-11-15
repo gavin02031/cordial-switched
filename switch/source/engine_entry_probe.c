@@ -136,6 +136,10 @@ static bool scan_symbols(FILE *file, uint64_t symbols_offset, uint64_t count,
             result->has_app_bridge_global_init = true;
             result->app_bridge_global_init_virtual_address = address;
         } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeGLInterface_nativeUpdateAdapterInit") == 0) {
+            result->has_app_bridge_update_adapter_init = true;
+            result->app_bridge_update_adapter_init_virtual_address = address;
+        } else if (strcmp(name,
                    "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2InitWithParams") == 0) {
             result->has_app_bridge_v2_init = true;
             result->app_bridge_v2_init_virtual_address = address;
@@ -144,9 +148,17 @@ static bool scan_symbols(FILE *file, uint64_t symbols_offset, uint64_t count,
             result->has_app_bridge_lua_shell_start = true;
             result->app_bridge_lua_shell_start_virtual_address = address;
         } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams") == 0) {
+            result->has_app_bridge_surface_update = true;
+            result->app_bridge_surface_update_virtual_address = address;
+        } else if (strcmp(name,
                    "Java_com_roblox_engine_jni_NativeGLInterface_nativeAppBridgeV2StartAppWithParams") == 0) {
             result->has_app_bridge_start_app = true;
             result->app_bridge_start_app_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeGLInterface_nativeCallMessagesFromMainThread") == 0) {
+            result->has_app_bridge_main_thread_messages = true;
+            result->app_bridge_main_thread_messages_virtual_address = address;
         }
     }
     return true;
