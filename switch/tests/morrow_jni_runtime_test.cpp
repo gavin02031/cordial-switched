@@ -327,8 +327,12 @@ int main()
     jmethodID assets_method = main_env->GetMethodID(activity_class, "getAssets",
                                         "()Landroid/content/res/AssetManager;");
     assert(assets_method);
+    jmethodID resources_method = main_env->GetMethodID(
+        activity_class, "getResources", "()Landroid/content/res/Resources;");
+    assert(resources_method);
     // Without an existing asset directory the Activity cannot invent one.
     assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), assets_method));
+    assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), resources_method));
     MorrowGameActivityInitResult init_result = {};
     assert(!morrow_jni_runtime_call_game_activity(
         reinterpret_cast<uintptr_t>(&synthetic_game_activity_init),
@@ -382,6 +386,38 @@ int main()
     assert(!morrow_jni_runtime_bind_horizon_surface(&horizon_window, 0, 720));
     void *surface = morrow_jni_runtime_bind_horizon_surface(&horizon_window, 1280, 720);
     assert(surface && morrow_jni_runtime_surface_bound());
+    jclass resources_class = main_env->FindClass("android/content/res/Resources");
+    jclass metrics_class = main_env->FindClass("android/util/DisplayMetrics");
+    assert(resources_class && metrics_class);
+    jmethodID get_display_metrics = main_env->GetMethodID(
+        resources_class, "getDisplayMetrics", "()Landroid/util/DisplayMetrics;");
+    assert(get_display_metrics);
+    jobject resources = main_env->CallObjectMethod(
+        static_cast<jobject>(activity), resources_method);
+    assert(resources && main_env->IsInstanceOf(resources, resources_class));
+    jobject resources_again = main_env->CallObjectMethod(
+        static_cast<jobject>(activity), resources_method);
+    assert(resources_again && main_env->IsSameObject(resources, resources_again));
+    main_env->DeleteLocalRef(resources_again);
+    jfieldID width_pixels = main_env->GetFieldID(metrics_class, "widthPixels", "I");
+    jfieldID height_pixels = main_env->GetFieldID(metrics_class, "heightPixels", "I");
+    jfieldID density = main_env->GetFieldID(metrics_class, "density", "F");
+    jfieldID density_dpi = main_env->GetFieldID(metrics_class, "densityDpi", "I");
+    jfieldID xdpi = main_env->GetFieldID(metrics_class, "xdpi", "F");
+    assert(width_pixels && height_pixels && density && density_dpi && xdpi);
+    const size_t metrics_locals_before = real_env->localframe.front().size();
+    for (unsigned i = 0; i < 64; ++i) {
+        jobject metrics = main_env->CallObjectMethod(resources, get_display_metrics);
+        assert(metrics && main_env->IsInstanceOf(metrics, metrics_class));
+        assert(main_env->GetIntField(metrics, width_pixels) == 1280);
+        assert(main_env->GetIntField(metrics, height_pixels) == 720);
+        assert(main_env->GetFloatField(metrics, density) == 1.0f);
+        assert(main_env->GetIntField(metrics, density_dpi) == 160);
+        assert(main_env->GetFloatField(metrics, xdpi) == 0.0f);
+        main_env->DeleteLocalRef(metrics);
+    }
+    assert(!main_env->ExceptionCheck());
+    assert(real_env->localframe.front().size() == metrics_locals_before);
     // The real surface alone is insufficient for App Bridge: an asset
     // directory is mandatory, and a null Java receiver must not be made up.
     assert(!morrow_jni_runtime_app_bridge_start_params());
@@ -406,8 +442,17 @@ int main()
     assert(!morrow_jni_runtime_bind_horizon_surface(&other_window, 1280, 720));
     assert(morrow_jni_runtime_bind_horizon_surface(&horizon_window, 960, 540) == surface);
     assert(width(guest) == 960 && height(guest) == 540);
+    jobject resized_metrics = main_env->CallObjectMethod(resources, get_display_metrics);
+    assert(resized_metrics && main_env->GetIntField(resized_metrics, width_pixels) == 960);
+    assert(main_env->GetIntField(resized_metrics, height_pixels) == 540);
+    main_env->DeleteLocalRef(resized_metrics);
     assert(morrow_jni_runtime_unbind_surface());
     assert(!morrow_jni_runtime_surface_bound());
+    assert(!main_env->CallObjectMethod(resources, get_display_metrics));
+    assert(!main_env->CallObjectMethod(static_cast<jobject>(activity), resources_method));
+    main_env->DeleteLocalRef(resources);
+    main_env->DeleteLocalRef(resources_class);
+    main_env->DeleteLocalRef(metrics_class);
     assert(!from_surface(main_env, surface_local_alias));
     assert(!from_surface(main_env, surface_global_alias));
     assert(!android_native_window_compat_horizon_handle(guest, &actual_window));
@@ -706,6 +751,6 @@ int main()
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(morrow_jni_runtime_release_game_activity());
     assert(unlink(asset_path) == 0 && rmdir(root) == 0);
-    puts("morrow_jni_runtime_test: JNI_OnLoad, measured LocalStorageManager, LocaleList, ClassLoader and references passed");
+    puts("morrow_jni_runtime_test: JNI_OnLoad, storage, measured display metrics, LocaleList, ClassLoader and references passed");
     return 0;
 }

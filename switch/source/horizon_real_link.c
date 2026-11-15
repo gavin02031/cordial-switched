@@ -442,6 +442,9 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
              game_activity_ready ? "zero_fullscreen_insets_only" : "unavailable");
     log_line(log, "jni_game_activity_get_assets_callback=%s",
              game_activity_ready ? "bound_read_only_manager_or_null" : "unavailable");
+    log_line(log, "jni_game_activity_get_resources_callback=%s",
+             game_activity_ready ? "measured_horizon_surface_or_null" : "unavailable");
+    log_line(log, "jni_display_metrics_density=neutral_1x_not_physical_dpi");
     log_line(log, "jni_game_activity_window_ime_callbacks=%s",
              game_activity_ready ? "registered_observation_only" : "unavailable");
     uint32_t window_flag_requests = 0;

@@ -183,6 +183,55 @@ public:
 std::shared_ptr<HorizonConfiguration> configuration_owner;
 jobject configuration_reference;
 
+// The engine asks Activity.getResources().getDisplayMetrics() during Android
+// startup. This is the measured Horizon viewport; physical DPI is unknown.
+// Density 1.0 is an explicit unscaled UI policy (160 Android baseline dpi),
+// not a claim that the Switch's panel has a measured 160 pixels per inch.
+class HorizonDisplayMetrics : public jnivm::Object {
+public:
+    jfloat density = 1.0f, scaledDensity = 1.0f;
+    jfloat xdpi = 0.0f, ydpi = 0.0f;
+    jint densityDpi = 160, widthPixels = 0, heightPixels = 0;
+
+    HorizonDisplayMetrics(int32_t width, int32_t height)
+        : widthPixels(width), heightPixels(height) {}
+
+    static void Register(jnivm::ENV *env)
+    {
+        auto klass = env->GetClass<HorizonDisplayMetrics>("android/util/DisplayMetrics");
+#define METRICS_FIELD(name) klass->HookInstance(env, #name, &HorizonDisplayMetrics::name)
+        METRICS_FIELD(density);
+        METRICS_FIELD(scaledDensity);
+        METRICS_FIELD(xdpi);
+        METRICS_FIELD(ydpi);
+        METRICS_FIELD(densityDpi);
+        METRICS_FIELD(widthPixels);
+        METRICS_FIELD(heightPixels);
+#undef METRICS_FIELD
+    }
+};
+
+class HorizonResources : public jnivm::Object {
+public:
+    std::shared_ptr<HorizonDisplayMetrics> getDisplayMetrics(jnivm::ENV *)
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (!surface_window || surface_width <= 0 || surface_height <= 0)
+            return nullptr;
+        return std::make_shared<HorizonDisplayMetrics>(surface_width, surface_height);
+    }
+
+    static void Register(jnivm::ENV *env)
+    {
+        HorizonDisplayMetrics::Register(env);
+        auto klass = env->GetClass<HorizonResources>("android/content/res/Resources");
+        klass->HookInstanceFunction(env, "getDisplayMetrics",
+                                    &HorizonResources::getDisplayMetrics);
+    }
+};
+
+std::shared_ptr<HorizonResources> resources_owner;
+
 class HorizonLocalStorageManager : public jnivm::Object {
 public:
     jlong available_bytes;
@@ -458,7 +507,8 @@ public:
             "java/lang/Object", "java/lang/Class", "java/lang/String",
             "java/lang/ClassLoader", "android/view/Surface",
             "android/content/res/AssetManager", "androidx/core/graphics/Insets",
-            "android/content/res/Configuration",
+            "android/content/res/Configuration", "android/content/res/Resources",
+            "android/util/DisplayMetrics",
             "android/os/LocaleList", "java/util/Locale",
             "com/roblox/engine/jni/model/PlatformParams",
             "com/roblox/engine/jni/model/DeviceParams",
@@ -487,6 +537,16 @@ std::shared_ptr<HorizonClassLoader> class_loader_owner;
 class HorizonGameActivity : public jnivm::Object {
 public:
     MorrowGameActivityRequests requests = {};
+
+    std::shared_ptr<HorizonResources> getResources(jnivm::ENV *)
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (!surface_window || surface_width <= 0 || surface_height <= 0)
+            return nullptr;
+        if (!resources_owner)
+            resources_owner = std::make_shared<HorizonResources>();
+        return resources_owner;
+    }
 
     std::shared_ptr<HorizonClassLoader> getClassLoader(jnivm::ENV *)
     {
@@ -543,6 +603,7 @@ public:
     {
         ZeroInsets::Register(env); // Needed for the method's JNI descriptor.
         HorizonClassLoader::Register(env);
+        HorizonResources::Register(env);
         env->GetClass<HorizonSurface>("android/view/Surface");
         env->GetClass<AssetManagerObject>("android/content/res/AssetManager");
         HorizonConfiguration::Register(env);
@@ -555,6 +616,7 @@ public:
         klass->HookInstanceFunction(env, "setImeEditorInfoFields",
                                     &HorizonGameActivity::setImeEditorInfoFields);
         klass->HookInstanceFunction(env, "getAssets", &HorizonGameActivity::getAssets);
+        klass->HookInstanceFunction(env, "getResources", &HorizonGameActivity::getResources);
         klass->HookInstanceFunction(env, "getWaterfallInsets",
                                     &HorizonGameActivity::getWaterfallInsets);
     }
@@ -911,6 +973,7 @@ extern "C" bool morrow_jni_runtime_unbind_surface(void)
     surface_window = nullptr;
     surface_width = surface_height = 0;
     surface_owner.reset();
+    resources_owner.reset();
     return true;
 }
 
@@ -1179,6 +1242,7 @@ extern "C" bool morrow_jni_runtime_release_game_activity(void)
     runtime->GetJNIEnv()->DeleteGlobalRef(game_activity_reference);
     game_activity_reference = nullptr;
     game_activity_owner.reset();
+    resources_owner.reset();
     return true;
 }
 

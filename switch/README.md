@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.67 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.68 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -41,7 +41,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.67 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.68 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -53,6 +53,8 @@ whose `getLocales()` now carries the **actual Switch system language** when
 the settings service is available (no fallback language is fabricated),
 and exposes a typed `LocalStorageManager.getAllocatableBytes()` response
 measured from the mounted Switch SD card (only if its free-space query succeeds),
+plus `GameActivity.getResources().getDisplayMetrics()` with real Horizon
+surface dimensions and an explicitly neutral 1× Android layout scale,
 exposes the asset manager via GameActivity's `getAssets` JNI callback only if bound,
 and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
 report records `jni_vm_provider_installed`, `jni_game_activity_object_registered`,
@@ -461,6 +463,16 @@ then check:
    Host tests call the real JNI long method repeatedly and verify reference
    lifetime. The game's native storage initialiser is **not** called yet;
    this does not download Roblox assets, display login, or join experiences.
+   v0.68 registers real JNI `android/content/res/Resources` and
+   `android/util/DisplayMetrics` classes. `GameActivity.getResources()` only
+   succeeds for a bound Horizon Surface, and its metrics report the actual
+   1280×720 viewport (or current resized size). The 1× scale and Android's
+   corresponding 160 `densityDpi` are a UI layout baseline, **not** a measured
+   physical panel DPI; physical `xdpi` and `ydpi` stay unknown. Host tests
+   verify the complete JNI object chain, stable Resources identity, 64 repeated
+   calls without leaking references, resize values and null after unbind.
+   Roblox has not consumed these values on Switch; login and gameplay remain
+   unimplemented.
 9. **Plus** returns to the Homebrew Menu without a crash.
 
 ### Engine inspection (optional)
