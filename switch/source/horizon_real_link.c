@@ -53,9 +53,7 @@ static bool game_activity_attempt_consumed;
 static bool game_activity_entry_called;
 static uintptr_t live_game_activity_target;
 static uintptr_t live_app_bridge_targets[4];
-#ifdef MORROW_HAS_JNIVM
 static bool app_bridge_attempt_consumed;
-#endif
 
 static const char *reserve_status_name(HorizonCodeReserveStatus status)
 {
