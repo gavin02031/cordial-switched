@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.76 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.77 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -32,6 +32,13 @@ shell. Once supported, gameplay itself would still run through Roblox's
 Android engine, with compatibility services behind the scenes. An experience
 browser or login flow requires its own verified, secure integration; the
 current library is an **offline visual preview**, not a live account session.
+**v0.77 adds an original Accounts page** with a clearly marked offline
+identity state and future account-switching layout. It accepts no credentials,
+imports no cookies, and cannot sign in. The Windows Roblox Account Manager's
+account-switching concept informed the layout, not the authentication code.
+Roblox's official [Open Cloud OAuth](https://create.roblox.com/docs/cloud/auth/oauth2-overview)
+can provide authorised third-party profile access, but an Open Cloud identity
+token is **not evidence of a native Roblox game-engine session**.
 
 ## Build
 
@@ -41,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.76 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.77 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -245,7 +252,7 @@ then check:
    then discards the NX staging bytes and releases the reservation.
    This option saves `link-XX.txt` in the same folder. Normal L3 does not
    map the Roblox image as executable, call an engine initialiser, sign in,
-   or join a game. For the v0.76 experimental engine attempt, hold
+   or join a game. For the experimental engine attempt, hold
    **ZL + ZR + Minus** instead. This quits Morrow's SDL renderer before
    attempting `JNI_OnLoad`, the five native App Bridge entries, and then up
    to 120 message callbacks, each with durable crash breadcrumbs. The old ZL/ZR+L3

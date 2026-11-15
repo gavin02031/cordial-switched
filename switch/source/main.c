@@ -9,6 +9,7 @@
 #include <switch.h>
 
 #include "ui.h"
+#include "ui_navigation.h"
 #include "engine_boot_log.h"
 #include "engine_run_journal.h"
 #include "horizon_loader_smoke.h"
@@ -232,13 +233,10 @@ static void handle_touch(UiState *state, unsigned x, unsigned y)
 {
     // libnx touch coordinates are in the Switch's native 1280x720 space.
     if (x < 273) {
-        // The six-row Morrow rail shares its coordinates with ui.c. Ignore
-        // gaps between rows instead of selecting the wrong page on a tap.
-        if (y >= 203 && y < 203 + UI_PAGE_COUNT * 55) {
-            const unsigned index = (y - 203) / 55;
-            if ((y - 203) % 55 < 49 && index < UI_PAGE_COUNT)
-                state->page = (UiPage)index;
-        }
+        // Keep touchscreen targets aligned with the seven drawn rail rows.
+        unsigned index = 0;
+        if (morrow_rail_hit(x, y, UI_PAGE_COUNT, &index))
+            state->page = (UiPage)index;
     } else if (state->page == UI_OVERVIEW &&
                x >= 332 && x < 555 && y >= 375 && y < 431) {
         state->page = UI_LIBRARY;

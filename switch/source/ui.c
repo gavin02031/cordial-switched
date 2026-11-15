@@ -9,6 +9,7 @@
 #include <switch.h>
 
 #include "engine_stage.h"
+#include "ui_navigation.h"
 
 enum { FONT_SMALL, FONT_BODY, FONT_MEDIUM, FONT_TITLE, FONT_HERO, FONT_TOTAL };
 enum { MAX_LABELS = 192 };
@@ -259,17 +260,21 @@ static void sidebar(SDL_Renderer *renderer, const UiState *state)
     label(renderer, 112, 81, FONT_SMALL, LAVENDER, "SWITCH NATIVE");
 
     label(renderer, 49, 155, FONT_SMALL, MUTED, "YOUR SPACE");
-    const char *items[] = {"Home", "Library", "Performance", "Roadmap", "Engine", "Loader"};
+    const char *items[] = {"Home", "Library", "Accounts", "Performance",
+                           "Roadmap", "Engine", "Loader"};
+    _Static_assert(sizeof(items) / sizeof(items[0]) == UI_PAGE_COUNT,
+                   "Every native page needs a sidebar entry");
     for (unsigned i = 0; i < UI_PAGE_COUNT; i++) {
-        const int y = 203 + (int)i * 55;
+        const int y = MORROW_RAIL_TOP + (int)i * MORROW_RAIL_STEP;
         const bool active = state->page == (UiPage)i;
         if (active) {
-            rounded(renderer, 44, y, 214, 49, 13, (SDL_Color){59, 49, 91, 255});
-            rounded(renderer, 45, y + 10, 4, 29, 2, LAVENDER);
+            rounded(renderer, 44, y, 214, MORROW_RAIL_ROW_HEIGHT, 13,
+                    (SDL_Color){59, 49, 91, 255});
+            rounded(renderer, 45, y + 8, 4, 29, 2, LAVENDER);
         }
-        rounded(renderer, 63, y + 17, 15, 15, 5,
+        rounded(renderer, 63, y + 15, 15, 15, 5,
                 active ? LAVENDER : (SDL_Color){83, 94, 123, 255});
-        label(renderer, 91, y + 9, FONT_BODY, active ? WHITE : MUTED, items[i]);
+        label(renderer, 91, y + 7, FONT_BODY, active ? WHITE : MUTED, items[i]);
     }
 
     fill(renderer, 49, 571, 200, 1, (SDL_Color){144, 150, 204, 38});
@@ -358,6 +363,51 @@ static void library(SDL_Renderer *renderer, const UiState *state)
     label(renderer, 794, 529, FONT_MEDIUM, WHITE, "Loader  /  L3");
     label(renderer, 794, 580, FONT_SMALL, MUTED,
           "Save the engine readiness report to your SD card.");
+}
+
+static void accounts(SDL_Renderer *renderer)
+{
+    // The Windows account-manager concept is useful as a navigation pattern,
+    // but there is no supported Roblox session exchange yet. Showing a fake
+    // logged-in account would invite users to supply real credentials to an
+    // unverified Android runtime, so keep the entire hub read-only for now.
+    topbar(renderer, "Your account.", "Switch-native profile hub, separate from the Android app shell");
+    panel(renderer, 306, 142, 921, 290, PANEL);
+    badge(renderer, 337, 170, 174, "OFFLINE PREVIEW",
+          (SDL_Color){77, 46, 68, 255}, PINK);
+
+    rounded(renderer, 338, 225, 142, 142, 29,
+            (SDL_Color){65, 58, 116, 255});
+    rounded(renderer, 362, 248, 94, 94, 25, LAVENDER);
+    rounded(renderer, 394, 266, 30, 30, 10,
+            (SDL_Color){65, 58, 116, 255});
+    rounded(renderer, 379, 309, 61, 20, 10,
+            (SDL_Color){65, 58, 116, 255});
+
+    label(renderer, 522, 216, FONT_MEDIUM, WHITE, "No Roblox account connected");
+    label(renderer, 523, 262, FONT_BODY, MUTED,
+          "Account authentication and online games are not available yet.");
+    label(renderer, 523, 297, FONT_SMALL, MINT,
+          "No password, session cookie or access token is stored.");
+    rounded(renderer, 521, 350, 326, 49, 12,
+            (SDL_Color){52, 57, 83, 255});
+    label(renderer, 539, 360, FONT_BODY, MUTED, "SIGN-IN NOT AVAILABLE YET");
+
+    panel(renderer, 306, 456, 445, 181, PANEL_LIGHT);
+    label(renderer, 334, 479, FONT_SMALL, LAVENDER, "MULTIPLE PROFILES");
+    label(renderer, 334, 516, FONT_MEDIUM, WHITE, "Designed for switching");
+    label(renderer, 335, 565, FONT_SMALL, MUTED,
+          "Account slots will require verified sign-in.");
+    label(renderer, 335, 595, FONT_SMALL, PINK,
+          "No saved identities or imported cookies.");
+
+    panel(renderer, 768, 456, 459, 181, PANEL_LIGHT);
+    label(renderer, 795, 479, FONT_SMALL, MINT, "NEXT ENGINE MILESTONE");
+    label(renderer, 795, 516, FONT_MEDIUM, WHITE, "Roblox startup");
+    label(renderer, 796, 565, FONT_SMALL, MUTED,
+          "JNI, Android lifecycle and guest graphics.");
+    label(renderer, 796, 595, FONT_SMALL, PINK,
+          "No verified game session on Switch yet.");
 }
 
 static void performance(SDL_Renderer *renderer, const UiState *state)
@@ -723,6 +773,9 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
         break;
     case UI_LIBRARY:
         library(renderer, state);
+        break;
+    case UI_ACCOUNT:
+        accounts(renderer);
         break;
     case UI_PERFORMANCE:
         performance(renderer, state);

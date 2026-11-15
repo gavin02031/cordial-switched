@@ -19,6 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test native sidebar touch targets
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/ui_navigation_test.c -o /tmp/morrow-ui-navigation-test
+          /tmp/morrow-ui-navigation-test
       - name: Test read-only ARM64 ELF inspector
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
