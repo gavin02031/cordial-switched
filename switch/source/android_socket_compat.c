@@ -53,6 +53,12 @@ enum {
 
 _Static_assert(sizeof(struct sockaddr_in) == 16, "Native IPv4 sockaddr must be 16 bytes");
 _Static_assert(sizeof(struct sockaddr_in6) == 28, "Native IPv6 sockaddr must be 28 bytes");
+#ifdef __SWITCH__
+// libnx exposes two native layouts: IPv4 has a leading length byte, while
+// IPv6 starts directly with a 16-bit family (no sin6_len field).
+_Static_assert(offsetof(struct sockaddr_in, sin_family) == 1, "libnx IPv4 family offset");
+_Static_assert(offsetof(struct sockaddr_in6, sin6_family) == 0, "libnx IPv6 family offset");
+#endif
 
 static bool translate_domain(int guest, int *native)
 {
@@ -62,8 +68,9 @@ static bool translate_domain(int guest, int *native)
     return true;
 }
 
-// Bionic uses 16-bit family first; BSD uses uint8_t length then uint8_t
-// family. Ports, IPv4/v6 address bytes and flowinfo are network-order bytes.
+// Bionic uses a 16-bit family first. libnx IPv4 uses length+8-bit family,
+// but libnx IPv6 uses a 16-bit family first (with a different AF_INET6 value).
+// Ports and IPv4/v6 address bytes are network-order.
 static bool to_native(const void *guest, uint32_t guest_len,
                       struct sockaddr_storage *native, socklen_t *native_len)
 {
@@ -86,9 +93,6 @@ static bool to_native(const void *guest, uint32_t guest_len,
     if (family == GUEST_AF_INET6 && guest_len >= 28) {
         struct sockaddr_in6 *v6 = (struct sockaddr_in6 *)native;
         v6->sin6_family = AF_INET6;
-#ifdef __SWITCH__
-        v6->sin6_len = 28;
-#endif
         memcpy(&v6->sin6_port, data + 2, 2);
         memcpy(&v6->sin6_flowinfo, data + 4, 4);
         memcpy(&v6->sin6_addr, data + 8, 16);
@@ -107,14 +111,16 @@ static bool to_guest(const struct sockaddr_storage *native, void *guest,
     if (!guest || !guest_len) { errno = EFAULT; return false; }
     unsigned char output[28] = {0};
     uint32_t required;
-    if (native->ss_family == AF_INET) {
+    // Never read sockaddr_storage.ss_family to dispatch both formats: on
+    // Switch its BSD byte offset does not describe sockaddr_in6.sin6_family.
+    if (((const struct sockaddr_in *)native)->sin_family == AF_INET) {
         const struct sockaddr_in *v4 = (const struct sockaddr_in *)native;
         uint16_t family = GUEST_AF_INET;
         memcpy(output, &family, 2);
         memcpy(output + 2, &v4->sin_port, 2);
         memcpy(output + 4, &v4->sin_addr, 4);
         required = 16;
-    } else if (native->ss_family == AF_INET6) {
+    } else if (((const struct sockaddr_in6 *)native)->sin6_family == AF_INET6) {
         const struct sockaddr_in6 *v6 = (const struct sockaddr_in6 *)native;
         uint16_t family = GUEST_AF_INET6;
         memcpy(output, &family, 2);
