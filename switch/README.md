@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.79 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.80 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.79 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.80 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -94,6 +94,27 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+**v0.80 adds the nine real Android ActivityNativeMain lifecycle native calls**
+to the experimental App Bridge startup path (after a successful JNI_OnLoad).
+It discovers the *actual executable exports* in the local ARM64 `libroblox.so`:
+`nativeOnPreCreated`, `nativeOnCreated`, `nativeOnPostCreated`,
+`nativeOnPreStarted`, `nativeOnStarted`, `nativeOnPostStarted`,
+`nativeOnPreResumed`, `nativeOnResumed` and `nativeOnPostResumed`.
+All nine must exist in mapped RX pages; missing exports block the sequence
+instead of guessing a target or declaring an absent callback successful.
+For each stage Morrow invokes the observed `(JNIEnv*, jclass, jstring)` JNI ABI
+with the real typed class identity and `com.roblox.client.ActivityNativeMain`
+name. It saves and syncs a separate crash marker *before* each guest call,
+records its actual return and JNI/C++ exception state, and stops on failure.
+The activity name is not a fabricated Android Activity instance. These
+callbacks alone do **not** provide an Android Application, its window/input
+services, login or a rendered Roblox frame. **INFERRED:** the callback order
+matches Cordial's Android startup investigation; it remains untested on
+Switch hardware. Existing strict ELF relocation, PT_TLS and constructor
+gates remain in force; a blocked `JNI_OnLoad` still prevents lifecycle calls.
+The next on-device `link-XX.txt` or `crash-XX.txt` will identify the first
+actual stop rather than implying a frame appeared.
+
 **v0.74 corrected the ZL + ZR + L3 App Bridge V2 experiment**, after
 successful JNI_OnLoad in the same process. It checks the five launch
 exports against the pinned mapped RX pages and invokes
@@ -109,7 +130,7 @@ typed StartAppParams carries the real Horizon-owned Java Surface. Each
 attempted native entry is written to
 `link-XX.txt`, along with whether it returned and any JNI exception; it
 stops at the first failed step. The InitParams and StartAppParams are
-**partial**: Android lifecycle, authentication, version/User-Agent and
+**partial**: full Android Application/lifecycle, authentication, version/User-Agent and
 several other Android services are not implemented. This attempt can crash
 or refuse to run, and a successful return **does not prove login, a Roblox
 frame, a game session, or compatibility with Roblox servers**.
@@ -138,7 +159,7 @@ Older previews attempted JNI startup while Morrow's SDL renderer still
 owned the same Horizon window: that could conflict with the guest EGL context.
 On Loader, hold **ZL + ZR and press Minus**. Morrow closes its SDL UI,
 renderer, and window *before* binding the real JNI Surface and attempting
-`JNI_OnLoad` and the five App Bridge entries. Individual ZL/ZR+L3 and
+`JNI_OnLoad`, the nine Activity lifecycle JNI calls and five App Bridge entries. Individual ZL/ZR+L3 and
 ZL+ZR+R3 native entry calls now fail closed
 while SDL is active; normal L3 diagnostics are unchanged. If JNI startup is
 blocked, a simple console screen directs you to `link-XX.txt`; after JNI
@@ -188,8 +209,9 @@ recovery; a successful return alone cannot be mistaken for a durable report.
 Host tests cover both a synchronised result and an unsynchronisable report.
 This fixes a diagnostic gap, not Android bootstrap or Roblox login.
 
-Before **any** experimental engine entry (JNI_OnLoad, AGDK GameActivity or
-each of the five App Bridge steps and every v0.76 message-pump callback),
+Before **any** experimental engine entry (JNI_OnLoad, AGDK GameActivity,
+each of the nine Activity lifecycle callbacks, each of the five App Bridge
+steps and every v0.76 message-pump callback),
 Morrow syncs both its numbered link log
 and an `engine-in-progress.txt` marker to SD. If the process crashes,
 freezes and is force-quit, or loses power before the call returns, the next

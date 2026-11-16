@@ -60,6 +60,20 @@ static jclass expected_bridge_class;
 static jobject expected_bridge_init_params, expected_bridge_start_params;
 static jobject expected_bridge_surface, expected_bridge_platform;
 static unsigned native_bridge_calls[7];
+static unsigned native_lifecycle_calls;
+
+static void synthetic_activity_lifecycle(JNIEnv *env, jclass klass, jstring activity)
+{
+    assert(env && klass && activity);
+    jclass known = env->FindClass(
+        "com/roblox/universalapp/activitylifecyclecallbacks/JNIActivityLifecycleCallbacks");
+    assert(known && env->IsSameObject(klass, known));
+    env->DeleteLocalRef(known);
+    const char *name = env->GetStringUTFChars(activity, nullptr);
+    assert(name && !strcmp(name, "com.roblox.client.ActivityNativeMain"));
+    env->ReleaseStringUTFChars(activity, name);
+    ++native_lifecycle_calls;
+}
 
 static void synthetic_bridge_global(JNIEnv *env, jclass klass)
 {
@@ -217,6 +231,12 @@ int main()
     assert(!morrow_jni_runtime_probe_onload(&onload));
     assert(!onload.vm_available);
     assert(!morrow_jni_runtime_probe_onload(nullptr));
+    MorrowActivityLifecycleResult lifecycle = {};
+    assert(!morrow_jni_runtime_call_activity_lifecycle(
+        reinterpret_cast<uintptr_t>(&synthetic_activity_lifecycle), &lifecycle));
+    assert(!lifecycle.entry_invoked);
+    assert(!morrow_jni_runtime_call_activity_lifecycle(0, &lifecycle));
+    assert(!morrow_jni_runtime_call_activity_lifecycle(0, nullptr));
     MorrowGameActivityRequests activity_requests = {};
     assert(!morrow_jni_runtime_activity_requests(&activity_requests));
     assert(!morrow_jni_runtime_activity_requests(nullptr));
@@ -239,6 +259,16 @@ int main()
     auto *main_env = static_cast<JNIEnv *>(env);
     assert(main_env && main_env->GetVersion() == JNI_VERSION_1_6);
     assert(morrow_jni_runtime_jni_env() == main_env);
+    jnivm::ENV *lifecycle_env = jnivm::ENV::FromJNIEnv(main_env);
+    const size_t lifecycle_locals_before = lifecycle_env->localframe.front().size();
+    for (unsigned i = 0; i < 64; ++i) {
+        assert(morrow_jni_runtime_call_activity_lifecycle(
+            reinterpret_cast<uintptr_t>(&synthetic_activity_lifecycle), &lifecycle));
+        assert(lifecycle.entry_invoked && lifecycle.entry_returned &&
+               !lifecycle.java_exception_pending && !lifecycle.cpp_exception_caught);
+    }
+    assert(native_lifecycle_calls == 64);
+    assert(lifecycle_env->localframe.front().size() == lifecycle_locals_before);
     void *storage = morrow_jni_runtime_local_storage_manager();
     assert(storage && morrow_jni_runtime_local_storage_manager() == storage);
     jclass storage_class = main_env->FindClass("com/roblox/client/LocalStorageManager");

@@ -53,6 +53,8 @@ static bool game_activity_attempt_consumed;
 static bool game_activity_entry_called;
 static uintptr_t live_game_activity_target;
 static uintptr_t live_app_bridge_targets[5];
+static uintptr_t live_activity_lifecycle_targets[ENGINE_ACTIVITY_LIFECYCLE_STAGES];
+static bool activity_lifecycle_attempt_consumed;
 static uintptr_t live_app_bridge_surface_update_target;
 static bool app_bridge_attempt_consumed;
 static bool app_bridge_sequence_returned;
@@ -457,6 +459,21 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 goto done;
             }
         }
+        if (activity_lifecycle_attempt_consumed) {
+            detail(result, "Activity lifecycle already attempted; restart Morrow.");
+            log_line(log, "blocker=activity_lifecycle_already_attempted");
+            goto done;
+        }
+        for (unsigned i = 0; i < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++i) {
+            const char *name = engine_activity_lifecycle_stage_name(i);
+            log_line(log, "activity_lifecycle_%s_rx_ready=%s", name,
+                     live_activity_lifecycle_targets[i] ? "yes" : "no");
+            if (!live_activity_lifecycle_targets[i]) {
+                detail(result, "Android lifecycle native export missing or non-RX.");
+                log_line(log, "blocker=activity_lifecycle_entry_not_executable");
+                goto done;
+            }
+        }
         log_line(log, "app_bridge_surface_update_rx_target=%s",
                  live_app_bridge_surface_update_target ? "yes" : "no");
         log_line(log, "app_bridge_surface_update_invoked=no_no_resize_event");
@@ -475,9 +492,51 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             log_line(log, "blocker=app_bridge_runtime_prerequisite_missing");
             goto done;
         }
-        log_line(log, "app_bridge_params=partial_missing_android_lifecycle_and_account");
-        log_line(log, "app_bridge_message_pump=not_started_lifecycle_unimplemented");
+        log_line(log, "app_bridge_params=partial_missing_android_application_and_account");
+        log_line(log, "app_bridge_message_pump=not_started_android_event_loop_unimplemented");
         log_line(log, "app_bridge_execution_mode=explicit_experimental_user_request");
+        // Cordial's observed ActivityNativeMain launch fires these nine JNI
+        // callbacks in order before App Bridge. Each guest entry is journaled
+        // to SD before invocation; never skip a missing stage, and never
+        // mark the Android Application as implemented by these calls alone.
+        activity_lifecycle_attempt_consumed = true;
+        for (unsigned i = 0; i < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++i) {
+            const char *name = engine_activity_lifecycle_stage_name(i);
+            char phase[96];
+            snprintf(phase, sizeof(phase), "activity_lifecycle_%u_%s", i + 1, name);
+            if (!engine_run_journal_begin(ENGINE_REPORT_DIR, phase, result->log_path)) {
+                log_line(log, "blocker=activity_lifecycle_crash_journal_not_durable");
+                detail(result, "Lifecycle blocked: cannot save crash marker.");
+                goto done;
+            }
+            log_line(log, "event=entering_%s", phase);
+            if (fflush(log) != 0 || fsync(fileno(log)) != 0) {
+                engine_run_journal_finish(ENGINE_REPORT_DIR);
+                log_line(log, "blocker=activity_lifecycle_report_not_durable");
+                detail(result, "Lifecycle blocked: SD report could not sync.");
+                goto done;
+            }
+            MorrowActivityLifecycleResult stage = {0};
+            const bool returned = morrow_jni_runtime_call_activity_lifecycle(
+                live_activity_lifecycle_targets[i], &stage);
+            log_line(log, "activity_lifecycle_%s_invoked=%s", name,
+                     stage.entry_invoked ? "yes" : "no");
+            log_line(log, "activity_lifecycle_%s_returned=%s", name,
+                     stage.entry_returned ? "yes" : "no");
+            log_line(log, "activity_lifecycle_%s_java_exception=%s", name,
+                     stage.java_exception_pending ? "yes" : "no");
+            log_line(log, "activity_lifecycle_%s_cpp_exception=%s", name,
+                     stage.cpp_exception_caught ? "yes" : "no");
+            const bool durable = engine_run_journal_finish_report(
+                ENGINE_REPORT_DIR, log);
+            if (!durable || !returned || !stage.entry_returned) {
+                detail(result, "Lifecycle stopped; see last recorded callback.");
+                log_line(log, "blocker=activity_lifecycle_callback_failed");
+                goto done;
+            }
+        }
+        log_line(log, "activity_lifecycle_nine_callbacks_returned=yes");
+        log_line(log, "android_application_lifecycle_complete=no");
         app_bridge_attempt_consumed = true;
         detail(result, "App Bridge attempted; inspect report and crash marker.");
         for (unsigned i = 0; i < 5; ++i) {
@@ -853,6 +912,13 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_engine_export(log, "app_bridge_main_thread_messages", &entry,
                       entry.has_app_bridge_main_thread_messages,
                       entry.app_bridge_main_thread_messages_virtual_address);
+    for (unsigned i = 0; i < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++i) {
+        char label[92];
+        snprintf(label, sizeof(label), "activity_lifecycle_%s",
+                 engine_activity_lifecycle_stage_name(i));
+        log_engine_export(log, label, &entry, entry.has_activity_lifecycle[i],
+                          entry.activity_lifecycle_virtual_address[i]);
+    }
     log_line(log, "app_bridge_startup_call_eligible=no_missing_real_autovalue_params_and_lifecycle");
     log_line(log, "app_bridge_startup_called=no");
     log_line(log, "elf_dt_init=%s", entry.has_init ? "present" : "absent");
@@ -1036,6 +1102,16 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                         }
                         if (engine_jni_onload_succeeded &&
                             entry.status == ENGINE_ENTRY_INSPECTED) {
+                            for (unsigned i = 0; i < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++i) {
+                                if (entry.has_activity_lifecycle[i])
+                                    engine_execution_rx_target(&plan,
+                                        (uint64_t)(uintptr_t)reservation.mapped,
+                                        entry.activity_lifecycle_virtual_address[i],
+                                        &live_activity_lifecycle_targets[i]);
+                                log_line(log, "activity_lifecycle_%s_mapped_rx_ready=%s",
+                                         engine_activity_lifecycle_stage_name(i),
+                                         live_activity_lifecycle_targets[i] ? "yes" : "no");
+                            }
                             const bool found[] = {
                                 entry.has_app_bridge_global_init,
                                 entry.has_app_bridge_update_adapter_init,

@@ -118,6 +118,20 @@ static void add_extended_bridge_symbols(unsigned char *image)
     }
 }
 
+static void use_activity_lifecycle_export(unsigned char *image, const char *stage)
+{
+    static const char prefix[] =
+        "Java_com_roblox_universalapp_activitylifecyclecallbacks_"
+        "JNIActivityLifecycleCallbacks_";
+    const size_t total = strlen(prefix) + strlen(stage) + 1;
+    assert(0x200 + total < 1024);
+    // Reuse one synthetic export at a time to test all nine without creating
+    // a real game ELF, growing the fixed fixture or changing its hash tables.
+    memcpy(image + 0xb00, prefix, strlen(prefix));
+    memcpy(image + 0xb00 + strlen(prefix), stage, strlen(stage) + 1);
+    put32(image + 0x240 + 4 * 24, 0x200);
+}
+
 static EngineEntryProbe run_fixture(const unsigned char *image)
 {
     FILE *f = tmpfile();
@@ -192,6 +206,35 @@ int main(void)
     assert(result.has_app_bridge_main_thread_messages &&
            result.app_bridge_main_thread_messages_virtual_address == 0x1170);
     assert(!result.has_app_bridge_global_init && !result.has_app_bridge_v2_init);
+    for (unsigned i = 0; i < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++i) {
+        const char *name = engine_activity_lifecycle_stage_name(i);
+        assert(name);
+        make_fixture(fixture);
+        use_activity_lifecycle_export(fixture, name);
+        result = run_fixture(fixture);
+        assert(result.status == ENGINE_ENTRY_INSPECTED);
+        for (unsigned j = 0; j < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++j) {
+            assert(result.has_activity_lifecycle[j] == (i == j));
+            if (i == j)
+                assert(result.activity_lifecycle_virtual_address[j] == 0x1150);
+        }
+        stripped_dynamic_fixture(fixture, i % 2 == 0);
+        use_activity_lifecycle_export(fixture, name);
+        result = run_fixture(fixture);
+        assert(result.status == ENGINE_ENTRY_INSPECTED &&
+               result.has_activity_lifecycle[i]);
+    }
+    assert(!engine_activity_lifecycle_stage_name(ENGINE_ACTIVITY_LIFECYCLE_STAGES));
+    make_fixture(fixture);
+    use_activity_lifecycle_export(fixture, "nativeOnResumedUnknown");
+    result = run_fixture(fixture);
+    for (unsigned j = 0; j < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++j)
+        assert(!result.has_activity_lifecycle[j]);
+    make_fixture(fixture);
+    use_activity_lifecycle_export(fixture, "nativeOnResumed");
+    put64(fixture + 0x240 + 4 * 24 + 8, 0x900000);
+    result = run_fixture(fixture);
+    assert(!result.has_activity_lifecycle[7]);
     stripped_dynamic_fixture(fixture, false);
     add_extended_bridge_symbols(fixture);
     result = run_fixture(fixture);

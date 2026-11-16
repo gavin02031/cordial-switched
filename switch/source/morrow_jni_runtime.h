@@ -135,6 +135,20 @@ typedef struct {
 bool morrow_jni_runtime_call_game_activity(uintptr_t entry, const char *data_path,
                                             MorrowGameActivityInitResult *result);
 
+typedef struct {
+    bool entry_invoked;
+    bool entry_returned;
+    bool java_exception_pending;
+    bool cpp_exception_caught;
+} MorrowActivityLifecycleResult;
+
+// One real JNIActivityLifecycleCallbacks native entry, ABI
+// (JNIEnv*, jclass, jstring activityName) -> void, using the actual
+// ActivityNativeMain class name. This records a callback return only;
+// it cannot recreate Android's Application or a full Activity instance.
+bool morrow_jni_runtime_call_activity_lifecycle(
+    uintptr_t entry, MorrowActivityLifecycleResult *result);
+
 typedef enum {
     MORROW_APP_BRIDGE_GLOBAL_INIT = 0,
     MORROW_APP_BRIDGE_UPDATE_ADAPTER_INIT,

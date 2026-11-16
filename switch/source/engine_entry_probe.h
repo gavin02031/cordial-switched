@@ -5,6 +5,12 @@
 #include <stdint.h>
 #include <stdio.h>
 
+enum { ENGINE_ACTIVITY_LIFECYCLE_STAGES = 9 };
+
+// The Android Application.ActivityLifecycleCallbacks order used by Roblox's
+// ActivityNativeMain shell; these are export names, not Java event emulation.
+const char *engine_activity_lifecycle_stage_name(unsigned index);
+
 typedef enum {
     ENGINE_ENTRY_INVALID = 0,
     ENGINE_ENTRY_IO_ERROR,
@@ -24,6 +30,7 @@ typedef struct {
     bool has_app_bridge_surface_update;
     bool has_app_bridge_start_app;
     bool has_app_bridge_main_thread_messages;
+    bool has_activity_lifecycle[ENGINE_ACTIVITY_LIFECYCLE_STAGES];
     bool has_init;
     bool has_init_array;
     uint64_t jni_onload_virtual_address;
@@ -36,6 +43,7 @@ typedef struct {
     uint64_t app_bridge_surface_update_virtual_address;
     uint64_t app_bridge_start_app_virtual_address;
     uint64_t app_bridge_main_thread_messages_virtual_address;
+    uint64_t activity_lifecycle_virtual_address[ENGINE_ACTIVITY_LIFECYCLE_STAGES];
     uint64_t init_virtual_address;
     uint64_t init_array_virtual_address;
     unsigned init_array_entries;

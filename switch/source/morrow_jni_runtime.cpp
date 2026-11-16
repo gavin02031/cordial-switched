@@ -595,6 +595,7 @@ public:
             "com/roblox/engine/jni/NativeGLInterface",
             "com/roblox/engine/jni/autovalue/InitParams",
             "com/roblox/engine/jni/autovalue/StartAppParams",
+            "com/roblox/universalapp/activitylifecyclecallbacks/JNIActivityLifecycleCallbacks",
             "com/google/androidgamesdk/GameActivity"
         };
         if (sd_space_known && path == "com/roblox/client/LocalStorageManager")
@@ -829,6 +830,8 @@ extern "C" bool morrow_jni_runtime_start(void)
         HorizonStartAppParams::Register(candidate->GetEnv().get());
         HorizonInitParams::Register(candidate->GetEnv().get());
         candidate->GetEnv()->GetClass("com/roblox/engine/jni/NativeGLInterface");
+        candidate->GetEnv()->GetClass(
+            "com/roblox/universalapp/activitylifecyclecallbacks/JNIActivityLifecycleCallbacks");
         if (sd_space_known)
             HorizonLocalStorageManager::Register(candidate->GetEnv().get());
         candidate->GetEnv()->GetClass("dev/morrow/diagnostics/OnLoadProbe");
@@ -1421,6 +1424,46 @@ extern "C" bool morrow_jni_runtime_call_game_activity(
     env->DeleteLocalRef(assets);
     env->DeleteLocalRef(activity);
     return returned;
+}
+
+extern "C" bool morrow_jni_runtime_call_activity_lifecycle(
+    uintptr_t entry, MorrowActivityLifecycleResult *result)
+{
+    if (!result) return false;
+    *result = {};
+    if (!entry) return false;
+
+    JNIEnv *env = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(start_mutex);
+        if (!runtime || !attached_to_runtime) return false;
+        env = runtime->GetJNIEnv();
+    }
+    if (!env || env->ExceptionCheck()) return false;
+
+    jclass lifecycle = env->FindClass(
+        "com/roblox/universalapp/activitylifecyclecallbacks/JNIActivityLifecycleCallbacks");
+    jstring activity_name = env->NewStringUTF("com.roblox.client.ActivityNativeMain");
+    if (!lifecycle || !activity_name || env->ExceptionCheck()) {
+        if (activity_name) env->DeleteLocalRef(activity_name);
+        if (lifecycle) env->DeleteLocalRef(lifecycle);
+        return false;
+    }
+
+    try {
+        using Callback = void (*)(JNIEnv *, jclass, jstring);
+        result->entry_invoked = true;
+        reinterpret_cast<Callback>(entry)(env, lifecycle, activity_name);
+        result->entry_returned = true;
+        result->java_exception_pending = env->ExceptionCheck();
+    } catch (...) {
+        result->cpp_exception_caught = true;
+        result->java_exception_pending = env->ExceptionCheck();
+    }
+    env->DeleteLocalRef(activity_name);
+    env->DeleteLocalRef(lifecycle);
+    return result->entry_returned && !result->java_exception_pending &&
+           !result->cpp_exception_caught;
 }
 
 extern "C" bool morrow_jni_runtime_call_app_bridge(

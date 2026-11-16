@@ -37,6 +37,18 @@ typedef struct {
     bool executable;
 } EntrySegment;
 
+static const char *const activity_lifecycle_stages[] = {
+    "nativeOnPreCreated", "nativeOnCreated", "nativeOnPostCreated",
+    "nativeOnPreStarted", "nativeOnStarted", "nativeOnPostStarted",
+    "nativeOnPreResumed", "nativeOnResumed", "nativeOnPostResumed"
+};
+
+const char *engine_activity_lifecycle_stage_name(unsigned index)
+{
+    return index < ENGINE_ACTIVITY_LIFECYCLE_STAGES ?
+        activity_lifecycle_stages[index] : NULL;
+}
+
 static bool virtual_to_file(const EntrySegment *segments, unsigned count,
                             uint64_t address, uint64_t size, uint64_t *offset)
 {
@@ -121,6 +133,18 @@ static bool scan_symbols(FILE *file, uint64_t symbols_offset, uint64_t count,
             return false;
         }
         if (!memchr(name, 0, (size_t)remaining)) continue;
+        static const char lifecycle_prefix[] =
+            "Java_com_roblox_universalapp_activitylifecyclecallbacks_"
+            "JNIActivityLifecycleCallbacks_";
+        if (strncmp(name, lifecycle_prefix, sizeof(lifecycle_prefix) - 1) == 0) {
+            const char *stage = name + sizeof(lifecycle_prefix) - 1;
+            for (unsigned j = 0; j < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++j)
+                if (strcmp(stage, activity_lifecycle_stages[j]) == 0) {
+                    result->has_activity_lifecycle[j] = true;
+                    result->activity_lifecycle_virtual_address[j] = address;
+                    break;
+                }
+        }
         if (strcmp(name, "JNI_OnLoad") == 0) {
             result->has_jni_onload = true;
             result->jni_onload_virtual_address = address;
