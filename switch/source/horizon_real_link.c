@@ -41,6 +41,7 @@
 #include "android_thread_lifecycle_compat.h"
 #include "elf_probe.h"
 #include "engine_entry_probe.h"
+#include "engine_constructor_plan.h"
 #include "engine_execution_attempt.h"
 #include "engine_run_journal.h"
 #include "engine_memory_plan.h"
@@ -1036,6 +1037,19 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             result->stage_prepared = true;
             detail(result, "Strict link passed; Android JNI/graphics runtime still missing.");
             log_line(log, "event=strict_stage_prepared");
+            EngineConstructorPlan constructors = {0};
+            const bool constructors_verified = engine_constructor_plan_prepare(
+                &stage, &entry, &plan, &constructors);
+            log_line(log, "constructor_plan_status=%u", (unsigned)constructors.status);
+            log_line(log, "constructor_plan_reason=%s",
+                     constructors.reason ? constructors.reason : "unknown");
+            log_line(log, "constructor_plan_array_entries=%u", constructors.array_entries);
+            log_line(log, "constructor_plan_skipped_entries=%u", constructors.skipped_entries);
+            log_line(log, "constructor_plan_validated_targets=%zu", constructors.call_count);
+            log_line(log, "constructor_plan_first_invalid_index=%u",
+                     constructors.first_invalid_index);
+            log_line(log, "constructor_plan_executed=no");
+            engine_constructor_plan_release(&constructors);
             if (action != 1)
                 log_line(log, "execution_gate=not_requested");
             if (action == 1) {
@@ -1056,6 +1070,8 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 log_line(log, "experimental_jni_onload_preflight=%s", candidate.reason);
                 if (!candidate.eligible) {
                     log_line(log, "experimental_jni_onload_called=no");
+                } else if (!constructors_verified) {
+                    log_line(log, "experimental_jni_onload_blocker=constructor_plan_invalid");
                 } else if (stage.image_size != plan.image_bytes ||
                            stage.lowest_virtual_address != plan.virtual_page_base ||
                            stage.intended_runtime_base !=

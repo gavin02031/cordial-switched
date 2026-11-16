@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.93 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.94 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -94,6 +94,11 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.94 validates the ELF constructor call targets** from a strictly relocated,
+non-executable staging image, checking the final RX pages and Bionic's null/-1
+sentinels without calling guest code. See [the constructor preflight notes](docs/morrow-v094-constructors.md).
+It does not unlock the still-blocked Roblox constructor or TLS execution.
 
 **v0.93 adds nine more Android networking providers** for DNS resolution,
 send/receive, socket options and IP text conversion. Native address and error

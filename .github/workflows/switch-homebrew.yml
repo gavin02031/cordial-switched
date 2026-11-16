@@ -36,6 +36,14 @@ jobs:
             switch/tests/engine_entry_probe_test.c switch/source/engine_entry_probe.c \
             -o /tmp/cordial-engine-entry-probe-test
           /tmp/cordial-engine-entry-probe-test
+      - name: Validate relocated ELF constructor call targets without execution
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_constructor_plan_test.c \
+            switch/source/engine_constructor_plan.c \
+            switch/source/engine_memory_plan.c \
+            -o /tmp/morrow-constructor-plan-test
+          /tmp/morrow-constructor-plan-test
       - name: Test guarded JNI_OnLoad execution boundary with synthetic function
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

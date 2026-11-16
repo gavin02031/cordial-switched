@@ -252,6 +252,21 @@ int main(void)
     assert(result.has_init_array && result.init_array_entries == 2);
     assert(result.init_array_virtual_address == 0x1200);
 
+    // DT_INIT_ARRAY must cover real file-backed bytes, not an ELF hole or
+    // one byte beyond PT_LOAD. Call targets are validated after relocation.
+    make_fixture(fixture);
+    dynamic(fixture, 1, 25, 0x1ff8);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INVALID);
+    make_fixture(fixture);
+    dynamic(fixture, 1, 25, 0x1201);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INVALID);
+    make_fixture(fixture);
+    dynamic(fixture, 0, 12, 0x1101);
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INVALID);
+
     // Android libraries frequently strip section headers while preserving
     // PT_DYNAMIC; both standard dynamic hash formats must still be inspectable.
     stripped_dynamic_fixture(fixture, false);

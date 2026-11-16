@@ -331,10 +331,17 @@ void engine_entry_probe_stream(FILE *file, EngineEntryProbe *result)
             gnu_hash_va = value;
         }
     }
-    if ((result->has_init && !executable_address(segments, segment_count,
-                                                 result->init_virtual_address)) ||
+    uint64_t init_array_offset = 0;
+    if ((result->has_init && (!executable_address(segments, segment_count,
+                                                  result->init_virtual_address) ||
+                             (result->init_virtual_address & 3u))) ||
         init_array_size % 8 || init_array_size / 8 > MAX_INIT_ARRAY_ENTRIES ||
-        ((init_array_size != 0) != (result->init_array_virtual_address != 0))) {
+        ((init_array_size != 0) != (result->init_array_virtual_address != 0)) ||
+        (init_array_size &&
+         ((result->init_array_virtual_address & 7u) ||
+          !virtual_to_file(segments, segment_count,
+                           result->init_array_virtual_address,
+                           init_array_size, &init_array_offset)))) {
         fail(result, ENGINE_ENTRY_INVALID, "Invalid ELF constructor addresses.");
         return;
     }
