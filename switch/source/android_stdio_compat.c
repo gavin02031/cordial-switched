@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <wchar.h>
 
 // Android's FILE layout is not newlib's FILE layout. These distinct opaque
 // handles are passed only through our wrappers; they must never reach newlib
@@ -124,6 +125,55 @@ static int stdio_feof(FILE *stream)
     return feof(host_stream(stream));
 }
 
+static int stdio_ferror(FILE *stream)
+{
+    return ferror(host_stream(stream));
+}
+
+static void stdio_clearerr(FILE *stream)
+{
+    clearerr(host_stream(stream));
+}
+
+static char *stdio_fgets(char *buffer, int capacity, FILE *stream)
+{
+    return fgets(buffer, capacity, host_stream(stream));
+}
+
+static int stdio_getc(FILE *stream)
+{
+    return getc(host_stream(stream));
+}
+
+static int stdio_ungetc(int character, FILE *stream)
+{
+    return ungetc(character, host_stream(stream));
+}
+
+static wint_t stdio_getwc(FILE *stream)
+{
+    return getwc(host_stream(stream));
+}
+
+static wint_t stdio_ungetwc(wint_t character, FILE *stream)
+{
+    return ungetwc(character, host_stream(stream));
+}
+
+static wint_t stdio_fputwc(wchar_t character, FILE *stream)
+{
+    return fputwc(character, host_stream(stream));
+}
+
+static int stdio_fscanf(FILE *stream, const char *format, ...)
+{
+    va_list arguments;
+    va_start(arguments, format);
+    int result = vfscanf(host_stream(stream), format, arguments);
+    va_end(arguments);
+    return result;
+}
+
 static int stdio_fileno(FILE *stream)
 {
     return fileno(host_stream(stream));
@@ -199,6 +249,15 @@ bool android_stdio_compat_resolve(const char *name, const char *version,
     MAP_STDIO("fputc", &stdio_fputc)
     MAP_STDIO("fflush", &stdio_fflush)
     MAP_STDIO("feof", &stdio_feof)
+    MAP_STDIO("ferror", &stdio_ferror)
+    MAP_STDIO("clearerr", &stdio_clearerr)
+    MAP_STDIO("fgets", &stdio_fgets)
+    MAP_STDIO("getc", &stdio_getc)
+    MAP_STDIO("ungetc", &stdio_ungetc)
+    MAP_STDIO("getwc", &stdio_getwc)
+    MAP_STDIO("ungetwc", &stdio_ungetwc)
+    MAP_STDIO("fputwc", &stdio_fputwc)
+    MAP_STDIO("fscanf", &stdio_fscanf)
     MAP_STDIO("fileno", &stdio_fileno)
     MAP_STDIO("fclose", &stdio_fclose)
     MAP_STDIO("fopen", &fopen)

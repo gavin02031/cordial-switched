@@ -94,6 +94,20 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+**v0.85 adds 33 independently version-gated Bionic import names** from the
+v0.84 device `link-22.txt`: nine more `FILE*` operations through the existing
+opaque-stream adapter, math `sincosf`/`sincos`/`finitef`, four checked or fatal
+FORTIFY functions, and 17 libc functions or data symbols. The latter include
+OS-seeded `__stack_chk_guard` and `arc4random_buf`, `memrchr`, time/scheduling,
+and basic ANSI C interfaces. Failed bounds checks abort; failed entropy does
+not quietly return pretend random bytes. These are host-tested, not yet
+validated with the guest on Switch. **INFERRED:** the read-only missing-import
+audit should drop from 262 if the Switch toolchain also links these providers.
+The first strict blocker remains `longjmp @ LIBC`: Android's private
+`jmp_buf` ABI is not safely interchangeable with Horizon/newlib. We do not
+bind that pair until it has an architecture-specific implementation and tests.
+No Roblox frame or login is claimed; run Loader L3 and compare the next log.
+
 **v0.84 includes Morrow's chosen original pastel logo** in the Homebrew Menu
 `.nro` icon. The full-size artwork is in `switch/assets/morrow-logo.webp`;
 the 256-pixel JPEG is the embedded Switch icon. The app is still titled

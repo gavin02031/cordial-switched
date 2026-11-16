@@ -4,6 +4,26 @@
 #include <stdint.h>
 #include <string.h>
 
+// Bionic exposes GNU-style paired trigonometric results. A native sincos
+// symbol is not guaranteed in devkitA64's newlib; these signatures use only
+// ordinary AArch64 floats, doubles and output pointers.
+static void bionic_sincosf(float value, float *sine, float *cosine)
+{
+    *sine = sinf(value);
+    *cosine = cosf(value);
+}
+
+static void bionic_sincos(double value, double *sine, double *cosine)
+{
+    *sine = sin(value);
+    *cosine = cos(value);
+}
+
+static int bionic_finitef(float value)
+{
+    return isfinite(value) ? 1 : 0;
+}
+
 bool android_math_compat_resolve(const char *name, const char *version,
                                  const char *library, uint64_t *address)
 {
@@ -69,7 +89,12 @@ bool android_math_compat_resolve(const char *name, const char *version,
     MAP_MATH(log2f)
     MAP_MATH(expf)
     MAP_MATH(cosf)
-    *address = 0;
+    if (strcmp(name, "sincosf") == 0)
+        *address = (uint64_t)(uintptr_t)&bionic_sincosf;
+    else if (strcmp(name, "sincos") == 0)
+        *address = (uint64_t)(uintptr_t)&bionic_sincos;
+    else if (strcmp(name, "finitef") == 0)
+        *address = (uint64_t)(uintptr_t)&bionic_finitef;
 #undef MAP_MATH
     return *address != 0;
 }

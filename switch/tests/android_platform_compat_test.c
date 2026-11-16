@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,6 +15,30 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <wchar.h>
+
+static int call_checked_vsnprintf(uint64_t address, char *dest, size_t length,
+                                  size_t capacity, const char *format, ...)
+{
+    int (*checked)(char *, size_t, int, size_t, const char *, va_list) =
+        (int (*)(char *, size_t, int, size_t, const char *, va_list))(uintptr_t)address;
+    va_list args;
+    va_start(args, format);
+    int result = checked(dest, length, 0, capacity, format, args);
+    va_end(args);
+    return result;
+}
+
+static int call_checked_vsprintf(uint64_t address, char *dest, size_t capacity,
+                                 const char *format, ...)
+{
+    int (*checked)(char *, int, size_t, const char *, va_list) =
+        (int (*)(char *, int, size_t, const char *, va_list))(uintptr_t)address;
+    va_list args;
+    va_start(args, format);
+    int result = checked(dest, 0, capacity, format, args);
+    va_end(args);
+    return result;
+}
 
 int main(void)
 {
@@ -41,6 +66,52 @@ int main(void)
     char buffer[32] = {0};
     assert(fread(buffer, 1, 8, temporary) == 8);
     assert(strcmp(buffer, "value=17") == 0);
+    assert(fclose(temporary) == 0);
+
+    temporary = tmpfile();
+    assert(temporary && fputs("item=42\n", temporary) >= 0);
+    rewind(temporary);
+    assert(android_stdio_compat_resolve("fgets", "LIBC", "libc.so", &address));
+    char *(*android_fgets)(char *, int, FILE *) =
+        (char *(*)(char *, int, FILE *))(uintptr_t)address;
+    assert(android_fgets(buffer, sizeof(buffer), temporary) == buffer);
+    assert(strcmp(buffer, "item=42\n") == 0);
+    rewind(temporary);
+    assert(android_stdio_compat_resolve("fscanf", "LIBC", "libc.so", &address));
+    int (*android_fscanf)(FILE *, const char *, ...) =
+        (int (*)(FILE *, const char *, ...))(uintptr_t)address;
+    int parsed = 0;
+    assert(android_fscanf(temporary, "item=%d", &parsed) == 1 && parsed == 42);
+    assert(android_stdio_compat_resolve("getc", "LIBC", "libc.so", &address));
+    int (*android_getc)(FILE *) = (int (*)(FILE *))(uintptr_t)address;
+    assert(android_stdio_compat_resolve("ungetc", "LIBC", "libc.so", &address));
+    int (*android_ungetc)(int, FILE *) =
+        (int (*)(int, FILE *))(uintptr_t)address;
+    assert(android_ungetc('X', temporary) == 'X');
+    assert(android_getc(temporary) == 'X');
+    assert(android_stdio_compat_resolve("ferror", "LIBC", "libc.so", &address));
+    int (*android_ferror)(FILE *) = (int (*)(FILE *))(uintptr_t)address;
+    assert(android_ferror(temporary) == 0);
+    assert(android_stdio_compat_resolve("clearerr", "LIBC", "libc.so", &address));
+    void (*android_clearerr)(FILE *) = (void (*)(FILE *))(uintptr_t)address;
+    android_clearerr(temporary);
+    assert(fclose(temporary) == 0);
+
+    temporary = tmpfile();
+    assert(temporary);
+    assert(android_stdio_compat_resolve("fputwc", "LIBC", "libc.so", &address));
+    wint_t (*android_fputwc)(wchar_t, FILE *) =
+        (wint_t (*)(wchar_t, FILE *))(uintptr_t)address;
+    assert(android_stdio_compat_resolve("getwc", "LIBC", "libc.so", &address));
+    wint_t (*android_getwc)(FILE *) = (wint_t (*)(FILE *))(uintptr_t)address;
+    assert(android_stdio_compat_resolve("ungetwc", "LIBC", "libc.so", &address));
+    wint_t (*android_ungetwc)(wint_t, FILE *) =
+        (wint_t (*)(wint_t, FILE *))(uintptr_t)address;
+    assert(android_fputwc(L'A', temporary) == L'A');
+    rewind(temporary);
+    assert(android_getwc(temporary) == L'A');
+    assert(android_ungetwc(L'B', temporary) == L'B');
+    assert(android_getwc(temporary) == L'B');
     assert(fclose(temporary) == 0);
 
     // A legacy Android caller computes `&__sF[1]` using Bionic's 152-byte
@@ -132,6 +203,60 @@ int main(void)
     assert(android_getentropy(NULL, 1) == -1 && errno == EFAULT);
     assert(!android_libc_compat_resolve("getentropy", "LIBC", "libc.so", &address));
     assert(!android_libc_compat_resolve("getentropy", NULL, "libc.so", &address));
+    assert(android_libc_compat_resolve("arc4random_buf", "LIBC", "libc.so", &address));
+    void (*android_random_buf)(void *, size_t) =
+        (void (*)(void *, size_t))(uintptr_t)address;
+    unsigned char extended_random[384] = {0};
+    android_random_buf(extended_random, sizeof(extended_random));
+    nonzero = 0;
+    for (size_t i = 0; i < sizeof(extended_random); i++)
+        nonzero |= extended_random[i];
+    assert(nonzero != 0);
+    assert(android_libc_compat_resolve("__stack_chk_guard", "LIBC", "libc.so", &address));
+    uintptr_t *canary = (uintptr_t *)(uintptr_t)address;
+    assert(*canary != 0);
+    assert(android_libc_compat_resolve("__stack_chk_guard", "LIBC", "libc.so", &address));
+    assert((uintptr_t *)(uintptr_t)address == canary);
+    assert(!android_libc_compat_resolve("__stack_chk_guard", "LIBC_N", "libc.so", &address));
+    assert(android_libc_compat_resolve("memrchr", "LIBC", "libc.so", &address));
+    void *(*android_memrchr)(const void *, int, size_t) =
+        (void *(*)(const void *, int, size_t))(uintptr_t)address;
+    const char *repeated = "abca";
+    assert(android_memrchr(repeated, 'a', 4) == repeated + 3);
+    assert(android_memrchr(repeated, 'z', 4) == NULL);
+    assert(android_libc_compat_resolve("getpagesize", "LIBC", "libc.so", &address));
+    int (*android_pagesize)(void) = (int (*)(void))(uintptr_t)address;
+    assert(android_pagesize() >= 4096);
+    assert(android_libc_compat_resolve("sched_yield", "LIBC", "libc.so", &address));
+    int (*android_yield)(void) = (int (*)(void))(uintptr_t)address;
+    assert(android_yield() == 0);
+    assert(android_libc_compat_resolve("btowc", "LIBC", "libc.so", &address));
+    wint_t (*android_btowc)(int) = (wint_t (*)(int))(uintptr_t)address;
+    assert(android_btowc('A') == L'A');
+    assert(android_libc_compat_resolve("wctob", "LIBC", "libc.so", &address));
+    int (*android_wctob)(wint_t) = (int (*)(wint_t))(uintptr_t)address;
+    assert(android_wctob(L'B') == 'B');
+    assert(android_libc_compat_resolve("sscanf", "LIBC", "libc.so", &address));
+    int (*android_sscanf)(const char *, const char *, ...) =
+        (int (*)(const char *, const char *, ...))(uintptr_t)address;
+    int scanned = 0;
+    assert(android_sscanf("value=81", "value=%d", &scanned) == 1 && scanned == 81);
+    assert(android_libc_compat_resolve("time", "LIBC", "libc.so", &address));
+    time_t (*android_time)(time_t *) = (time_t (*)(time_t *))(uintptr_t)address;
+    assert(android_time(NULL) > 0);
+    assert(android_libc_compat_resolve("nanosleep", "LIBC", "libc.so", &address));
+    int (*android_sleep)(const struct timespec *, struct timespec *) =
+        (int (*)(const struct timespec *, struct timespec *))(uintptr_t)address;
+    const struct timespec no_sleep = {0};
+    assert(android_sleep(&no_sleep, NULL) == 0);
+    assert(android_libc_compat_resolve("getenv", "LIBC", "libc.so", &address));
+    char *(*android_getenv)(const char *) =
+        (char *(*)(const char *))(uintptr_t)address;
+    assert(android_getenv("MORROW_TEST_VARIABLE_DOES_NOT_EXIST") == NULL);
+    for (size_t i = 0; i < 3; i++) {
+        const char *names[] = {"usleep", "gettimeofday", "exit"};
+        assert(android_libc_compat_resolve(names[i], "LIBC", "libc.so", &address));
+    }
     assert(android_libc_compat_resolve("clock_gettime", "LIBC", "libc.so", &address));
     int (*android_clock_gettime)(int, struct timespec *) =
         (int (*)(int, struct timespec *))(uintptr_t)address;
@@ -220,6 +345,23 @@ int main(void)
     assert(android_errno() == &errno && *android_errno() == EAGAIN);
     assert(!android_fortify_compat_resolve("__memcpy_chk", "LIBC_N", "libc.so", &address));
     assert(!android_fortify_compat_resolve("pthread_mutex_lock", "LIBC", "libc.so", &address));
+    assert(android_fortify_compat_resolve("__strchr_chk", "LIBC", "libc.so", &address));
+    char *(*checked_strchr)(const char *, int, size_t) =
+        (char *(*)(const char *, int, size_t))(uintptr_t)address;
+    assert(checked_strchr("morrow", 'r', 7) == strchr("morrow", 'r'));
+    assert(!android_fortify_compat_resolve("__strchr_chk", "LIBC_N", "libc.so", &address));
+    assert(android_fortify_compat_resolve("__vsnprintf_chk", "LIBC", "libc.so", &address));
+    uint64_t checked_vsnprintf = address;
+    char formatted[16] = {0};
+    assert(call_checked_vsnprintf(checked_vsnprintf, formatted, sizeof(formatted),
+                                  sizeof(formatted), "v%d", 7) == 2);
+    assert(strcmp(formatted, "v7") == 0);
+    assert(android_fortify_compat_resolve("__vsprintf_chk", "LIBC", "libc.so", &address));
+    uint64_t checked_vsprintf = address;
+    assert(call_checked_vsprintf(checked_vsprintf, formatted, sizeof(formatted),
+                                 "hello%d", 5) == 6);
+    assert(strcmp(formatted, "hello5") == 0);
+    assert(android_fortify_compat_resolve("__stack_chk_fail", "LIBC", "libc.so", &address));
 
     assert(android_stdio_compat_resolve("__fwrite_chk", "LIBC_N", "libc.so", &address));
     size_t (*checked_fwrite)(const void *, size_t, size_t, FILE *, size_t) =
@@ -242,6 +384,34 @@ int main(void)
         _exit(99);
     }
     int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        char unterminated_text[3] = {'a', 'b', 'c'};
+        checked_strchr(unterminated_text, 'z', sizeof(unterminated_text));
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        call_checked_vsnprintf(checked_vsnprintf, formatted, 17, 16, "too big");
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        call_checked_vsprintf(checked_vsprintf, formatted, 4, "overflow");
+        _exit(99);
+    }
     assert(waitpid(child, &status, 0) == child);
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
 

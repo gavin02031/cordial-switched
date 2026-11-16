@@ -3,6 +3,7 @@
 #include "android_libc_compat.h"
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdint.h>
@@ -11,6 +12,8 @@
 #include <string.h>
 #include <strings.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/time.h>
 #include <wchar.h>
 
 // Android ARM64 and Horizon AArch64 both use 32-bit wchar_t. Only forward
@@ -19,7 +22,7 @@ _Static_assert(sizeof(wchar_t) == 4, "Bionic ARM64 wchar_t must be 4 bytes");
 #ifdef __SWITCH__
 #include <switch.h>
 #else
-#include <unistd.h>
+#include <sched.h>
 #endif
 
 // Android's unversioned getentropy is not a general-purpose random() call.
@@ -35,6 +38,68 @@ static int android_getentropy(void *buffer, size_t count)
     return 0;
 #else
     return getentropy(buffer, count);
+#endif
+}
+
+static void android_arc4random_buf(void *buffer, size_t count)
+{
+    // The API returns no error code. Never pass cryptographic callers an
+    // uninitialised buffer while pretending the native entropy call worked.
+    if (!buffer && count) abort();
+    unsigned char *target = buffer;
+    while (count) {
+        size_t chunk = count > 256 ? 256 : count;
+        if (android_getentropy(target, chunk) != 0) abort();
+        target += chunk;
+        count -= chunk;
+    }
+}
+
+static atomic_int stack_guard_state;
+static uintptr_t stack_guard;
+
+static bool initialise_stack_guard(void)
+{
+    int expected = 0;
+    if (atomic_compare_exchange_strong(&stack_guard_state, &expected, 1)) {
+        uintptr_t value = 0;
+        bool seeded = android_getentropy(&value, sizeof(value)) == 0 && value != 0;
+        if (seeded) stack_guard = value;
+        atomic_store(&stack_guard_state, seeded ? 2 : 3);
+    }
+    while (atomic_load(&stack_guard_state) == 1) {
+        // A parallel import audit must not observe a partially seeded guard.
+    }
+    return atomic_load(&stack_guard_state) == 2;
+}
+
+static void *android_memrchr(const void *data, int character, size_t count)
+{
+    const unsigned char *bytes = data;
+    while (count) {
+        --count;
+        if (bytes[count] == (unsigned char)character)
+            return (void *)(bytes + count);
+    }
+    return NULL;
+}
+
+static int android_getpagesize(void)
+{
+#ifdef __SWITCH__
+    return 4096; // Horizon memory page size, not ELF segment alignment.
+#else
+    return (int)sysconf(_SC_PAGESIZE);
+#endif
+}
+
+static int android_sched_yield(void)
+{
+#ifdef __SWITCH__
+    svcSleepThread(0);
+    return 0;
+#else
+    return sched_yield();
 #endif
 }
 
@@ -79,6 +144,13 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     if (name && address && !version && !library &&
         strcmp(name, "getentropy") == 0) {
         *address = (uint64_t)(uintptr_t)&android_getentropy;
+        return true;
+    }
+    if (name && address && version && library &&
+        strcmp(version, "LIBC") == 0 && strcmp(library, "libc.so") == 0 &&
+        strcmp(name, "__stack_chk_guard") == 0) {
+        if (!initialise_stack_guard()) return false;
+        *address = (uint64_t)(uintptr_t)&stack_guard;
         return true;
     }
     if (name && address && version && library &&
@@ -149,8 +221,28 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(qsort)
     MAP_LIBC(bsearch)
     MAP_LIBC(ldexp)
+    MAP_LIBC(getenv)
+    MAP_LIBC(time)
+    MAP_LIBC(nanosleep)
+    MAP_LIBC(usleep)
+    MAP_LIBC(gettimeofday)
+    MAP_LIBC(abort)
+    MAP_LIBC(exit)
+    MAP_LIBC(_Exit)
+    MAP_LIBC(sscanf)
+    MAP_LIBC(vsscanf)
+    MAP_LIBC(btowc)
+    MAP_LIBC(wctob)
     if (strcmp(name, "clock_gettime") == 0)
         *address = (uint64_t)(uintptr_t)&android_clock_gettime;
+    else if (strcmp(name, "memrchr") == 0)
+        *address = (uint64_t)(uintptr_t)&android_memrchr;
+    else if (strcmp(name, "getpagesize") == 0)
+        *address = (uint64_t)(uintptr_t)&android_getpagesize;
+    else if (strcmp(name, "arc4random_buf") == 0)
+        *address = (uint64_t)(uintptr_t)&android_arc4random_buf;
+    else if (strcmp(name, "sched_yield") == 0)
+        *address = (uint64_t)(uintptr_t)&android_sched_yield;
 #undef MAP_LIBC
     return *address != 0;
 }

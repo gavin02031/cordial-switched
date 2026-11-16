@@ -1,8 +1,10 @@
 #include "android_fortify_compat.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -118,6 +120,45 @@ static char *fortify_strncpy2(char *dest, const char *source, size_t count,
     return dest;
 }
 
+static char *fortify_strchr(const char *source, int character, size_t source_len)
+{
+    // The limit belongs to the source object. An un-terminated string may
+    // not be scanned into the next allocation looking for a character.
+    for (size_t index = 0; index < source_len; index++) {
+        if (source[index] == character)
+            return (char *)(source + index);
+        if (source[index] == 0)
+            return NULL;
+    }
+    bad_bound("strchr");
+}
+
+static int fortify_vsnprintf(char *dest, size_t count, int flags,
+                             size_t capacity, const char *format, va_list args)
+{
+    (void)flags;
+    if (count > capacity) bad_bound("vsnprintf");
+    return vsnprintf(dest, count, format, args);
+}
+
+static int fortify_vsprintf(char *dest, int flags, size_t capacity,
+                            const char *format, va_list args)
+{
+    (void)flags;
+    // Bionic permits SIZE_MAX as an unknown bound, but that provides no
+    // meaningful protection in a cross-runtime bridge. Do not convert it
+    // into an effectively unbounded write to native memory.
+    if (capacity == SIZE_MAX || capacity == 0) bad_bound("vsprintf capacity");
+    int result = vsnprintf(dest, capacity, format, args);
+    if (result >= 0 && (size_t)result >= capacity) bad_bound("vsprintf");
+    return result;
+}
+
+static _Noreturn void fortify_stack_chk_fail(void)
+{
+    bad_bound("stack canary");
+}
+
 static int *fortify_errno(void)
 {
     // The Switch C runtime owns errno storage. Returning its per-thread
@@ -156,6 +197,10 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
     MAP_FORTIFY("__strncat_chk", &fortify_strncat)
     MAP_FORTIFY("__strncpy_chk", &fortify_strncpy)
     MAP_FORTIFY("__strncpy_chk2", &fortify_strncpy2)
+    MAP_FORTIFY("__strchr_chk", &fortify_strchr)
+    MAP_FORTIFY("__vsnprintf_chk", &fortify_vsnprintf)
+    MAP_FORTIFY("__vsprintf_chk", &fortify_vsprintf)
+    MAP_FORTIFY("__stack_chk_fail", &fortify_stack_chk_fail)
     MAP_FORTIFY("__errno", &fortify_errno)
     MAP_FORTIFY("__assert", &fortify_assert)
     *address = 0;
