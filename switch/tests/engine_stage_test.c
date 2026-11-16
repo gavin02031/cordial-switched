@@ -678,6 +678,40 @@ int main(void)
     assert(get64(stage.image + 0x340) == address + 8);
     engine_stage_release(&stage);
 
+    // An absent weak import uses S=0, preserving A for all supported kinds.
+    // The same import with global binding remains a strict failure.
+    const uint32_t weak_kinds[] = {257, 1025, 1026};
+    for (unsigned i = 0; i < sizeof(weak_kinds) / sizeof(weak_kinds[0]); i++) {
+        symbol_fixture(bytes, weak_kinds[i], weak_kinds[i] == 1026);
+        bytes[0x2dc] = 0x22; // STB_WEAK, STT_FUNC.
+        assert(stage_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
+        assert(get64(stage.image + 0x340) == 8);
+        assert(stage.weak_undefined_relocations == 1);
+        assert(stage.required_missing_relocations == 0);
+        engine_stage_release(&stage);
+        assert(audit_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
+        assert(get64(stage.image + 0x340) == 8);
+        assert(stage.weak_undefined_relocations == 1);
+        engine_stage_release(&stage);
+        assert(stage_fixture_at(bytes, &stage, future_base, fake_resolver, (void *)&address));
+        assert(get64(stage.image + 0x340) == address + 8);
+        assert(stage.weak_undefined_relocations == 0);
+        engine_stage_release(&stage);
+        bytes[0x2dc] = 0x12; // Required import, otherwise identical.
+        assert(!stage_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
+        assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+        assert(stage.required_missing_relocations == 1);
+    }
+    // Version metadata is validated before weak fallback as for any import.
+    version_fixture(bytes);
+    bytes[0x2dc] = 0x22;
+    assert(stage_fixture_at(bytes, &stage, future_base, versioned_resolver, NULL));
+    assert(get64(stage.image + 0x340) == 8);
+    engine_stage_release(&stage);
+    put32(bytes + 0x388, 0xffff);
+    assert(!stage_fixture_at(bytes, &stage, future_base, versioned_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+
     // A defined dynamic symbol lives inside the loaded ELF, not in an
     // external Android provider. It must be relocated against the final
     // reservation even if no Bionic symbol resolver is installed.
@@ -710,6 +744,18 @@ int main(void)
     assert(stage.symbol_applied == 2);
     assert(get64(stage.image + 0x340) == future_base + 0x380);
     assert(get64(stage.image + 0x348) == future_base + 0x3a0);
+    engine_stage_release(&stage);
+
+    // Without section metadata, weak boundary references remain null; they
+    // must not be reported as verified guest section addresses.
+    dyninit_section_fixture(section_bytes);
+    put64(section_bytes + 40, 0);
+    section_bytes[0x28c] = section_bytes[0x2a4] = 0x20;
+    assert(dyninit_fixture_at(section_bytes, &stage, fake_resolver, future_base));
+    assert(!stage.dyninit_section_verified);
+    assert(stage.weak_undefined_relocations == 2);
+    assert(get64(stage.image + 0x340) == 0);
+    assert(get64(stage.image + 0x348) == 0);
     engine_stage_release(&stage);
 
     // Missing, misplaced, unallocated, unaligned, empty or ambiguous section

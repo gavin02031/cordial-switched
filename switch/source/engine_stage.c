@@ -54,6 +54,7 @@ enum {
     SHN_UNDEF = 0,
     SHN_LORESERVE = 0xff00,
     SHN_ABS = 0xfff1,
+    STB_WEAK = 2,
     STT_TLS = 6,
     STT_GNU_IFUNC = 10,
     PAGE_SIZE = 4096,
@@ -488,6 +489,18 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
                            "Malformed or missing Android symbol version metadata.");
     uint64_t symbol_address = 0;
     if (!resolver(name, version, library, &symbol_address, context) || !symbol_address) {
+        // ELF permits an undefined weak symbol to remain absent. For these
+        // three AArch64 relocations S is zero and the explicit addend remains.
+        // This is not a provider: required symbols must still stop linking.
+        if ((sym[4] >> 4) == STB_WEAK) {
+            write64(target, addend);
+            stage->weak_undefined_relocations++;
+            stage->symbol_applied++;
+            if (packed) stage->packed_applied++;
+            return true;
+        }
+        if (stage->required_missing_relocations != UINT_MAX)
+            stage->required_missing_relocations++;
         if (audit_missing) {
             // Leave the unresolved slot zero; the scratch image stays NX and
             // is discarded after the audit. Never synthesize a function or

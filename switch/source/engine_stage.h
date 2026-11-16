@@ -36,6 +36,10 @@ typedef struct {
     unsigned relr_applied;
     unsigned packed_applied;
     unsigned symbol_applied;
+    // Relocation counts, not unique symbol/provider counts. Absent ELF weak
+    // symbols use S=0; they do not imply an implemented Android provider.
+    unsigned weak_undefined_relocations;
+    unsigned required_missing_relocations;
     // Verified solely from the guest ELF's SHF_ALLOC section and PT_LOAD,
     // never inferred from a missing import or a guessed address.
     bool dyninit_section_verified;

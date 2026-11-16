@@ -1031,6 +1031,8 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         log_line(log, "relr_applied=%u", stage.relr_applied);
         log_line(log, "aps2_applied=%u", stage.packed_applied);
         log_line(log, "symbol_applied=%u", stage.symbol_applied);
+        log_line(log, "strict_weak_undefined_relocations=%u", stage.weak_undefined_relocations);
+        log_line(log, "strict_required_missing_relocations=%u", stage.required_missing_relocations);
         log_line(log, "dyninit_section_verified=%u",
                  stage.dyninit_section_verified ? 1u : 0u);
         log_line(log, "dyninit_section_status=%s",
@@ -1225,13 +1227,15 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             printable(safe, sizeof(safe), audit.detail);
             log_line(log, "full_audit_detail=%s", safe);
             log_import_summary(log, "full_audit", &all_imports);
+            log_line(log, "full_audit_weak_undefined_relocations=%u", audit.weak_undefined_relocations);
+            log_line(log, "full_audit_required_missing_relocations=%u", audit.required_missing_relocations);
             free(all_imports.complete_list);
             log_line(log, "full_audit_unsupported_relocations=%u",
                      audit.unsupported_relocations_seen);
             log_line(log, "full_audit_tls_relocations=%u", audit.tls_relocations_seen);
             if (all_ready) {
                 log_line(log, "execution_gate=blocked_strict_link_inconsistency");
-            } else if (all_imports.missing) {
+            } else if (audit.required_missing_relocations) {
                 log_line(log, "execution_gate=blocked_unresolved_android_imports");
             } else {
                 log_line(log, "execution_gate=blocked_relocation_or_elf_incompatibility");
