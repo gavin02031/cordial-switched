@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.87 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.88 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -107,6 +107,26 @@ architectures, cross-thread use and buffer corruption; CI additionally runs
 actual ARM64 jumps under QEMU. **INFERRED:** the confirmed v0.86 hardware audit
 of 437/629 supported imports may improve by two; neither a successful strict
 link nor any Roblox code execution has yet been observed for this change.
+
+**v0.88 adds 21 distinct imports from the v0.86 hardware report.** The
+filesystem provider translates Android ARM64 `stat`/`fstat`/`lstat` records,
+`open` flags and `dirent` records instead of passing incompatible newlib
+layouts to the engine. It also binds `__open_2`, `lseek`, `pread`/`pread64`,
+`pwrite`, `ftruncate`, and directory open/read/close. Unsupported open flags
+fail before creating or truncating a file. Positional I/O uses the native
+positional calls, preserving a shared descriptor's offset. Directory types
+on Horizon are reported as `DT_UNKNOWN`; callers can request `stat`.
+
+`optarg`, `optind`, `environ`, `tzname`, `timezone` and `daylight` now expose
+the live storage used by their host functions, with `getopt_long` and `fdopen`
+also bound. Tests exercise changing timezone/parser globals, metadata output
+bounds, sparse file offsets above 4 GiB, symlink metadata, directory iteration,
+FORTIFY aborts, and failures that leave file contents unchanged. The desktop
+MCP cannot exercise these Horizon ABI providers, so these use standalone
+compatibility tests. **INFERRED:** these providers should reduce the missing
+import audit; there is no new hardware count or Roblox execution result yet.
+The unresolved dynamic-section boundary symbols and remaining Android
+services still block engine startup. This is not playable v1.0.
 
 ### Transfer from an iPhone without a PC
 

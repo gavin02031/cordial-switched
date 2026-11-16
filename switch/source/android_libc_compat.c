@@ -3,6 +3,8 @@
 #include "android_libc_compat.h"
 
 #include <errno.h>
+#include <getopt.h>
+#include <stddef.h>
 #include <stdatomic.h>
 #include <ctype.h>
 #include <math.h>
@@ -140,6 +142,12 @@ static int android_clock_gettime(int android_clock, struct timespec *time_value)
     return clock_gettime(host_clock, time_value);
 }
 
+// Both providers must expose the same storage used by getopt_long, getenv
+// and tzset. Snapshot globals would go stale as soon as those functions run.
+extern char **environ;
+_Static_assert(sizeof(struct option) == 32, "Android LP64 getopt option size");
+_Static_assert(offsetof(struct option, flag) == 16, "Android getopt flag offset");
+
 bool android_libc_compat_resolve(const char *name, const char *version,
                                  const char *library, uint64_t *address)
 {
@@ -170,6 +178,19 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         strcmp(version, "LIBC") != 0 || strcmp(library, "libc.so") != 0)
         return false;
     *address = 0;
+#define DATA(symbol, target) if (!strcmp(name, symbol)) { *address = (uint64_t)(uintptr_t)(target); return true; }
+    DATA("optarg", &optarg)
+    DATA("optind", &optind)
+    DATA("environ", &environ)
+    DATA("tzname", tzname)
+#ifdef __SWITCH__
+    DATA("timezone", &_timezone)
+    DATA("daylight", &_daylight)
+#else
+    DATA("timezone", &timezone)
+    DATA("daylight", &daylight)
+#endif
+#undef DATA
     // C routines with an equivalent AArch64 calling convention only. Ordinary
     // file descriptors and path strings can use newlib directly; a missing
     // Android filesystem path still fails normally with ENOENT. Do not extend
@@ -177,6 +198,7 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     // verified guest/host ABI translation.
 #define MAP_LIBC(symbol) \
     if (strcmp(name, #symbol) == 0) *address = (uint64_t)(uintptr_t)&symbol; else
+    MAP_LIBC(getopt_long)
     MAP_LIBC(strlen)
     MAP_LIBC(strcmp)
     MAP_LIBC(strncmp)

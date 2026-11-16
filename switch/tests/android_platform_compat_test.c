@@ -4,6 +4,8 @@
 #include "android_fortify_compat.h"
 
 #include <assert.h>
+#include <getopt.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -559,6 +561,57 @@ int main(void)
     }
     assert(waitpid(child, &status, 0) == child);
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    // ELF data imports must alias live host globals, not copied initial values.
+    assert(android_libc_compat_resolve("optarg", "LIBC", "libc.so", &address));
+    char **guest_optarg = (char **)(uintptr_t)address;
+    assert(android_libc_compat_resolve("optind", "LIBC", "libc.so", &address));
+    int *guest_optind = (int *)(uintptr_t)address;
+    assert(android_libc_compat_resolve("getopt_long", "LIBC", "libc.so", &address));
+    int (*guest_getopt)(int, char *const *, const char *, const struct option *, int *) =
+        (int (*)(int, char *const *, const char *, const struct option *, int *))(uintptr_t)address;
+    char *arguments[] = {"morrow", "--name", "example", NULL};
+    struct option options[] = {{"name", required_argument, NULL, 'n'}, {NULL, 0, NULL, 0}};
+    *guest_optind = 1;
+    assert(guest_getopt(3, arguments, "n:", options, NULL) == 'n');
+    assert(!strcmp(*guest_optarg, "example") && *guest_optind == 3);
+    assert(guest_getopt(3, arguments, "n:", options, NULL) == -1);
+    assert(android_libc_compat_resolve("environ", "LIBC", "libc.so", &address));
+    extern char **environ;
+    char ***guest_environ = (char ***)(uintptr_t)address;
+    assert(setenv("MORROW_GLOBAL_TEST", "live", 1) == 0);
+    assert(*guest_environ == environ);
+    assert(unsetenv("MORROW_GLOBAL_TEST") == 0);
+    assert(android_libc_compat_resolve("tzname", "LIBC", "libc.so", &address));
+    char **guest_zones = (char **)(uintptr_t)address;
+    assert(android_libc_compat_resolve("timezone", "LIBC", "libc.so", &address));
+    long *guest_timezone = (long *)(uintptr_t)address;
+    assert(android_libc_compat_resolve("daylight", "LIBC", "libc.so", &address));
+    int *guest_daylight = (int *)(uintptr_t)address;
+    const char *old_zone = getenv("TZ");
+    char *saved_zone = old_zone ? strdup(old_zone) : NULL;
+    assert(setenv("TZ", "EST5EDT", 1) == 0);
+    tzset();
+    assert(*guest_timezone == 18000 && *guest_daylight != 0);
+    assert(!strcmp(guest_zones[0], "EST") && !strcmp(guest_zones[1], "EDT"));
+    assert(setenv("TZ", "UTC0", 1) == 0);
+    tzset();
+    assert(*guest_timezone == 0 && *guest_daylight == 0 && !strcmp(guest_zones[0], "UTC"));
+    if (saved_zone) { assert(setenv("TZ", saved_zone, 1) == 0); free(saved_zone); }
+    else assert(unsetenv("TZ") == 0);
+    tzset();
+    assert(android_stdio_compat_resolve("fdopen", "LIBC", "libc.so", &address));
+    FILE *(*guest_fdopen)(int, const char *) = (FILE *(*)(int, const char *))(uintptr_t)address;
+    temporary = tmpfile();
+    assert(temporary);
+    int duplicate = dup(fileno(temporary));
+    assert(duplicate >= 0);
+    FILE *wrapped = guest_fdopen(duplicate, "w+");
+    assert(wrapped && fputs("descriptor", wrapped) >= 0 && fclose(wrapped) == 0);
+    rewind(temporary);
+    memset(buffer, 0, sizeof(buffer));
+    assert(fread(buffer, 1, 10, temporary) == 10 && !strcmp(buffer, "descriptor"));
+    assert(fclose(temporary) == 0);
 
     puts("android_platform_compat_test: Bionic stdio, libc and fortify adapters passed");
     return 0;

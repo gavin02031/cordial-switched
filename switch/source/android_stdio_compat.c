@@ -261,6 +261,7 @@ bool android_stdio_compat_resolve(const char *name, const char *version,
     MAP_STDIO("fileno", &stdio_fileno)
     MAP_STDIO("fclose", &stdio_fclose)
     MAP_STDIO("fopen", &fopen)
+    MAP_STDIO("fdopen", &fdopen)
     MAP_STDIO("fseek", &stdio_fseek)
     MAP_STDIO("ftell", &stdio_ftell)
     MAP_STDIO("setvbuf", &stdio_setvbuf)
