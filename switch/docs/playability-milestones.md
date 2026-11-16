@@ -68,9 +68,12 @@ validation. Unsupported process creation must report failure; memory mapping,
 threading, readiness and clocks need functional implementations. Neither a
 successful import audit nor a fail-returning function proves an engine can boot.
 
-The Horizon target has no constructor runner today. Before adding one, implement
-and test mapping lifetime, dependency ordering, once-only initialization,
-thread-state requirements, and durable per-call breadcrumbs. Retain diagnostic
+The Horizon target has a **synthetic-only constructor run controller**, not
+a live guest constructor runner. Its callback-gated ordering requires durable
+begin/completed journal writes around each call and refuses replay after any
+attempt, including a failed marker. Host tests verify those mechanics without
+executing guest code. Future live wiring must first prove mapping lifetime,
+dependency ordering, guest TLS/thread state and durable crash recovery. Retain diagnostic
 mode and require an explicit execution action. Log virtual and runtime addresses
 with the actual ELF load bias (runtime base minus the lowest mapped virtual page),
 not just an assumed zero-based image, for crash-report correlation.

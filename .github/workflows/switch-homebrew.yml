@@ -46,6 +46,13 @@ jobs:
             switch/source/engine_memory_plan.c \
             -o /tmp/morrow-constructor-plan-test
           /tmp/morrow-constructor-plan-test
+      - name: Test once-only constructor journaling (synthetic callbacks only)
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_constructor_run_test.c \
+            switch/source/engine_constructor_run.c \
+            -o /tmp/morrow-constructor-run-test
+          /tmp/morrow-constructor-run-test
       - name: Test guarded JNI_OnLoad execution boundary with synthetic function
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
