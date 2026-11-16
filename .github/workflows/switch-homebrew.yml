@@ -53,6 +53,13 @@ jobs:
             switch/source/engine_constructor_run.c \
             -o /tmp/morrow-constructor-run-test
           /tmp/morrow-constructor-run-test
+      - name: Test exception register breadcrumb formatting (host only)
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_exception_format_test.c \
+            switch/source/engine_exception_format.c \
+            -o /tmp/morrow-exception-format-test
+          /tmp/morrow-exception-format-test
       - name: Test guarded JNI_OnLoad execution boundary with synthetic function
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

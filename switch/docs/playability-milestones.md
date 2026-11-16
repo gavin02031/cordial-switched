@@ -60,6 +60,20 @@ instructions; the proprietary ELF remains outside the repository.
 The repository's no-hooking/no-memory-patching rules still apply. Record
 evidence before selecting any compatibility strategy.
 
+## Best-effort Switch exception diagnostics
+
+The Horizon NRO now supplies a libnx `__libnx_exception_handler` that attempts
+to record exception type, PC, x8, ESR and FAR in
+`sdmc:/switch/cordial-switched/exception-last.txt`, and sends the same record
+through `svcOutputDebugString` when a debugger is present. Host tests check
+record formatting, and the libnx target is cross-built in CI. The error path
+must not be treated as a reliable trap router: libnx's [user exception entry](https://github.com/switchbrew/libnx/blob/master/nx/source/runtime/exception.s)
+may never be called for a fault in dynamically mapped or JIT-like code;
+[Switchbrew's exception documentation](https://switchbrew.org/wiki/SVC#Exception_handling)
+notes kernel debug/crash dispatch in those cases. Failure to create the SD
+file does **not** establish that no `svc #0` was attempted. The handler does
+not resume execution, rewrite any instruction, or translate Linux syscalls.
+
 ## Runtime work still required
 
 Classify imported operations by implemented semantics, not by whether a stub
