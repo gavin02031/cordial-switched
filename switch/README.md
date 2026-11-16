@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.91 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.92 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -94,6 +94,22 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.92 adds a first, strictly checked Android socket-to-Horizon BSD bridge.**
+Ten `libc.so@LIBC` functions (`socket`, `connect`, `bind`, `listen`,
+`shutdown`, `accept`, `getsockname`, `getpeername`, `sendto`, `recvfrom`) now
+translate Linux/Bionic IPv4 and IPv6 address structures to the Switch's BSD
+family/length layout, including the distinct IPv6 family number. Horizon's
+BSD service initializes **only on the first actual socket call**, never during
+the read-only ELF import audit. Unsupported socket flags, address families,
+message flags and malformed addresses fail explicitly. A host-side test uses
+real TCP and UDP IPv4 loopback traffic to exercise bind/connect/accept,
+address roundtrips, peeking and shutdown. This is **not** a verified Roblox
+network session or a promise of online gameplay; more Android DNS, polling,
+socket options, encryption and other service interfaces may still be missing.
+These ten names have not been cross-checked against a new Switch import log,
+so the last **hardware-confirmed** count remains 437 of 629, with 192 missing
+(v0.86). Real gameplay, not an import count, is the v1.0 Morrow milestone.
 
 **v0.91 adds 13 more observed Android/Bionic import providers** across three
 areas. Four `libm.so@LIBC` long-double functions (`fmal`, `powl`, `roundl`,
