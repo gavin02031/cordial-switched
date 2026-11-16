@@ -3,11 +3,13 @@
 
 #include <assert.h>
 #include <locale.h>
+#include <limits.h>
 #include <wctype.h>
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
 
@@ -21,6 +23,44 @@ static uint64_t lookup(const char *name)
     return address;
 }
 
+static void numeric_locale_test(locale_t locale)
+{
+    long (*signed_long)(const char *, char **, int, locale_t) =
+        (void *)(uintptr_t)lookup("strtol_l");
+    long long (*signed_wide)(const char *, char **, int, locale_t) =
+        (void *)(uintptr_t)lookup("strtoll_l");
+    unsigned long (*unsigned_long)(const char *, char **, int, locale_t) =
+        (void *)(uintptr_t)lookup("strtoul_l");
+    unsigned long long (*unsigned_wide)(const char *, char **, int, locale_t) =
+        (void *)(uintptr_t)lookup("strtoull_l");
+    float (*float_value)(const char *, char **, locale_t) =
+        (void *)(uintptr_t)lookup("strtof_l");
+    double (*double_value)(const char *, char **, locale_t) =
+        (void *)(uintptr_t)lookup("strtod_l");
+    long double (*long_double_value)(const char *, char **, locale_t) =
+        (void *)(uintptr_t)lookup("strtold_l");
+
+    char *end = NULL;
+    assert(signed_long("0x2a!", &end, 0, locale) == 42 && *end == '!');
+    assert(signed_wide("-9223372036854775808!", &end, 10, locale) == LLONG_MIN && *end == '!');
+    assert(unsigned_long("0377!", &end, 0, locale) == 255 && *end == '!');
+    assert(unsigned_wide("18446744073709551615!", &end, 10, locale) == ULLONG_MAX && *end == '!');
+    errno = 0;
+    assert(signed_wide("9223372036854775808!", &end, 10, locale) == LLONG_MAX);
+    assert(errno == ERANGE && *end == '!');
+    errno = 0;
+    assert(unsigned_wide("18446744073709551616!", &end, 10, locale) == ULLONG_MAX);
+    assert(errno == ERANGE && *end == '!');
+    assert(float_value("1.25!", &end, locale) == 1.25f && *end == '!');
+    assert(double_value("2.5!", &end, locale) == 2.5 && *end == '!');
+    assert(long_double_value("3.75!", &end, locale) == 3.75L && *end == '!');
+    // These APIs are specified by Bionic to use the non-_l parser, so the
+    // opaque locale argument cannot be reinterpreted as a host locale.
+    assert(signed_long("17", NULL, 10, (locale_t)0) == 17);
+    uint64_t ignored = 0;
+    assert(!android_wchar_compat_resolve("strtoll_l", "LIBC_N", "libc.so", &ignored));
+}
+
 static void locale_test(void)
 {
     locale_t (*create)(int, const char *, locale_t) = (void *)(uintptr_t)lookup("newlocale");
@@ -28,6 +68,7 @@ static void locale_test(void)
     locale_t (*activate)(locale_t) = (void *)(uintptr_t)lookup("uselocale");
     locale_t locale = create(0x1fbf, "C", (locale_t)0);
     assert(locale);
+    numeric_locale_test(locale);
     locale_t previous = activate(locale);
     assert(previous && activate((locale_t)0) == locale);
     assert(activate(previous) == locale);
@@ -147,6 +188,6 @@ int main(void)
            wide_cursor == wide_text);
     assert(state.guard == UINT64_C(0x1122334455667788));
 
-    puts("android_wchar_compat_test: UTF-8 guest state and bounds passed");
+    puts("android_wchar_compat_test: UTF-8 guest state, numeric locale and bounds passed");
     return 0;
 }

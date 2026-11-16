@@ -34,6 +34,8 @@ int main(void)
     LOAD(fstat, int, (int, AndroidFileStat *));
     LOAD(lseek, int64_t, (int, int64_t, int));
     LOAD(ftruncate, int, (int, int64_t));
+    LOAD(fchmod, int, (int, mode_t));
+    LOAD(fchown, int, (int, uint32_t, uint32_t));
     LOAD(opendir, void *, (const char *));
     LOAD(readdir, AndroidDirectoryEntry *, (void *));
     LOAD(closedir, int, (void *));
@@ -45,6 +47,14 @@ int main(void)
     // Android O_RDWR|O_CREAT|O_EXCL, intentionally not host constants.
     int fd = guest_open(path, 2 | 0100 | 0200, 0600u);
     assert(fd >= 0);
+    assert(guest_fchmod(fd, 0640) == 0);
+    assert(guest_fchown(fd, UINT32_MAX, UINT32_MAX) == 0);
+    struct stat permissions;
+    assert(fstat(fd, &permissions) == 0 && (permissions.st_mode & 0777) == 0640);
+    assert(guest_fchmod(fd, 0100000) == -1 && errno == EINVAL);
+    assert(fstat(fd, &permissions) == 0 && (permissions.st_mode & 0777) == 0640);
+    assert(guest_fchmod(-1, 0600) == -1 && errno == EBADF);
+    assert(guest_fchown(-1, UINT32_MAX, UINT32_MAX) == -1 && errno == EBADF);
     assert(guest_open(path, 2 | 0100 | 0200, 0600u) == -1 && errno == EEXIST);
     assert(write(fd, "abc", 3) == 3);
     assert(guest_lseek(fd, 1, 0) == 1);

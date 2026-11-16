@@ -2,7 +2,9 @@
 #include "android_wchar_compat.h"
 
 #include <errno.h>
+#include <float.h>
 #include <locale.h>
+#include <stdlib.h>
 #include <wctype.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -16,6 +18,10 @@ typedef struct {
 
 _Static_assert(sizeof(BionicMbstate) == 8, "Bionic arm64 mbstate_t is eight bytes");
 _Static_assert(sizeof(wchar_t) == 4, "Android arm64 wchar_t is UTF-32");
+#ifdef __aarch64__
+_Static_assert(sizeof(long double) == 16 && LDBL_MANT_DIG == 113,
+               "Android arm64 strtold_l returns IEEE binary128");
+#endif
 
 // Bionic's UTF-8 decoder buffers at most three prefix bytes across calls.
 // A separate state type avoids writing beyond the actual Android mbstate_t.
@@ -226,6 +232,52 @@ static locale_t bionic_newlocale(int categories, const char *name, locale_t base
     return newlocale(native, name, base);
 }
 
+// Bionic's public stdlib.h explicitly defines the _l parsing family as
+// equivalent to the corresponding non-_l routine. Do not pass the opaque
+// Android locale handle into an unrelated newlib _l implementation.
+static long bionic_strtol_l(const char *s, char **end, int base, locale_t locale)
+{
+    (void)locale;
+    return strtol(s, end, base);
+}
+
+static long long bionic_strtoll_l(const char *s, char **end, int base, locale_t locale)
+{
+    (void)locale;
+    return strtoll(s, end, base);
+}
+
+static unsigned long bionic_strtoul_l(const char *s, char **end, int base, locale_t locale)
+{
+    (void)locale;
+    return strtoul(s, end, base);
+}
+
+static unsigned long long bionic_strtoull_l(const char *s, char **end,
+                                             int base, locale_t locale)
+{
+    (void)locale;
+    return strtoull(s, end, base);
+}
+
+static float bionic_strtof_l(const char *s, char **end, locale_t locale)
+{
+    (void)locale;
+    return strtof(s, end);
+}
+
+static double bionic_strtod_l(const char *s, char **end, locale_t locale)
+{
+    (void)locale;
+    return strtod(s, end);
+}
+
+static long double bionic_strtold_l(const char *s, char **end, locale_t locale)
+{
+    (void)locale;
+    return strtold(s, end);
+}
+
 bool android_wchar_compat_resolve(const char *name, const char *version,
                                   const char *library, uint64_t *address)
 {
@@ -235,6 +287,13 @@ bool android_wchar_compat_resolve(const char *name, const char *version,
     *address = 0;
 #define MAP(name_, target_) if (!strcmp(name, name_)) *address = (uint64_t)(uintptr_t)&target_; else
     MAP("newlocale", bionic_newlocale)
+    MAP("strtol_l", bionic_strtol_l)
+    MAP("strtoll_l", bionic_strtoll_l)
+    MAP("strtoul_l", bionic_strtoul_l)
+    MAP("strtoull_l", bionic_strtoull_l)
+    MAP("strtof_l", bionic_strtof_l)
+    MAP("strtod_l", bionic_strtod_l)
+    MAP("strtold_l", bionic_strtold_l)
     MAP("freelocale", freelocale)
     MAP("uselocale", uselocale)
     MAP("strcoll_l", strcoll_l)

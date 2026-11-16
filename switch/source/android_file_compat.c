@@ -229,6 +229,27 @@ static int file_ftruncate(int fd, int64_t length)
     return ftruncate(fd, (off_t)length);
 }
 
+static int file_fchmod(int fd, mode_t mode)
+{
+    // Android and POSIX permission bits agree. Reject unmapped high bits
+    // instead of accidentally changing a different native mode field.
+    if (mode & ~07777u) { errno = EINVAL; return -1; }
+    return fchmod(fd, mode);
+}
+
+static int file_fchown(int fd, uint32_t owner, uint32_t group)
+{
+    // Android passes 32-bit ids; native newlib uid_t/gid_t widths may differ.
+    // UINT32_MAX is POSIX's "unchanged" sentinel for either argument.
+    if ((owner != UINT32_MAX && (uint32_t)(uid_t)owner != owner) ||
+        (group != UINT32_MAX && (uint32_t)(gid_t)group != group)) {
+        errno = EOVERFLOW;
+        return -1;
+    }
+    return fchown(fd, owner == UINT32_MAX ? (uid_t)-1 : (uid_t)owner,
+                  group == UINT32_MAX ? (gid_t)-1 : (gid_t)group);
+}
+
 typedef struct {
     DIR *native;
     AndroidDirectoryEntry entry;
@@ -287,6 +308,8 @@ bool android_file_compat_resolve(const char *name, const char *version,
     MAP("fcntl", file_fcntl)
     MAP("lseek", file_lseek)
     MAP("ftruncate", file_ftruncate)
+    MAP("fchmod", file_fchmod)
+    MAP("fchown", file_fchown)
     MAP("opendir", file_opendir)
     MAP("readdir", file_readdir)
     MAP("closedir", file_closedir)

@@ -108,6 +108,12 @@ static int android_sched_yield(void)
 #endif
 }
 
+static uint32_t android_geteuid(void)
+{
+    // Bionic's uid_t is 32 bits even if newlib's native uid_t is narrower.
+    return (uint32_t)geteuid();
+}
+
 // Bionic's ARM64 msghdr/cmsghdr layout is Linux LP64, not a host BSD socket
 // header. Only calculate the next ancillary-data header after checking every
 // address and size against the original guest control buffer.
@@ -369,6 +375,8 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(getpid)
     if (strcmp(name, "clock_gettime") == 0)
         *address = (uint64_t)(uintptr_t)&android_clock_gettime;
+    else if (strcmp(name, "geteuid") == 0)
+        *address = (uint64_t)(uintptr_t)&android_geteuid;
     else if (strcmp(name, "memrchr") == 0)
         *address = (uint64_t)(uintptr_t)&android_memrchr;
     else if (strcmp(name, "getpagesize") == 0)
