@@ -15,6 +15,8 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <wchar.h>
+#include <arpa/inet.h>
+#include <sys/stat.h>
 
 // Android ARM64 and Horizon AArch64 both use 32-bit wchar_t. Only forward
 // these pure wide-string operations when the native ABI actually matches.
@@ -168,9 +170,11 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         strcmp(version, "LIBC") != 0 || strcmp(library, "libc.so") != 0)
         return false;
     *address = 0;
-    // C routines with an equivalent AArch64 calling convention only. No
-    // pthread objects, errno state, locale objects or fortify signatures:
-    // those need proper Bionic adapters and may not alias native structs.
+    // C routines with an equivalent AArch64 calling convention only. Ordinary
+    // file descriptors and path strings can use newlib directly; a missing
+    // Android filesystem path still fails normally with ENOENT. Do not extend
+    // this to stat, directory entries, flags or opaque objects without a
+    // verified guest/host ABI translation.
 #define MAP_LIBC(symbol) \
     if (strcmp(name, #symbol) == 0) *address = (uint64_t)(uintptr_t)&symbol; else
     MAP_LIBC(strlen)
@@ -233,6 +237,31 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(vsscanf)
     MAP_LIBC(btowc)
     MAP_LIBC(wctob)
+    MAP_LIBC(getcwd)
+    MAP_LIBC(access)
+    MAP_LIBC(remove)
+    MAP_LIBC(rename)
+    MAP_LIBC(rmdir)
+    MAP_LIBC(unlink)
+    MAP_LIBC(readlink)
+    MAP_LIBC(mkdir)
+    MAP_LIBC(realpath)
+    MAP_LIBC(close)
+    MAP_LIBC(read)
+    MAP_LIBC(write)
+    MAP_LIBC(fsync)
+    MAP_LIBC(strerror)
+    MAP_LIBC(gmtime)
+    MAP_LIBC(gmtime_r)
+    MAP_LIBC(strftime)
+    MAP_LIBC(localtime)
+    MAP_LIBC(localtime_r)
+    MAP_LIBC(mktime)
+    MAP_LIBC(clock)
+    MAP_LIBC(tzset)
+    MAP_LIBC(inet_pton)
+    MAP_LIBC(inet_ntop)
+    MAP_LIBC(getpid)
     if (strcmp(name, "clock_gettime") == 0)
         *address = (uint64_t)(uintptr_t)&android_clock_gettime;
     else if (strcmp(name, "memrchr") == 0)

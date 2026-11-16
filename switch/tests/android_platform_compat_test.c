@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <wchar.h>
+#include <arpa/inet.h>
 
 static int call_checked_vsnprintf(uint64_t address, char *dest, size_t length,
                                   size_t capacity, const char *format, ...)
@@ -474,6 +475,86 @@ int main(void)
     assert(child >= 0);
     if (child == 0) {
         checked_fwrite("test", 1, 4, stdout, 2);
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    // These are real POSIX file/time functions. Avoid claiming support for
+    // Android stat layouts, path translation or opaque libc structures.
+    const char *portable_libc[] = {
+        "getcwd", "access", "remove", "rename", "rmdir", "unlink",
+        "readlink", "mkdir", "realpath", "close", "read", "write",
+        "fsync", "strerror", "gmtime", "gmtime_r", "strftime",
+        "localtime", "localtime_r", "mktime", "clock", "tzset",
+        "inet_pton", "inet_ntop", "getpid"
+    };
+    for (size_t i = 0; i < sizeof(portable_libc) / sizeof(portable_libc[0]); i++) {
+        assert(android_libc_compat_resolve(portable_libc[i], "LIBC", "libc.so", &address));
+        assert(address != 0);
+        assert(!android_libc_compat_resolve(portable_libc[i], "LIBC_N", "libc.so", &address));
+    }
+    assert(!android_libc_compat_resolve("stat", "LIBC", "libc.so", &address));
+    assert(!android_libc_compat_resolve("longjmp", "LIBC", "libc.so", &address));
+
+    assert(android_libc_compat_resolve("inet_pton", "LIBC", "libc.so", &address));
+    int (*android_inet_pton)(int, const char *, void *) =
+        (int (*)(int, const char *, void *))(uintptr_t)address;
+    unsigned char parsed_ipv4[4] = {0};
+    assert(android_inet_pton(AF_INET, "127.0.0.1", parsed_ipv4) == 1);
+    assert(parsed_ipv4[0] == 127 && parsed_ipv4[3] == 1);
+    assert(android_libc_compat_resolve("inet_ntop", "LIBC", "libc.so", &address));
+    const char *(*android_inet_ntop)(int, const void *, char *, socklen_t) =
+        (const char *(*)(int, const void *, char *, socklen_t))(uintptr_t)address;
+    char ip_text[32] = {0};
+    assert(android_inet_ntop(AF_INET, parsed_ipv4, ip_text, sizeof(ip_text)) == ip_text);
+    assert(strcmp(ip_text, "127.0.0.1") == 0);
+
+    assert(android_libc_compat_resolve("getpid", "LIBC", "libc.so", &address));
+    pid_t (*android_getpid)(void) = (pid_t (*)(void))(uintptr_t)address;
+    assert(android_getpid() == getpid());
+    assert(android_libc_compat_resolve("gmtime", "LIBC", "libc.so", &address));
+    struct tm *(*android_gmtime)(const time_t *) =
+        (struct tm *(*)(const time_t *))(uintptr_t)address;
+    time_t epoch = 0;
+    assert(android_gmtime(&epoch)->tm_year == 70);
+
+    // Exercise the checked read/write entry points with a real pipe. A
+    // versioned import under LIBC_N must not bind a generic LIBC symbol.
+    assert(android_fortify_compat_resolve("__write_chk", "LIBC_N", "libc.so", &address));
+    ssize_t (*checked_write)(int, const void *, size_t, size_t) =
+        (ssize_t (*)(int, const void *, size_t, size_t))(uintptr_t)address;
+    assert(!android_fortify_compat_resolve("__write_chk", "LIBC", "libc.so", &address));
+    assert(android_fortify_compat_resolve("__read_chk", "LIBC", "libc.so", &address));
+    ssize_t (*checked_read)(int, void *, size_t, size_t) =
+        (ssize_t (*)(int, void *, size_t, size_t))(uintptr_t)address;
+    assert(!android_fortify_compat_resolve("__read_chk", "LIBC_N", "libc.so", &address));
+    int descriptors[2] = {-1, -1};
+    assert(pipe(descriptors) == 0);
+    assert(checked_write(descriptors[1], "hello", 5, 5) == 5);
+    char read_back[6] = {0};
+    assert(checked_read(descriptors[0], read_back, 5, 5) == 5);
+    assert(strcmp(read_back, "hello") == 0);
+    assert(close(descriptors[0]) == 0 && close(descriptors[1]) == 0);
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        checked_write(-1, "overflow", 8, 2);
+        _exit(99);
+    }
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+
+    assert(android_fortify_compat_resolve("__readlink_chk", "LIBC", "libc.so", &address));
+    ssize_t (*checked_readlink)(const char *, char *, size_t, size_t) =
+        (ssize_t (*)(const char *, char *, size_t, size_t))(uintptr_t)address;
+    errno = 0;
+    assert(checked_readlink("/a/nonexistent/target", read_back, 5, 5) == -1);
+    assert(errno == ENOENT || errno == ENOTDIR);
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        checked_readlink("ignored", read_back, 6, 2);
         _exit(99);
     }
     assert(waitpid(child, &status, 0) == child);

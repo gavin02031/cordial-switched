@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "android_fortify_compat.h"
 
 #include <errno.h>
@@ -8,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 // Signatures and failure semantics are checked against AOSP Bionic's
 // libc/bionic/fortify.cpp. A checked operation must stop on an invalid bound;
@@ -133,6 +135,28 @@ static char *fortify_strchr(const char *source, int character, size_t source_len
     bad_bound("strchr");
 }
 
+// Bionic verifies both the object bound and the signed ssize_t result range.
+// Do the checks before entering the host fd layer, including on zero-byte I/O.
+static ssize_t fortify_read(int fd, void *buffer, size_t count, size_t capacity)
+{
+    if (count > capacity || count > SSIZE_MAX) bad_bound("read");
+    return read(fd, buffer, count);
+}
+
+static ssize_t fortify_write(int fd, const void *buffer, size_t count,
+                             size_t capacity)
+{
+    if (count > capacity || count > SSIZE_MAX) bad_bound("write");
+    return write(fd, buffer, count);
+}
+
+static ssize_t fortify_readlink(const char *path, char *buffer, size_t count,
+                                size_t capacity)
+{
+    if (count > capacity || count > SSIZE_MAX) bad_bound("readlink");
+    return readlink(path, buffer, count);
+}
+
 static int fortify_vsnprintf(char *dest, size_t count, int flags,
                              size_t capacity, const char *format, va_list args)
 {
@@ -182,6 +206,13 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
         strcmp(library, "libc.so") != 0)
         return false;
     *address = 0;
+    // Bionic exposes __write_chk at LIBC_N, unlike __read_chk. Binding the
+    // right entrypoint under the wrong symbol version defeats the audit.
+    if (strcmp(version, "LIBC_N") == 0 &&
+        strcmp(name, "__write_chk") == 0) {
+        *address = (uint64_t)(uintptr_t)&fortify_write;
+        return true;
+    }
     if (strcmp(version, "LIBC") != 0)
         return false;
 
@@ -198,6 +229,8 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
     MAP_FORTIFY("__strncpy_chk", &fortify_strncpy)
     MAP_FORTIFY("__strncpy_chk2", &fortify_strncpy2)
     MAP_FORTIFY("__strchr_chk", &fortify_strchr)
+    MAP_FORTIFY("__read_chk", &fortify_read)
+    MAP_FORTIFY("__readlink_chk", &fortify_readlink)
     MAP_FORTIFY("__vsnprintf_chk", &fortify_vsnprintf)
     MAP_FORTIFY("__vsprintf_chk", &fortify_vsprintf)
     MAP_FORTIFY("__stack_chk_fail", &fortify_stack_chk_fail)

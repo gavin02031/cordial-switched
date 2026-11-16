@@ -94,6 +94,19 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+**v0.86 adds native POSIX file, clock, DNS-address formatting and checked-I/O
+bridges** for the Bionic imports seen in the v0.85 hardware report. File
+descriptors and paths use actual host calls; bad FORTIFY read/write/readlink
+bounds abort, and the `__write_chk` provider is specifically `LIBC_N`.
+This does not translate Android paths into `sdmc:` paths or make Android
+`stat`/`FILE`/`jmp_buf` layouts compatible. The v0.85 `link-24.txt` confirmed
+400 supported out of 629 imports, leaving **229 unresolved**. Host tests cover
+the new entrypoints, provider versions, I/O and buffer violations.
+**INFERRED:** if the Switch link includes the same standard C entrypoints,
+v0.86 may resolve 37 more lookups (229 to 192). The first strict linker stop
+is still `longjmp @ LIBC`; neither actual guest execution nor a Roblox frame
+has been verified. Install the latest NRO, run Loader L3 and send its log.
+
 **v0.85 adds 33 independently version-gated Bionic import names** from the
 v0.84 device `link-22.txt`: nine more `FILE*` operations through the existing
 opaque-stream adapter, math `sincosf`/`sincos`/`finitef`, four checked or fatal
@@ -101,8 +114,8 @@ FORTIFY functions, and 17 libc functions or data symbols. The latter include
 OS-seeded `__stack_chk_guard` and `arc4random_buf`, `memrchr`, time/scheduling,
 and basic ANSI C interfaces. Failed bounds checks abort; failed entropy does
 not quietly return pretend random bytes. These are host-tested, not yet
-validated with the guest on Switch. **INFERRED:** the read-only missing-import
-audit should drop from 262 if the Switch toolchain also links these providers.
+validated at call sites in the guest on Switch. The v0.85 `link-24.txt`
+read-only import audit confirmed a drop from 262 to 229.
 The first strict blocker remains `longjmp @ LIBC`: Android's private
 `jmp_buf` ABI is not safely interchangeable with Horizon/newlib. We do not
 bind that pair until it has an architecture-specific implementation and tests.
