@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.99.2 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.99.3 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -94,6 +94,20 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.99.3 advances offline auditing, constructor preparation and crash diagnostics.**
+The audit now prints the full distinct missing required ABI-key list when run
+with a verified manifest, preserves import-entry counts separately, and labels
+only directly adjacent AArch64 `MOVZ x8/w8` + `svc #0` sequences as tentative
+futex/getpid/gettid syscall hints. CI tests these rules with synthetic ELF
+fixtures; the proprietary Roblox binary is never added to GitHub.
+A new synthetic-only constructor controller verifies a once-only order with
+required before/after journal callbacks. It is **not** wired to call the 2,505
+guest constructors. A best-effort libnx exception handler records PC, x8,
+ESR and FAR when Horizon delivers an exception to userland; dynamically mapped
+code may instead be handled by the kernel, so missing logs prove nothing.
+**The real Roblox engine has not executed, and this is not playable v1.0.**
+See [milestone and syscall limitations](docs/playability-milestones.md).
 
 **v0.99.2 makes the required `fchown` symbol linkable without falsely
 claiming filesystem ownership support.** Desktop POSIX builds forward to real
