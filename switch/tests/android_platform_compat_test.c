@@ -62,7 +62,7 @@ static int exit_marker_fd = -1;
 static void unexpected_exit_handler(void)
 {
     const char marker = 'x';
-    (void)write(exit_marker_fd, &marker, 1);
+    if (write(exit_marker_fd, &marker, 1) != 1) _Exit(98);
 }
 
 static void test_error_strings_and_immediate_exit(void)

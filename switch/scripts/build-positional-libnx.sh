@@ -4,13 +4,13 @@ set -euo pipefail
 output=${1:?Usage: build-positional-libnx.sh OUTPUT_DIRECTORY}
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source_dir="$output/source"
-revision=29f6f4fa7a1a884adce5f7115b66e97baa6661d0
+revision=7644c9b26099aa2d2145bc72a21ee24190e92085
 if command -v dkp-pacman >/dev/null; then package_manager=dkp-pacman
 else package_manager=pacman; fi
 installed=$($package_manager -Q libnx)
 case "$installed" in
-    'libnx 4.9.0-'*) ;;
-    *) echo "Unsupported libnx package: $installed; require audited 4.9.0 source" >&2; exit 1 ;;
+    'libnx 4.12.0-'*) ;;
+    *) echo "Unsupported libnx package: $installed; require audited 4.12.0 source" >&2; exit 1 ;;
 esac
 mkdir -p "$output/lib" "$source_dir"
 git -C "$source_dir" init -q
