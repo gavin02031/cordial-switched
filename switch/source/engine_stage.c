@@ -46,6 +46,11 @@ enum {
     R_AARCH64_TLS_DTPREL = 1029,
     R_AARCH64_TLS_TPREL = 1030,
     R_AARCH64_TLSDESC = 1031,
+    SHN_UNDEF = 0,
+    SHN_LORESERVE = 0xff00,
+    SHN_ABS = 0xfff1,
+    STT_TLS = 6,
+    STT_GNU_IFUNC = 10,
     PAGE_SIZE = 4096,
     APS2_GROUPED_BY_INFO = 1,
     APS2_GROUPED_BY_OFFSET = 2,
@@ -277,7 +282,7 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
                            ? "Android TLS relocation requires Bionic DTV/TLS runtime."
                            : "Relocation needs the full Android linker.");
     }
-    if (!resolver)
+    if (!resolver && (!symtab_address || sym_entry_size != 24))
         return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
                            "External-symbol relocation needs a symbol resolver.");
     if (!sym_index || sym_entry_size != 24 || !symtab_address || !strtab_address ||
@@ -290,9 +295,45 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
                                        24, true);
     const unsigned char *strings = load_at(stage, segments, count,
                                            strtab_address, (size_t)strtab_size, true);
-    if (!sym || !strings || u16le(sym + 6) != 0)
+    if (!sym || !strings)
+        return abort_stage(stage, ENGINE_STAGE_INVALID,
+                           "Dynamic symbol is outside file-backed PT_LOAD.");
+
+    const uint16_t section = u16le(sym + 6);
+    const uint64_t symbol_value = u64le(sym + 8);
+    const uint8_t symbol_type = sym[4] & 0x0f;
+    if (symbol_type == STT_TLS)
         return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
-                           "Non-imported or invalid dynamic symbol.");
+                           "Android TLS symbol needs Bionic thread-pointer setup.");
+    if (symbol_type == STT_GNU_IFUNC)
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                           "GNU indirect function needs an ELF resolver call.");
+    if (section != SHN_UNDEF) {
+        // Android ELF exports can be *defined inside the same image*. They
+        // resolve to the final executable reservation's load bias, not via
+        // the external Bionic symbol provider. The older implementation
+        // incorrectly rejected these and truncated the entire NX import
+        // audit at the first local/defined symbol.
+        uint64_t relocated = 0;
+        if (section == SHN_ABS) {
+            // SHN_ABS encodes a constant rather than an image-relative VA.
+            relocated = symbol_value;
+        } else if (section >= SHN_LORESERVE ||
+                   !load_at(stage, segments, count, symbol_value, 1, false) ||
+                   symbol_value > UINT64_MAX - load_bias) {
+            return abort_stage(stage, ENGINE_STAGE_INVALID,
+                               "Defined ELF symbol outside mapped PT_LOAD.");
+        } else {
+            relocated = load_bias + symbol_value;
+        }
+        write64(target, relocated + addend);
+        stage->symbol_applied++;
+        if (packed) stage->packed_applied++;
+        return true;
+    }
+    if (!resolver)
+        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION,
+                           "External-symbol relocation needs a symbol resolver.");
 
     const uint32_t name_offset = u32le(sym);
     if (name_offset == 0 || name_offset >= strtab_size ||

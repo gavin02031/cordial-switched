@@ -54,6 +54,10 @@ int main(void)
     size_t (*android_strlen)(const char *) =
         (size_t (*)(const char *))(uintptr_t)address;
     assert(android_strlen("Switch") == 6);
+    assert(android_libc_compat_resolve("ldexp", "LIBC", "libc.so", &address));
+    double (*android_ldexp)(double, int) = (double (*)(double, int))(uintptr_t)address;
+    assert(android_ldexp(1.5, 3) == 12.0);
+    assert(!android_libc_compat_resolve("ldexp", "LIBC", "libm.so", &address));
     assert(android_libc_compat_resolve("clock_gettime", "LIBC", "libc.so", &address));
     int (*android_clock_gettime)(int, struct timespec *) =
         (int (*)(int, struct timespec *))(uintptr_t)address;

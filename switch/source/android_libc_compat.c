@@ -2,6 +2,7 @@
 #include "android_libc_compat.h"
 
 #include <errno.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,6 +74,7 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(srand)
     MAP_LIBC(qsort)
     MAP_LIBC(bsearch)
+    MAP_LIBC(ldexp)
     if (strcmp(name, "clock_gettime") == 0)
         *address = (uint64_t)(uintptr_t)&android_clock_gettime;
 #undef MAP_LIBC

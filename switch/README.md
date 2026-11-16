@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.80 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.81 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.80 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.81 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -94,6 +94,27 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+**v0.81 addresses two observed v0.80 linker blockers** from a real Switch
+`link-17.txt` (L3 export/link diagnostic). The strict and NX-audit linker
+now relocates defined, already-loaded ARM64 dynamic symbols against the
+actual future code reservation instead of reporting every defined reference
+as `Non-imported or invalid dynamic symbol`. A mapped PT_LOAD target is
+required; malformed sections, TLS variables and GNU IFUNCs still stop safely.
+This lets the read-only audit inspect imports beyond the previous early stop.
+It also adds an Android NDK image-reader provider for the exact
+`AImageReader_delete` family missing from the log. Following Cordial's
+desktop implementation, `AImageReader_newWithUsage` returns the genuine
+`AMEDIA_ERROR_UNSUPPORTED` error and a null reader; accessors refuse invalid
+objects rather than claiming a functioning video-decoder or fake buffers.
+The `ldexp` and `round` math symbols are connected to compatible C functions
+with their observed provider/version requirements. Host tests cover internal
+RELA/PLT/absolute-symbol binding, invalid ELF metadata, image-reader error
+contracts and math ABIs. **INFERRED:** this moves the failure boundary
+forward; there are more unresolved imports and 2,505 ELF constructors in
+that user-supplied library. Full Android dynamic initialization, gameplay,
+login and the first real Roblox frame are not yet demonstrated on Switch.
+Send the next `link-XX.txt` after Loader L3 to see the new first blocker.
+
 **v0.80 adds the nine real Android ActivityNativeMain lifecycle native calls**
 to the experimental App Bridge startup path (after a successful JNI_OnLoad).
 It discovers the *actual executable exports* in the local ARM64 `libroblox.so`:

@@ -55,6 +55,7 @@ jobs:
             switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
             switch/source/android_log_compat.c switch/source/android_math_compat.c \
             switch/source/android_media_format_compat.c switch/source/android_media_codec_compat.c \
+            switch/source/android_image_reader_compat.c \
             switch/source/android_cxa_compat.c switch/source/android_looper_compat.c \
             switch/source/android_native_window_compat.c \
             switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
@@ -150,13 +151,20 @@ jobs:
             switch/source/android_media_codec_compat.c \
             -o /tmp/cordial-android-media-codec-test
           /tmp/cordial-android-media-codec-test
+      - name: Test fail-closed Android NDK image reader and hardware buffers
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_image_reader_compat_test.c \
+            switch/source/android_image_reader_compat.c \
+            -o /tmp/morrow-image-reader-test
+          /tmp/morrow-image-reader-test
       - name: Test Android Bionic libc and stdio adapters
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/android_platform_compat_test.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_fortify_compat.c \
-            -o /tmp/cordial-android-platform-test
+            -lm -o /tmp/cordial-android-platform-test
           /tmp/cordial-android-platform-test
       - name: Test Android Bionic pthread object translation
         run: |

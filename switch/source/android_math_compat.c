@@ -23,6 +23,8 @@ bool android_math_compat_resolve(const char *name, const char *version,
     MAP_MATH(nextafterf)
     MAP_MATH(nan)
     MAP_MATH(ldexpf)
+    MAP_MATH(ldexp)
+    MAP_MATH(round)
     MAP_MATH(frexp)
     MAP_MATH(modf)
     MAP_MATH(atan)

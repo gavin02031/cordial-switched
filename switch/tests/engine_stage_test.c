@@ -613,6 +613,63 @@ int main(void)
     assert(get64(stage.image + 0x340) == address + 8);
     engine_stage_release(&stage);
 
+    // A defined dynamic symbol lives inside the loaded ELF, not in an
+    // external Android provider. It must be relocated against the final
+    // reservation even if no Bionic symbol resolver is installed.
+    const uint32_t internal_kinds[] = {257, 1025, 1026};
+    for (unsigned i = 0; i < sizeof(internal_kinds) / sizeof(internal_kinds[0]); i++) {
+        symbol_fixture(bytes, internal_kinds[i], internal_kinds[i] == 1026);
+        put16(bytes + 0x2d8 + 6, 1); // ELF section #1: defined in this image.
+        put64(bytes + 0x2d8 + 8, 0x1380); // st_value is an image virtual address.
+        // PLT parsing still requires a resolver at stream level, even when
+        // this particular exported symbol is resolved internally.
+        EngineSymbolResolver optional = internal_kinds[i] == 1026 ? fake_resolver : NULL;
+        assert(stage_fixture_at(bytes, &stage, future_base, optional, NULL));
+        assert(stage.symbol_applied == 1);
+        assert(get64(stage.image + 0x340) == future_base + 0x380 + 8);
+        engine_stage_release(&stage);
+        assert(audit_fixture_at(bytes, &stage, future_base, optional, NULL));
+        assert(get64(stage.image + 0x340) == future_base + 0x380 + 8);
+        engine_stage_release(&stage);
+    }
+
+    // Absolute defined symbols are numeric constants, never biased by the
+    // code reservation; a negative addend has the usual unsigned ELF math.
+    symbol_fixture(bytes, 257, false);
+    put16(bytes + 0x2d8 + 6, 0xfff1); // SHN_ABS
+    put64(bytes + 0x2d8 + 8, 0x4000);
+    put64(bytes + 0x250, (uint64_t)-8);
+    assert(stage_fixture_at(bytes, &stage, future_base, NULL, NULL));
+    assert(get64(stage.image + 0x340) == 0x3ff8);
+    engine_stage_release(&stage);
+
+    // A malformed defined st_value must not be mistaken for a callable
+    // import or silently bound into the gaps around PT_LOAD segments.
+    symbol_fixture(bytes, 1025, false);
+    put16(bytes + 0x2d8 + 6, 1);
+    put64(bytes + 0x2d8 + 8, 0x1900);
+    assert(!stage_fixture_at(bytes, &stage, future_base, fake_resolver, (void *)&address));
+    assert(stage.status == ENGINE_STAGE_INVALID &&
+           strstr(stage.detail, "outside mapped PT_LOAD"));
+
+    // Reserved section indices and TLS data require different linker rules.
+    symbol_fixture(bytes, 1025, false);
+    put16(bytes + 0x2d8 + 6, 0xfff2); // SHN_COMMON, not a loaded definition.
+    assert(!stage_fixture_at(bytes, &stage, future_base, NULL, NULL));
+    assert(stage.status == ENGINE_STAGE_INVALID);
+    symbol_fixture(bytes, 1025, false);
+    put16(bytes + 0x2d8 + 6, 1);
+    bytes[0x2dc] = 0x16; // STT_TLS even though section is defined.
+    assert(!stage_fixture_at(bytes, &stage, future_base, NULL, NULL));
+    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION &&
+           strstr(stage.detail, "Bionic thread-pointer"));
+    symbol_fixture(bytes, 1025, false);
+    put16(bytes + 0x2d8 + 6, 1);
+    bytes[0x2dc] = 0x1a; // STT_GNU_IFUNC requires calling its resolver.
+    assert(!stage_fixture_at(bytes, &stage, future_base, NULL, NULL));
+    assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION &&
+           strstr(stage.detail, "indirect function"));
+
     symbol_fixture(bytes, 1025, false);
     assert(!stage_fixture(bytes, sizeof(bytes), &stage));
     assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
@@ -745,6 +802,19 @@ int main(void)
     assert(looper_boot.stage_status == ENGINE_STAGE_PREPARED);
     assert(strstr(looper_trace, "supported_imports=1"));
     assert(strstr(looper_trace, "engine_executed=no"));
+
+    // The actual first missing v0.80 import in link-17.txt is a video-reader
+    // teardown symbol. Cordial's NDK bridge resolves it, while its reader
+    // constructor explicitly refuses unsupported video decoding.
+    symbol_fixture(bytes, 1025, false);
+    memset(bytes + 0x301, 0, 24);
+    memcpy(bytes + 0x301, "AImageReader_delete", sizeof("AImageReader_delete"));
+    EngineBootReport reader_boot;
+    char reader_trace[4096];
+    boot_fixture(bytes, sizeof(bytes), &reader_boot, reader_trace, sizeof(reader_trace));
+    assert(reader_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(reader_trace, "supported_imports=1"));
+    assert(strstr(reader_trace, "engine_executed=no"));
 
     // Bionic libdl exposes dlopen with version LIBC from libdl.so, not from
     // libc.so. Verify both the version and provider in the real import scan.

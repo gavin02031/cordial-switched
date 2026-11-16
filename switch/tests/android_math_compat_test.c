@@ -17,6 +17,13 @@ int main(void)
     double (*power)(double, double) = (double (*)(double, double))(uintptr_t)address;
     assert(power(2.0, 3.0) == 8.0);
 
+    assert(android_math_compat_resolve("ldexp", "LIBC", "libm.so", &address));
+    double (*scale)(double, int) = (double (*)(double, int))(uintptr_t)address;
+    assert(scale(1.5, 3) == 12.0);
+    assert(android_math_compat_resolve("round", "LIBC", "libm.so", &address));
+    double (*nearest)(double) = (double (*)(double))(uintptr_t)address;
+    assert(nearest(-1.5) == -2.0);
+
     // Reject wrong version, wrong provider and non-ABI-compatible symbols.
     assert(!android_math_compat_resolve("sinf", "LIBM", "libm.so", &address));
     assert(!android_math_compat_resolve("sinf", "LIBC", "libc.so", &address));
