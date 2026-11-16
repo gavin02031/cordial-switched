@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <stdlib.h>
 #include <unistd.h>
 
 #include "android_socket_compat.h"
@@ -270,8 +272,78 @@ static void ip_text_test(void)
     assert(parse(2, "invalid", raw) == 0);
 }
 
+static void reverse_name_test(void)
+{
+    int (*lookup)(const void *, uint32_t, char *, size_t, char *, size_t, int) =
+        (void *)(uintptr_t)symbol("getnameinfo");
+    unsigned char address[28];
+    guest_loopback(address);
+    address[3] = 80;
+    char host[64], service[16];
+    assert(lookup(address, 16, host, sizeof(host), service, sizeof(service), 2 | 8) == 0);
+    assert(!strcmp(host, "127.0.0.1") && !strcmp(service, "80"));
+    memset(address, 0, sizeof(address));
+    address[0] = 10; address[23] = 1; address[3] = 80;
+    assert(lookup(address, 28, host, sizeof(host), service, sizeof(service), 2 | 8) == 0);
+    assert(!strcmp(host, "::1") && !strcmp(service, "80"));
+    assert(lookup(address, 28, host, 1, service, sizeof(service), 2 | 8) == 14);
+    assert(lookup(address, 28, host, SIZE_MAX, NULL, 0, 2) == 14);
+    assert(lookup(address, 28, host, sizeof(host), NULL, 0, 0x10000) == 3);
+    assert(lookup(address, 1, host, sizeof(host), NULL, 0, 2) == 5);
+}
+
+static void readiness_test(void)
+{
+    typedef struct { int32_t fd; int16_t events, revents; } GuestPoll;
+    int (*wait_poll)(GuestPoll *, uint32_t, int) = (void *)(uintptr_t)symbol("poll");
+    int (*wait_select)(int, void *, void *, void *, int64_t *) = (void *)(uintptr_t)symbol("select");
+    int sockets[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    GuestPoll descriptors[40];
+    for (int i = 0; i < 40; ++i) descriptors[i] = (GuestPoll){-1, 1, 123};
+    descriptors[0].fd = sockets[0];
+    assert(wait_poll(descriptors, 40, 0) == 0);
+    for (int i = 0; i < 40; ++i) assert(descriptors[i].revents == 0);
+    assert(write(sockets[1], "x", 1) == 1);
+    assert(wait_poll(descriptors, 40, 100) == 1);
+    assert(descriptors[0].revents == 1);
+    assert(descriptors[0].fd == sockets[0] && descriptors[0].events == 1);
+    uint64_t set[17] = {0};
+    set[sockets[0] / 64] = UINT64_C(1) << (sockets[0] % 64);
+    set[16] = 0x12345678;
+    int64_t timeout[2] = {0, 0};
+    assert(wait_select(sockets[0] + 1, set, NULL, NULL, timeout) == 1);
+    assert(set[sockets[0] / 64] & (UINT64_C(1) << (sockets[0] % 64)));
+    assert(set[16] == 0x12345678);
+    char byte;
+    assert(read(sockets[0], &byte, 1) == 1 && byte == 'x');
+    assert(wait_select(sockets[0] + 1, set, NULL, NULL, timeout) == 0);
+    assert(set[0] == 0);
+    close(sockets[1]);
+    assert(wait_poll(descriptors, 1, 0) == 1);
+    assert(descriptors[0].revents & (1 | 0x10));
+    GuestPoll unsupported = {sockets[0], 0x4000, 77};
+    assert(wait_poll(&unsupported, 1, 0) == -1 && errno == ENOTSUP);
+    assert(unsupported.revents == 77);
+    unsupported.fd = -1;
+    assert(wait_poll(&unsupported, 1, 0) == 0 && unsupported.revents == 0);
+    close(sockets[0]);
+    assert(wait_poll(descriptors, 1, 0) == 1 && (descriptors[0].revents & 0x20));
+    assert(wait_poll(NULL, 1, 0) == -1 && errno == EFAULT);
+    assert(wait_poll(NULL, UINT32_MAX, 0) == -1 && errno == EINVAL);
+    assert(wait_poll(NULL, 0, 0) == 0);
+    timeout[1] = 1000000;
+    assert(wait_select(0, NULL, NULL, NULL, timeout) == -1 && errno == EINVAL);
+    assert(wait_select(1025, NULL, NULL, NULL, NULL) == -1 && errno == EINVAL);
+    uint64_t address;
+    assert(!android_socket_compat_resolve("poll", "LIBC_N", "libc.so", &address));
+    assert(!android_socket_compat_resolve("select", "LIBC", "libdl.so", &address));
+}
+
 int main(void)
 {
+    reverse_name_test();
+    readiness_test();
     negative_tests();
     tcp_test();
     udp_test();

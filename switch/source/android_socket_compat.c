@@ -4,6 +4,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
+#include <poll.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -401,6 +403,35 @@ static int guest_eai(int native)
     return 4;
 }
 
+// Bionic declares size_t lengths here, unlike POSIX's socklen_t. Reject
+// truncation before calling the native resolver with a smaller capacity.
+static int guest_getnameinfo(const void *address, uint32_t length,
+                              char *host, size_t host_size,
+                              char *service, size_t service_size, int flags)
+{
+    int native_flags = 0;
+#define NI_MAP(g, n) if (flags & (g)) { native_flags |= (n); flags &= ~(g); }
+    NI_MAP(1, NI_NOFQDN)
+    NI_MAP(2, NI_NUMERICHOST)
+    NI_MAP(4, NI_NAMEREQD)
+    NI_MAP(8, NI_NUMERICSERV)
+    NI_MAP(16, NI_DGRAM)
+#undef NI_MAP
+    if (flags) return 3;
+    if ((size_t)(socklen_t)host_size != host_size ||
+        (size_t)(socklen_t)service_size != service_size) return 14;
+    if ((!host && host_size) || (!service && service_size)) {
+        errno = EFAULT; return 11;
+    }
+    struct sockaddr_storage native;
+    socklen_t native_length;
+    if (!to_native(address, length, &native, &native_length)) return 5;
+    if (!ready()) return 11;
+    return guest_eai(getnameinfo((const struct sockaddr *)&native, native_length,
+                                host, (socklen_t)host_size,
+                                service, (socklen_t)service_size, native_flags));
+}
+
 static bool native_socktype(int guest, int *native)
 {
     switch (guest) {
@@ -563,6 +594,146 @@ static const char *guest_gai_strerror(int error)
         ? messages[error] : "Unknown address resolution error";
 }
 
+// Bionic poll.h uses a 32-bit count and Linux event bits. Translate even
+// where today's host happens to use the same numbers (libnx uses BSD).
+typedef struct { int32_t fd; int16_t events, revents; } GuestPollFd;
+_Static_assert(sizeof(GuestPollFd) == 8, "Bionic pollfd stride");
+
+static bool poll_to_native(short events, short *native)
+{
+    short out = 0;
+    unsigned accepted = 0x038;
+#define EVENT(g, n) accepted |= (g); if (events & (g)) out |= (n);
+    EVENT(0x001, POLLIN)
+    EVENT(0x002, POLLPRI)
+    EVENT(0x004, POLLOUT)
+#ifdef POLLRDNORM
+    EVENT(0x040, POLLRDNORM)
+#endif
+#ifdef POLLRDBAND
+    EVENT(0x080, POLLRDBAND)
+#endif
+#ifdef POLLWRNORM
+    EVENT(0x100, POLLWRNORM)
+#endif
+#ifdef POLLWRBAND
+    EVENT(0x200, POLLWRBAND)
+#endif
+#undef EVENT
+    if ((unsigned short)events & ~accepted) { errno = ENOTSUP; return false; }
+    *native = out;
+    return true;
+}
+
+static short poll_to_guest(short events)
+{
+    short out = 0;
+#define EVENT(g, n) if (events & (n)) out |= (g);
+    EVENT(0x001, POLLIN)
+    EVENT(0x002, POLLPRI)
+    EVENT(0x004, POLLOUT)
+    EVENT(0x008, POLLERR)
+    EVENT(0x010, POLLHUP)
+    EVENT(0x020, POLLNVAL)
+#ifdef POLLRDNORM
+    EVENT(0x040, POLLRDNORM)
+#endif
+#ifdef POLLRDBAND
+    EVENT(0x080, POLLRDBAND)
+#endif
+#ifdef POLLWRNORM
+    EVENT(0x100, POLLWRNORM)
+#endif
+#ifdef POLLWRBAND
+    EVENT(0x200, POLLWRBAND)
+#endif
+#undef EVENT
+    return out;
+}
+
+static int guest_poll(GuestPollFd *fds, uint32_t count, int timeout)
+{
+    // Bound temporary allocations before examining guest memory.
+    if (count > 65536) { errno = EINVAL; return -1; }
+    if (count && !fds) { errno = EFAULT; return -1; }
+    struct pollfd local[32];
+    struct pollfd *native = count <= 32 ? local : calloc(count, sizeof(*native));
+    if (!native) { errno = ENOMEM; return -1; }
+    for (uint32_t i = 0; i < count; ++i) {
+        native[i].fd = fds[i].fd;
+        native[i].events = 0;
+        if (fds[i].fd >= 0 && !poll_to_native(fds[i].events, &native[i].events)) {
+            if (native != local) free(native);
+            return -1;
+        }
+        native[i].revents = 0;
+    }
+    int result = ready() ? poll(native, count, timeout) : -1;
+    int saved = errno;
+    if (result >= 0) {
+        for (uint32_t i = 0; i < count; ++i) {
+            // BSD may alias normal-write to POLLOUT. Do not report readiness
+            // bits the guest did not request, apart from ERR/HUP/NVAL.
+            fds[i].revents = poll_to_guest(native[i].revents) &
+                (fds[i].events | 0x038);
+        }
+    }
+    if (native != local) free(native);
+    errno = saved;
+    return result;
+}
+
+// Bionic LP64 fd_set is 16 uint64_t words; native FD_SETSIZE and mask word
+// width need not match it. Never pass guest sets directly into libc.
+static bool set_contains(const void *set, int fd)
+{
+    uint64_t word;
+    memcpy(&word, (const unsigned char *)set + (fd / 64) * 8, 8);
+    return (word & (UINT64_C(1) << (fd % 64))) != 0;
+}
+
+static int guest_select(int count, void *reads, void *writes, void *exceptions,
+                         int64_t *timeout)
+{
+    if (count < 0 || count > 1024 || count > FD_SETSIZE) {
+        errno = EINVAL; return -1;
+    }
+    struct timeval native_time, *time_pointer = NULL;
+    if (timeout) {
+        if (timeout[0] < 0 || timeout[1] < 0 || timeout[1] >= 1000000) {
+            errno = EINVAL; return -1;
+        }
+        native_time.tv_sec = timeout[0];
+        native_time.tv_usec = timeout[1];
+        if ((int64_t)native_time.tv_sec != timeout[0]) { errno = EOVERFLOW; return -1; }
+        time_pointer = &native_time;
+    }
+    void *guest[3] = {reads, writes, exceptions};
+    fd_set native[3];
+    for (int n = 0; n < 3; ++n) {
+        FD_ZERO(&native[n]);
+        if (guest[n]) for (int fd = 0; fd < count; ++fd)
+            if (set_contains(guest[n], fd)) FD_SET(fd, &native[n]);
+    }
+    if (!ready()) return -1;
+    int result = select(count, reads ? &native[0] : NULL,
+                         writes ? &native[1] : NULL,
+                         exceptions ? &native[2] : NULL, time_pointer);
+    if (result >= 0) {
+        for (int n = 0; n < 3; ++n) if (guest[n]) {
+            uint64_t output[16] = {0};
+            for (int fd = 0; fd < count; ++fd)
+                if (FD_ISSET(fd, &native[n])) output[fd / 64] |= UINT64_C(1) << (fd % 64);
+            memcpy(guest[n], output, ((size_t)count + 63) / 64 * 8);
+        }
+        if (timeout) {
+            timeout[0] = native_time.tv_sec;
+            timeout[1] = native_time.tv_usec;
+        }
+    }
+    return result;
+}
+
 bool android_socket_compat_resolve(const char *name, const char *version,
                                    const char *library, uint64_t *address)
 {
@@ -571,6 +742,9 @@ bool android_socket_compat_resolve(const char *name, const char *version,
         return false;
     *address = 0;
 #define MAP(symbol, target) if (!strcmp(name, symbol)) *address = (uint64_t)(uintptr_t)&target; else
+    MAP("getnameinfo", guest_getnameinfo)
+    MAP("poll", guest_poll)
+    MAP("select", guest_select)
     MAP("socket", guest_socket)
     MAP("connect", guest_connect)
     MAP("bind", guest_bind)
