@@ -62,13 +62,42 @@ int main(void)
     assert_contains(output, "phase=app_bridge_pump_tick_121");
     assert_contains(output, "link_report=link-05.txt");
 
-    char first[192], second[192], third[192];
+    // An actual guest return only completes the journal after the report
+    // containing that return has reached durable storage.
+    FILE *report = tmpfile();
+    assert(report);
+    assert(engine_run_journal_begin(folder, "jni_onload_returned", "link-06.txt"));
+    assert(fputs("engine_jni_onload_return=0x00010006\n", report) >= 0);
+    assert(engine_run_journal_finish_report(folder, report));
+    assert(!engine_run_journal_recover(folder, output, sizeof(output)));
+    assert(fclose(report) == 0);
+
+    // A pipe accepts the report text but cannot be fsynced. Losing the
+    // marker here would hide the interrupted persistence step entirely.
+    int ends[2];
+    assert(pipe(ends) == 0);
+    FILE *unsyncable = fdopen(ends[1], "w");
+    assert(unsyncable);
+    assert(engine_run_journal_begin(folder, "app_bridge_5_returned", "link-07.txt"));
+    assert(fputs("app_bridge_step_5_returned=yes\n", unsyncable) >= 0);
+    assert(!engine_run_journal_finish_report(folder, unsyncable));
+    assert(!engine_run_journal_begin(folder, "must_not_replace", "link-08.txt"));
+    assert(fclose(unsyncable) == 0);
+    assert(close(ends[0]) == 0);
+    assert(engine_run_journal_recover(folder, output, sizeof(output)));
+    assert(strstr(output, "crash-04.txt"));
+    assert_contains(output, "phase=app_bridge_5_returned");
+    assert_contains(output, "link_report=link-07.txt");
+
+    char first[192], second[192], third[192], fourth[192];
     snprintf(first, sizeof(first), "%s/crash-01.txt", folder);
     snprintf(second, sizeof(second), "%s/crash-02.txt", folder);
     snprintf(third, sizeof(third), "%s/crash-03.txt", folder);
+    snprintf(fourth, sizeof(fourth), "%s/crash-04.txt", folder);
     assert(unlink(first) == 0);
     assert(unlink(second) == 0);
     assert(unlink(third) == 0);
+    assert(unlink(fourth) == 0);
     assert(rmdir(folder) == 0);
     puts("engine crash journal passed");
     return 0;

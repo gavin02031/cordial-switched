@@ -55,6 +55,14 @@ bool engine_run_journal_finish(const char *directory)
     return unlink(path) == 0;
 }
 
+bool engine_run_journal_finish_report(const char *directory, FILE *report)
+{
+    if (!report || ferror(report)) return false;
+    if (fflush(report) != 0 || fsync(fileno(report)) != 0)
+        return false;
+    return engine_run_journal_finish(directory);
+}
+
 bool engine_run_journal_recover(const char *directory, char *saved_path,
                                 size_t saved_path_capacity)
 {

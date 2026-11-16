@@ -118,13 +118,10 @@ bool horizon_real_link_pump_exclusive(FILE *trace, const char *report_path,
              callback.java_exception_pending ? "yes" : "no");
     log_line(trace, "pump_tick_%03u_cpp_exception=%s", call_number,
              callback.cpp_exception_caught ? "yes" : "no");
-    if (fflush(trace) != 0 || fsync(fileno(trace)) != 0) {
-        log_line(trace, "pump_blocker=guest_return_not_durable");
-        return false;
-    }
-    const bool marker_cleared = engine_run_journal_finish(ENGINE_REPORT_DIR);
+    const bool marker_cleared = engine_run_journal_finish_report(
+        ENGINE_REPORT_DIR, trace);
     if (!marker_cleared) {
-        log_line(trace, "pump_blocker=crash_marker_not_cleared");
+        log_line(trace, "pump_blocker=return_report_or_crash_marker_not_durable");
         return false;
     }
     if (!returned || !callback.entry_invoked || !callback.entry_returned ||
@@ -412,7 +409,6 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         const bool returned = morrow_jni_runtime_call_app_bridge(
             live_main_thread_message_target,
             MORROW_APP_BRIDGE_MAIN_THREAD_MESSAGES, &callback);
-        const bool marker_cleared = engine_run_journal_finish(ENGINE_REPORT_DIR);
         log_line(log, "main_thread_message_invoked=%s",
                  callback.entry_invoked ? "yes" : "no");
         log_line(log, "main_thread_message_returned=%s",
@@ -421,6 +417,8 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                  callback.java_exception_pending ? "yes" : "no");
         log_line(log, "main_thread_message_cpp_exception=%s",
                  callback.cpp_exception_caught ? "yes" : "no");
+        const bool marker_cleared = engine_run_journal_finish_report(
+            ENGINE_REPORT_DIR, log);
         log_line(log, "main_thread_message_crash_marker_cleared=%s",
                  marker_cleared ? "yes" : "no");
         log_line(log, "roblox_login_verified=no");
@@ -500,7 +498,6 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             MorrowAppBridgeCallResult call = {0};
             const bool returned = morrow_jni_runtime_call_app_bridge(
                 live_app_bridge_targets[i], (MorrowAppBridgeStep)i, &call);
-            const bool marker_cleared = engine_run_journal_finish(ENGINE_REPORT_DIR);
             log_line(log, "app_bridge_step_%u_invoked=%s", i + 1,
                      call.entry_invoked ? "yes" : "no");
             log_line(log, "app_bridge_step_%u_returned=%s", i + 1,
@@ -509,6 +506,8 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                      call.java_exception_pending ? "yes" : "no");
             log_line(log, "app_bridge_step_%u_cpp_exception=%s", i + 1,
                      call.cpp_exception_caught ? "yes" : "no");
+            const bool marker_cleared = engine_run_journal_finish_report(
+                ENGINE_REPORT_DIR, log);
             if (!marker_cleared || !returned || call.java_exception_pending) {
                 log_line(log, "blocker=app_bridge_step_failed");
                 detail(result, "App Bridge stopped; read last completed step.");
@@ -579,8 +578,6 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         detail(result, "GameActivity attempted. Inspect link report; restart to retry.");
         returned = morrow_jni_runtime_call_game_activity(
             live_game_activity_target, ENGINE_REPORT_DIR, &init);
-        log_line(log, "game_activity_crash_marker_cleared=%s",
-                 engine_run_journal_finish(ENGINE_REPORT_DIR) ? "yes" : "no");
         game_activity_entry_called = init.entry_invoked;
         log_line(log, "game_activity_initializer_returned=%s",
                  returned && init.entry_returned ? "yes" : "no");
@@ -589,6 +586,14 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         if (returned)
             log_line(log, "game_activity_native_handle=0x%llx",
                      (unsigned long long)init.native_handle);
+        const bool marker_cleared = engine_run_journal_finish_report(
+            ENGINE_REPORT_DIR, log);
+        log_line(log, "game_activity_crash_marker_cleared=%s",
+                 marker_cleared ? "yes" : "no");
+        if (!marker_cleared) {
+            detail(result, "GameActivity returned but its report was not durable.");
+            log_line(log, "blocker=game_activity_return_report_not_durable");
+        }
         log_line(log, "engine_gameplay_started=no");
 #else
         detail(result, "JNI-enabled Morrow artifact required for GameActivity.");
@@ -984,6 +989,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                         log_line(log, "engine_mapped_executable=yes");
                         int32_t version = 0;
                         bool onload_called = false;
+                        bool onload_reported = false;
                         if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
                                                       "jni_onload", result->log_path)) {
                             log_line(log, "blocker=crash_journal_not_durable");
@@ -999,17 +1005,22 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 engine_entry_started = true;
                                 onload_called = true;
                                 version = engine_execution_call_jni_onload(candidate.target, vm);
+                                log_line(log, "event=real_engine_jni_onload_returned");
+                                log_line(log, "engine_jni_onload_return=0x%08X", (unsigned)version);
+                                onload_reported = engine_run_journal_finish_report(
+                                    ENGINE_REPORT_DIR, log);
                                 log_line(log, "jni_onload_crash_marker_cleared=%s",
-                                         engine_run_journal_finish(ENGINE_REPORT_DIR) ? "yes" : "no");
+                                         onload_reported ? "yes" : "no");
+                                if (!onload_reported) {
+                                    detail(result, "JNI_OnLoad returned but its report was not durable.");
+                                    log_line(log, "blocker=jni_onload_return_report_not_durable");
+                                }
                             }
-                        }
-                        if (onload_called) {
-                            log_line(log, "event=real_engine_jni_onload_returned");
-                            log_line(log, "engine_jni_onload_return=0x%08X", (unsigned)version);
                         }
                         log_line(log, "experimental_jni_onload_called=%s",
                                  onload_called ? "yes" : "no");
-                        engine_jni_onload_succeeded = onload_called && version == 0x00010006;
+                        engine_jni_onload_succeeded = onload_called &&
+                            onload_reported && version == 0x00010006;
                         log_line(log, "engine_jni_onload_accepted=%s",
                                  engine_jni_onload_succeeded ? "yes" : "no");
                         if (engine_jni_onload_succeeded &&

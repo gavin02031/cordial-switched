@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.77 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.78 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.77 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.78 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -165,6 +165,14 @@ been written durably; an unclean exit leaves a recoverable `crash-XX.txt` on
 the next launch. You can leave the exclusive display with **PLUS**. This is
 **not a working Android event loop**, verified Roblox login, or playable
 experience. No real guest frame has been verified on Switch hardware.
+
+**v0.78 makes native crash breadcrumbs more reliable.** JNI_OnLoad,
+GameActivity, each App Bridge entry and each main-thread pump callback now
+write and synchronise their return result **before** clearing the persistent
+entry marker. A failed log flush or sync leaves that marker for next-boot
+recovery; a successful return alone cannot be mistaken for a durable report.
+Host tests cover both a synchronised result and an unsynchronisable report.
+This fixes a diagnostic gap, not Android bootstrap or Roblox login.
 
 Before **any** experimental engine entry (JNI_OnLoad, AGDK GameActivity or
 each of the five App Bridge steps and every v0.76 message-pump callback),
