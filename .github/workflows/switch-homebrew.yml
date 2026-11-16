@@ -63,6 +63,7 @@ jobs:
             switch/source/android_egl_gles_compat.c \
             switch/source/android_dl_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
+            switch/source/android_jump_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
             switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
             switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c \
@@ -175,6 +176,13 @@ jobs:
             switch/source/android_fortify_compat.c \
             -lm -o /tmp/cordial-android-platform-test
           /tmp/cordial-android-platform-test
+      - name: Test Bionic jump-buffer checks (host ABI deliberately refused)
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_jump_compat_test.c \
+            switch/source/android_jump_compat.c -pthread \
+            -o /tmp/morrow-android-jump-test
+          /tmp/morrow-android-jump-test
       - name: Test Android Bionic pthread object translation
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
@@ -241,6 +249,23 @@ jobs:
             switch/source/android_log_compat.c switch/source/engine_loader_fixture.c \
             -o /tmp/cordial-runtime-image-test
           /tmp/cordial-runtime-image-test
+
+  arm64-jump-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 emulator and cross compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu qemu-user
+      - name: Execute real ARM64 setjmp/longjmp and corruption tests
+        run: |
+          aarch64-linux-gnu-gcc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_jump_compat_test.c \
+            switch/source/android_jump_compat.c \
+            switch/source/android_bionic_setjmp.s -pthread \
+            -o /tmp/morrow-arm64-jump-test
+          qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/morrow-arm64-jump-test
 
   build:
     runs-on: ubuntu-latest

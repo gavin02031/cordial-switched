@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.83 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.87 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.83 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+JNI-enabled variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -94,6 +94,47 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.87 introduces a paired ARM64 `setjmp`/`longjmp` provider** for the
+observed `LIBC` imports. The provider saves AArch64 callee-saved core and
+floating-point registers into a 32-word Bionic-sized buffer, and checks a
+checksum, native thread identity, return address and stack alignment before
+restoring them. It does not alias Horizon/newlib's incompatible jump buffer.
+The Android signal-mask variants stay unresolved: Horizon has no equivalent
+Android signal delivery and mask semantics. The ordinary pair also does not
+claim signal-mask preservation. Host tests check refusal on other
+architectures, cross-thread use and buffer corruption; CI additionally runs
+actual ARM64 jumps under QEMU. **INFERRED:** the confirmed v0.86 hardware audit
+of 437/629 supported imports may improve by two; neither a successful strict
+link nor any Roblox code execution has yet been observed for this change.
+
+### Transfer from an iPhone without a PC
+
+With [FTPD](https://github.com/mtheall/ftpd) installed on the modded Switch
+Lite, all subsequent `.nro` updates and diagnostic reports can be transferred
+wirelessly. One-time FTPD installation requires an existing homebrew installer
+or access to the SD card (an iPhone USB-C microSD reader also works).
+
+1. In iPhone Safari, open the [Horizon preview workflow](../.github/workflows/switch-homebrew.yml),
+   select the latest completed successful run and download the
+   `morrow-switch-jni-runtime-preview` artifact for JNI-enabled Loader tests.
+   Extract its ZIP in the iPhone Files app to obtain `cordial-switched.nro`.
+2. Quit Morrow. Connect the iPhone and Switch Lite to the same Wi-Fi, then
+   launch FTPD from the Switch Homebrew Menu. Note the IP address shown.
+3. In an iPhone FTP client such as
+   [FTPManager](https://apps.apple.com/us/app/ftpmanager-ftp-sftp-client/id525959186),
+   connect using **FTP**, the displayed Switch IP, port **5000** and anonymous
+   access if FTPD is using its default settings.
+4. Upload `cordial-switched.nro` to **`/switch/cordial-switched.nro`** on the
+   Switch SD card, replacing only the previous NRO. Do not replace the
+   `/switch/cordial-switched/` data directory or its `libroblox.so` and assets.
+5. Exit FTPD, launch Morrow, open Loader and press **L3**. After testing,
+   reopen FTPD and copy the newest `/switch/cordial-switched/link-XX.txt`
+   back to your iPhone to report the next blocker.
+
+FTPD uses ordinary unencrypted FTP. Run it only on a trusted local Wi-Fi
+network, never expose port 5000 to the internet, and exit the server when done.
+
 **v0.86 adds native POSIX file, clock, DNS-address formatting and checked-I/O
 bridges** for the Bionic imports seen in the v0.85 hardware report. File
 descriptors and paths use actual host calls; bad FORTIFY read/write/readlink

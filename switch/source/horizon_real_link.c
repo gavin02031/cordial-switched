@@ -28,6 +28,7 @@
 #include "android_media_format_compat.h"
 #include "android_math_compat.h"
 #include "android_libc_compat.h"
+#include "android_jump_compat.h"
 #include "android_stdio_compat.h"
 #include "android_fortify_compat.h"
 #include "android_pthread_compat.h"
@@ -248,6 +249,7 @@ static bool resolve_compatible(const char *name, const char *version,
             android_egl_gles_compat_resolve(name, version, library, address) ||
             android_dl_compat_resolve(name, version, library, address) ||
             android_math_compat_resolve(name, version, library, address) ||
+            android_jump_compat_resolve(name, version, library, address) ||
             android_libc_compat_resolve(name, version, library, address) ||
             android_stdio_compat_resolve(name, version, library, address) ||
             android_fortify_compat_resolve(name, version, library, address) ||
