@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.95 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.96 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -94,6 +94,16 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.96 translates Bionic socket creation flags and descriptor commands.**
+`socket` converts Android's `SOCK_NONBLOCK` and `SOCK_CLOEXEC` to native
+Linux or Horizon BSD constants, so the host actually creates the requested
+nonblocking/close-on-exec socket. The `fcntl` import now handles the basic
+descriptor commands (duplicate, get/set close-on-exec, get/set status flags)
+with Android-to-native status-bit translation. Unknown command and flag bits
+fail explicitly. Host tests check both native descriptor state and the Android
+round-trip, including invalid flags. The Switch build has not been confirmed
+on hardware and this does not establish engine execution or gameplay.
 
 **v0.95 adds translated `poll`, `select`, and `getnameinfo` providers.**
 Readiness calls use native descriptor sets and explicit Linux/BSD event-bit

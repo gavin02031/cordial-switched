@@ -28,6 +28,7 @@ int main(void)
 {
     LOAD(open, int, (const char *, int, ...));
     LOAD(__open_2, int, (const char *, int));
+    LOAD(fcntl, int, (int, int, ...));
     LOAD(stat, int, (const char *, AndroidFileStat *));
     LOAD(lstat, int, (const char *, AndroidFileStat *));
     LOAD(fstat, int, (int, AndroidFileStat *));
@@ -80,6 +81,26 @@ int main(void)
     assert(read(fd, bytes, 1) == 1 && bytes[0] == 'Q');
     assert(guest_ftruncate(fd, 3) == 0);
     assert(guest_ftruncate(fd, -1) == -1);
+    // Bionic command numbers 0..4 and O_* bits, not host constants.
+    assert(guest_fcntl(fd, 3) == 2); // F_GETFL: O_RDWR
+    assert(guest_fcntl(fd, 4, 2 | 00002000 | 00004000) == 0);
+    assert(guest_fcntl(fd, 3) == (2 | 00002000 | 00004000));
+    assert((fcntl(fd, F_GETFL) & (O_APPEND | O_NONBLOCK)) ==
+           (O_APPEND | O_NONBLOCK));
+    assert(guest_fcntl(fd, 4, 2) == 0);
+    assert(guest_fcntl(fd, 3) == 2);
+    assert(guest_fcntl(fd, 1) == 0); // F_GETFD
+    assert(guest_fcntl(fd, 2, 1) == 0); // F_SETFD: FD_CLOEXEC
+    assert(guest_fcntl(fd, 1) == 1);
+    assert((fcntl(fd, F_GETFD) & FD_CLOEXEC) == FD_CLOEXEC);
+    int duplicate = guest_fcntl(fd, 0, 0); // F_DUPFD
+    assert(duplicate >= 0 && duplicate != fd);
+    assert(close(duplicate) == 0);
+    assert(guest_fcntl(fd, 2, 2) == -1 && errno == EINVAL);
+    assert(guest_fcntl(fd, 4, 2 | 01000) == -1 && errno == EINVAL);
+    assert(guest_fcntl(fd, 3) == 2); // unsupported F_SETFL changed nothing
+    assert(guest_fcntl(fd, 999) == -1 && errno == EOPNOTSUPP);
+    assert(guest_fcntl(-1, 3) == -1 && errno == EBADF);
     assert(close(fd) == 0);
     // Unsupported flags must be rejected before O_TRUNC changes the file.
     assert(guest_open(path, 1 | 01000 | 010000000) == -1 && errno == EINVAL);
@@ -119,5 +140,5 @@ int main(void)
     assert(waitpid(child, &status, 0) == child);
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
     assert(unlink(link) == 0 && unlink(path) == 0 && rmdir(directory) == 0);
-    puts("android_file_compat_test: layouts, flags, 64-bit offsets, directories and failures passed");
+    puts("android_file_compat_test: layouts, descriptor flags, 64-bit offsets, directories and failures passed");
 }

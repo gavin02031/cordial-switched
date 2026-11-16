@@ -136,6 +136,82 @@ static int file_open_2(const char *path, int flags)
     return file_open(path, flags);
 }
 
+// Bionic's F_GETFL/F_SETFL command numbers match POSIX, but its O_* status
+// bits differ from newlib. Always translate rather than exposing host flags.
+// This deliberately supports the status flags the adapter can represent;
+// locking, leases and Android-specific descriptor commands stay unresolved.
+static int file_fcntl(int fd, int command, ...)
+{
+    enum {
+        ANDROID_F_DUPFD = 0, ANDROID_F_GETFD = 1,
+        ANDROID_F_SETFD = 2, ANDROID_F_GETFL = 3,
+        ANDROID_F_SETFL = 4,
+        ANDROID_O_APPEND = 00002000,
+        ANDROID_O_NONBLOCK = 00004000,
+        ANDROID_O_LARGEFILE = 00100000,
+        ANDROID_FD_CLOEXEC = 1,
+    };
+    if (command == ANDROID_F_GETFD) {
+        int flags = fcntl(fd, F_GETFD);
+        if (flags < 0) return -1;
+        if (flags & ~FD_CLOEXEC) { errno = EOPNOTSUPP; return -1; }
+        return (flags & FD_CLOEXEC) ? ANDROID_FD_CLOEXEC : 0;
+    }
+    if (command == ANDROID_F_GETFL) {
+        int flags = fcntl(fd, F_GETFL);
+        if (flags < 0) return -1;
+        int guest;
+        switch (flags & O_ACCMODE) {
+        case O_RDONLY: guest = 0; break;
+        case O_WRONLY: guest = 1; break;
+        case O_RDWR: guest = 2; break;
+        default: errno = EOPNOTSUPP; return -1;
+        }
+        if (flags & O_APPEND) guest |= ANDROID_O_APPEND;
+        if (flags & O_NONBLOCK) guest |= ANDROID_O_NONBLOCK;
+        // O_LARGEFILE is implicit for a 64-bit guest. Other native status
+        // bits cannot be silently reported as Android's unrelated bitfields.
+        int supported = O_ACCMODE | O_APPEND | O_NONBLOCK;
+#ifdef O_LARGEFILE
+        supported |= O_LARGEFILE;
+#endif
+#ifdef __linux__
+        // The Linux kernel may report 0100000 even when LP64 glibc hides
+        // O_LARGEFILE (or defines it as zero in its public headers).
+        supported |= 0100000;
+#endif
+        if (flags & ~supported) {
+            errno = EOPNOTSUPP;
+            return -1;
+        }
+        return guest;
+    }
+    if (command != ANDROID_F_DUPFD && command != ANDROID_F_SETFD &&
+        command != ANDROID_F_SETFL) { errno = EOPNOTSUPP; return -1; }
+
+    va_list arguments;
+    va_start(arguments, command);
+    int value = va_arg(arguments, int);
+    va_end(arguments);
+
+    if (command == ANDROID_F_DUPFD) return fcntl(fd, F_DUPFD, value);
+    if (command == ANDROID_F_SETFD) {
+        if (value & ~ANDROID_FD_CLOEXEC) { errno = EINVAL; return -1; }
+        return fcntl(fd, F_SETFD, (value & ANDROID_FD_CLOEXEC) ? FD_CLOEXEC : 0);
+    }
+    if (value & ~(3 | ANDROID_O_APPEND | ANDROID_O_NONBLOCK | ANDROID_O_LARGEFILE)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((value & 3) == 3) { errno = EINVAL; return -1; }
+    int current = fcntl(fd, F_GETFL);
+    if (current < 0) return -1;
+    int translated = current & ~(O_APPEND | O_NONBLOCK);
+    if (value & ANDROID_O_APPEND) translated |= O_APPEND;
+    if (value & ANDROID_O_NONBLOCK) translated |= O_NONBLOCK;
+    return fcntl(fd, F_SETFL, translated);
+}
+
 static int64_t file_lseek(int fd, int64_t offset, int whence)
 {
     int native;
@@ -208,6 +284,7 @@ bool android_file_compat_resolve(const char *name, const char *version,
     MAP("lstat", file_lstat)
     MAP("open", file_open)
     MAP("__open_2", file_open_2)
+    MAP("fcntl", file_fcntl)
     MAP("lseek", file_lseek)
     MAP("ftruncate", file_ftruncate)
     MAP("opendir", file_opendir)

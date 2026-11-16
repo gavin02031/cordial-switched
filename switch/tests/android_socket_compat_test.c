@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -67,8 +68,7 @@ static void negative_tests(void)
     AddressFn bind_socket = (AddressFn)(uintptr_t)symbol("bind");
     SendFn send_socket = (SendFn)(uintptr_t)symbol("sendto");
     assert(open_socket(999, 1, 0) == -1 && errno == EAFNOSUPPORT);
-    assert(open_socket(2, 1 | 00004000, 0) == -1 && errno == EOPNOTSUPP);
-    assert(open_socket(2, 02000000 | 1, 0) == -1 && errno == EOPNOTSUPP);
+    assert(open_socket(2, 1 | 010000000, 0) == -1 && errno == EPROTOTYPE);
     unsigned char bad_address[16] = {0};
     assert(bind_socket(-1, bad_address, sizeof(bad_address)) == -1);
     assert(errno == EAFNOSUPPORT);
@@ -76,6 +76,21 @@ static void negative_tests(void)
     assert(bind_socket(-1, bad_address, 7) == -1 && errno == EINVAL);
     assert(send_socket(-1, NULL, 0, 0x200000, NULL, 0) == -1);
     assert(errno == EOPNOTSUPP);
+}
+
+static void socket_creation_flags_test(void)
+{
+    SocketFn open_socket = (SocketFn)(uintptr_t)symbol("socket");
+    // Bionic SOCK_NONBLOCK and SOCK_CLOEXEC use different bits from host BSD.
+    int fd = open_socket(2, 1 | 00004000 | 02000000, 0);
+    assert(fd >= 0);
+    assert((fcntl(fd, F_GETFL) & O_NONBLOCK) == O_NONBLOCK);
+    assert((fcntl(fd, F_GETFD) & FD_CLOEXEC) == FD_CLOEXEC);
+    assert(close(fd) == 0);
+    fd = open_socket(2, 2 | 00004000, 0);
+    assert(fd >= 0);
+    assert((fcntl(fd, F_GETFL) & O_NONBLOCK) == O_NONBLOCK);
+    assert(close(fd) == 0);
 }
 
 static void tcp_test(void)
@@ -345,11 +360,12 @@ int main(void)
     reverse_name_test();
     readiness_test();
     negative_tests();
+    socket_creation_flags_test();
     tcp_test();
     udp_test();
     ipv6_test();
     dns_test();
     ip_text_test();
-    puts("Android socket ABI tests passed (IPv4 TCP/UDP, IPv6, DNS, options, text)");
+    puts("Android socket ABI tests passed (IPv4 TCP/UDP, IPv6, DNS, flags, readiness)");
     return 0;
 }

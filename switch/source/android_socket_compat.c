@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "android_socket_compat.h"
 
@@ -198,15 +199,25 @@ static int guest_socket(int domain, int type, int protocol)
 {
     int native_domain;
     if (!translate_domain(domain, &native_domain)) return -1;
-    // The flag bits are Linux-specific and must not be misread as BSD types.
-    if (type & (GUEST_SOCK_NONBLOCK | GUEST_SOCK_CLOEXEC)) {
-        errno = EOPNOTSUPP;
-        return -1;
-    }
-    if (type != GUEST_SOCK_STREAM && type != GUEST_SOCK_DGRAM &&
-        type != GUEST_SOCK_RAW) { errno = EPROTOTYPE; return -1; }
+    // Android's socket type flags cannot be passed straight to Horizon BSD.
+    // libnx's BSD header defines these as 0x20000000 and 0x10000000,
+    // respectively; neither has the Linux/Bionic bit assignment.
+    const int flags = type & (GUEST_SOCK_NONBLOCK | GUEST_SOCK_CLOEXEC);
+    const int base = type & ~(GUEST_SOCK_NONBLOCK | GUEST_SOCK_CLOEXEC);
+    if (base != GUEST_SOCK_STREAM && base != GUEST_SOCK_DGRAM &&
+        base != GUEST_SOCK_RAW) { errno = EPROTOTYPE; return -1; }
+    int native_type = base;
+#ifdef __SWITCH__
+    if (flags & GUEST_SOCK_NONBLOCK) native_type |= 0x20000000;
+    if (flags & GUEST_SOCK_CLOEXEC) native_type |= 0x10000000;
+#elif defined(SOCK_NONBLOCK) && defined(SOCK_CLOEXEC)
+    if (flags & GUEST_SOCK_NONBLOCK) native_type |= SOCK_NONBLOCK;
+    if (flags & GUEST_SOCK_CLOEXEC) native_type |= SOCK_CLOEXEC;
+#else
+    if (flags) { errno = EOPNOTSUPP; return -1; }
+#endif
     if (!ready()) return -1;
-    return socket(native_domain, type, protocol);
+    return socket(native_domain, native_type, protocol);
 }
 
 static int guest_connect(int fd, const void *address, uint32_t address_len)
