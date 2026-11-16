@@ -6,10 +6,12 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 // Deliberately model Android LP64 storage, never host pthread structures.
 typedef struct { int32_t private_words[10]; } BionicMutex;
 typedef struct { int32_t private_words[12]; } BionicCond;
+typedef struct { int32_t private_words[14]; } BionicRwlock;
 
 static int (*bridge_lock)(void *);
 static int (*bridge_trylock)(void *);
@@ -19,6 +21,9 @@ static int (*bridge_wait)(void *, void *);
 static int (*bridge_signal)(void *);
 static int (*bridge_broadcast)(void *);
 static int (*bridge_once)(volatile int *, void (*)(void));
+static int (*bridge_rw_rdlock)(void *);
+static int (*bridge_rw_wrlock)(void *);
+static int (*bridge_rw_unlock)(void *);
 
 static BionicMutex shared_mutex = {{0}};
 static BionicCond shared_cond = {{0}};
@@ -26,6 +31,9 @@ static unsigned shared_count;
 static int shared_ready;
 static int once_calls;
 static volatile int once_control;
+static BionicRwlock shared_rwlock = {{0}};
+static unsigned rw_left;
+static unsigned rw_right;
 
 static void once_callback(void)
 {
@@ -60,6 +68,29 @@ static void *trylock_worker(void *unused)
     return (void *)(uintptr_t)bridge_trylock(&shared_mutex);
 }
 
+static void *rw_reader_worker(void *unused)
+{
+    (void)unused;
+    for (unsigned i = 0; i < 1500; i++) {
+        assert(bridge_rw_rdlock(&shared_rwlock) == 0);
+        assert(rw_left == rw_right);
+        assert(bridge_rw_unlock(&shared_rwlock) == 0);
+    }
+    return NULL;
+}
+
+static void *rw_writer_worker(void *unused)
+{
+    (void)unused;
+    for (unsigned i = 0; i < 1500; i++) {
+        assert(bridge_rw_wrlock(&shared_rwlock) == 0);
+        ++rw_left;
+        rw_right = rw_left;
+        assert(bridge_rw_unlock(&shared_rwlock) == 0);
+    }
+    return NULL;
+}
+
 #define RESOLVE(name, type) ((type)(uintptr_t)lookup(name))
 
 static uint64_t lookup(const char *name)
@@ -76,7 +107,7 @@ int main(void)
     assert(!android_pthread_compat_resolve("pthread_mutex_lock", "LIBM", "libc.so", &address));
     assert(!android_pthread_compat_resolve("pthread_mutex_lock", "LIBC", "libm.so", &address));
     assert(!android_pthread_compat_resolve("pthread_create", "LIBC", "libc.so", &address));
-    assert(!android_pthread_compat_resolve("pthread_cond_timedwait", "LIBC", "libc.so", &address));
+    assert(!android_pthread_compat_resolve("pthread_rwlock_rdlock", "LIBC_N", "libc.so", &address));
     assert(!android_pthread_compat_resolve("pthread_mutex_lock", "LIBC", "libc.so", NULL));
 
     bridge_lock = RESOLVE("pthread_mutex_lock", int (*)(void *));
@@ -87,6 +118,16 @@ int main(void)
     bridge_signal = RESOLVE("pthread_cond_signal", int (*)(void *));
     bridge_broadcast = RESOLVE("pthread_cond_broadcast", int (*)(void *));
     bridge_once = RESOLVE("pthread_once", int (*)(volatile int *, void (*)(void)));
+    bridge_rw_rdlock = RESOLVE("pthread_rwlock_rdlock", int (*)(void *));
+    bridge_rw_wrlock = RESOLVE("pthread_rwlock_wrlock", int (*)(void *));
+    bridge_rw_unlock = RESOLVE("pthread_rwlock_unlock", int (*)(void *));
+    int (*rw_init)(void *, const void *) = RESOLVE("pthread_rwlock_init", int (*)(void *, const void *));
+    int (*rw_destroy)(void *) = RESOLVE("pthread_rwlock_destroy", int (*)(void *));
+    int (*cond_timedwait)(void *, void *, const struct timespec *) =
+        RESOLVE("pthread_cond_timedwait", int (*)(void *, void *, const struct timespec *));
+    int (*condattr_init)(void *) = RESOLVE("pthread_condattr_init", int (*)(void *));
+    int (*condattr_clock)(void *, int) = RESOLVE("pthread_condattr_setclock", int (*)(void *, int));
+    int (*condattr_destroy)(void *) = RESOLVE("pthread_condattr_destroy", int (*)(void *));
     int (*cond_destroy)(void *) = RESOLVE("pthread_cond_destroy", int (*)(void *));
     int (*mutex_init)(void *, const void *) = RESOLVE("pthread_mutex_init", int (*)(void *, const void *));
     int (*cond_init)(void *, const void *) = RESOLVE("pthread_cond_init", int (*)(void *, const void *));
@@ -155,6 +196,51 @@ int main(void)
     assert(bridge_broadcast(&shared_cond) == 0);
     assert(cond_destroy(&shared_cond) == 0);
     assert(bridge_destroy(&shared_mutex) == 0);
+
+    BionicMutex timed_mutex = {{0}};
+    BionicCond timed_cond = {{0}};
+    assert(bridge_lock(&timed_mutex) == 0);
+    struct timespec expired = {0, 1};
+    assert(cond_timedwait(&timed_cond, &timed_mutex, &expired) == ETIMEDOUT);
+    assert(bridge_unlock(&timed_mutex) == 0);
+    assert(cond_timedwait(&timed_cond, &timed_mutex, NULL) == EINVAL);
+    expired.tv_nsec = -1;
+    assert(cond_timedwait(&timed_cond, &timed_mutex, &expired) == EINVAL);
+    assert(cond_destroy(&timed_cond) == 0);
+    assert(bridge_destroy(&timed_mutex) == 0);
+    long clock_attr = -1;
+    assert(condattr_init(&clock_attr) == 0 && clock_attr == 0);
+    assert(condattr_clock(&clock_attr, 1) == ENOTSUP);
+    assert(condattr_clock(&clock_attr, 78) == EINVAL);
+    assert(condattr_clock(&clock_attr, 0) == 0);
+    assert(condattr_destroy(&clock_attr) == 0);
+
+    assert(bridge_rw_rdlock(&shared_rwlock) == 0);
+    assert(bridge_rw_rdlock(&shared_rwlock) == 0);
+    assert(bridge_rw_wrlock(&shared_rwlock) == EDEADLK);
+    assert(rw_destroy(&shared_rwlock) == EBUSY);
+    assert(bridge_rw_unlock(&shared_rwlock) == 0);
+    assert(bridge_rw_unlock(&shared_rwlock) == 0);
+    pthread_t rw_threads[7];
+    assert(pthread_create(&rw_threads[0], NULL, rw_writer_worker, NULL) == 0);
+    for (unsigned i = 1; i < 7; ++i)
+        assert(pthread_create(&rw_threads[i], NULL, rw_reader_worker, NULL) == 0);
+    for (unsigned i = 0; i < 7; ++i)
+        assert(pthread_join(rw_threads[i], NULL) == 0);
+    assert(rw_left == 1500 && rw_right == rw_left);
+    assert(bridge_rw_wrlock(&shared_rwlock) == 0);
+    assert(bridge_rw_wrlock(&shared_rwlock) == EDEADLK);
+    assert(bridge_rw_rdlock(&shared_rwlock) == EDEADLK);
+    assert(bridge_rw_unlock(&shared_rwlock) == 0);
+    assert(bridge_rw_unlock(&shared_rwlock) == EPERM);
+    assert(rw_destroy(&shared_rwlock) == 0);
+    assert(rw_destroy(NULL) == EINVAL);
+    BionicRwlock explicit_rw = {{0}};
+    long rw_attr = 12;
+    assert(rw_init(&explicit_rw, &rw_attr) == ENOTSUP);
+    assert(rw_init(&explicit_rw, NULL) == 0);
+    assert(rw_init(&explicit_rw, NULL) == EBUSY);
+    assert(rw_destroy(&explicit_rw) == 0);
 
     BionicCond explicit_cond = {{0}};
     long unsupported_attr = 0x100;

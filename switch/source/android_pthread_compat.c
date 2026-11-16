@@ -8,19 +8,41 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+_Static_assert(sizeof(struct timespec) == 16, "Android LP64 timespec layout");
+_Static_assert(sizeof(time_t) == 8, "Android LP64 time_t layout");
 
 // Android LP64 pthread_mutex_t and pthread_cond_t are inline, opaque Bionic
 // data (40 and 48 bytes). They are NOT ABI-compatible with libnx/newlib.
 // https://android.googlesource.com/platform/bionic/+/main/libc/include/pthread.h
 // Map each Android object's address to its own native synchronization object.
 // The registry lock protects lookup, creation, destruction and all usage counts.
-typedef enum { BRIDGE_MUTEX, BRIDGE_COND } BridgeKind;
+typedef enum { BRIDGE_MUTEX, BRIDGE_COND, BRIDGE_RWLOCK } BridgeKind;
+
+typedef struct BridgeReader {
+    pthread_t thread;
+    unsigned holds;
+    struct BridgeReader *next;
+} BridgeReader;
+
+typedef struct {
+    pthread_mutex_t control;
+    pthread_cond_t wake;
+    BridgeReader *readers;
+    unsigned active_readers;
+    unsigned waiting_writers;
+    bool writer_active;
+    pthread_t writer;
+} BridgeRwlock;
+
 typedef struct BridgeEntry {
     void *android_address;
     BridgeKind kind;
     union {
         pthread_mutex_t mutex;
         pthread_cond_t cond;
+        BridgeRwlock rwlock;
     } native;
     unsigned in_flight;
     unsigned held;
@@ -83,8 +105,14 @@ static int create_locked(void *address, BridgeKind kind, int mutex_type,
                 error = pthread_mutex_init(&entry->native.mutex, &attributes);
             pthread_mutexattr_destroy(&attributes);
         }
-    } else {
+    } else if (kind == BRIDGE_COND) {
         error = pthread_cond_init(&entry->native.cond, NULL);
+    } else {
+        error = pthread_mutex_init(&entry->native.rwlock.control, NULL);
+        if (!error) {
+            error = pthread_cond_init(&entry->native.rwlock.wake, NULL);
+            if (error) pthread_mutex_destroy(&entry->native.rwlock.control);
+        }
     }
     if (error) {
         free(entry);
@@ -113,6 +141,8 @@ static int acquire_locked(void *address, BridgeKind kind, BridgeEntry **result)
             if (error)
                 return error;
         } else {
+            // Android's static condition and rwlock initialisers are zero.
+            // Other patterns could encode process-shared/private state.
             uint32_t marker;
             memcpy(&marker, address, sizeof(marker));
             if (marker != 0) return ENOTSUP;
@@ -266,9 +296,20 @@ static int cond_notify(void *address, bool broadcast)
 static int android_cond_signal(void *address) { return cond_notify(address, false); }
 static int android_cond_broadcast(void *address) { return cond_notify(address, true); }
 
+static int android_cond_wait_internal(void *cond_address, void *mutex_address,
+                                      const struct timespec *deadline);
+
 static int android_cond_wait(void *cond_address, void *mutex_address)
 {
+    return android_cond_wait_internal(cond_address, mutex_address, NULL);
+}
+
+static int android_cond_wait_internal(void *cond_address, void *mutex_address,
+                                      const struct timespec *deadline)
+{
     if (!cond_address || !mutex_address) return EINVAL;
+    if (deadline && (deadline->tv_nsec < 0 || deadline->tv_nsec >= 1000000000L))
+        return EINVAL;
     pthread_mutex_lock(&registry_lock);
     BridgeEntry *cond = NULL, *mutex = NULL;
     int error = acquire_locked(cond_address, BRIDGE_COND, &cond);
@@ -284,10 +325,172 @@ static int android_cond_wait(void *cond_address, void *mutex_address)
     pthread_mutex_unlock(&registry_lock);
     if (error) return error;
 
-    error = pthread_cond_wait(&cond->native.cond, &mutex->native.mutex);
+    error = deadline ? pthread_cond_timedwait(&cond->native.cond,
+                                             &mutex->native.mutex, deadline) :
+                       pthread_cond_wait(&cond->native.cond, &mutex->native.mutex);
     pthread_mutex_lock(&registry_lock);
     mutex->in_flight--;
     cond->in_flight--;
+    pthread_mutex_unlock(&registry_lock);
+    return error;
+}
+
+static int android_cond_timedwait(void *cond_address, void *mutex_address,
+                                  const struct timespec *deadline)
+{
+    if (!deadline) return EINVAL;
+    return android_cond_wait_internal(cond_address, mutex_address, deadline);
+}
+
+static int android_condattr_init(void *attr)
+{
+    if (!attr) return EINVAL;
+    *(long *)attr = 0;
+    return 0;
+}
+
+static int android_condattr_setclock(void *attr, int clock)
+{
+    if (!attr) return EINVAL;
+    if (*(long *)attr != 0) return ENOTSUP;
+    // Android uses 0 for realtime and 1 for monotonic. The latter cannot be
+    // promised by the current Horizon native condvar implementation.
+    if (clock == 0) { *(long *)attr = 0; return 0; }
+    return clock == 1 ? ENOTSUP : EINVAL;
+}
+
+static int android_condattr_destroy(void *attr)
+{
+    if (!attr) return EINVAL;
+    *(long *)attr = 0;
+    return 0;
+}
+
+// Reader and writer ownership are maintained independently of newlib's opaque
+// pthread_rwlock_t. This also avoids assuming newlib supplies rwlock calls.
+static BridgeReader *rw_reader(BridgeRwlock *lock, pthread_t thread)
+{
+    for (BridgeReader *reader = lock->readers; reader; reader = reader->next)
+        if (pthread_equal(reader->thread, thread)) return reader;
+    return NULL;
+}
+
+static int rw_acquire(void *address, bool write)
+{
+    pthread_mutex_lock(&registry_lock);
+    BridgeEntry *entry = NULL;
+    int error = acquire_locked(address, BRIDGE_RWLOCK, &entry);
+    pthread_mutex_unlock(&registry_lock);
+    if (error) return error;
+
+    BridgeRwlock *lock = &entry->native.rwlock;
+    pthread_t self = pthread_self();
+    pthread_mutex_lock(&lock->control);
+    if (lock->writer_active && pthread_equal(lock->writer, self)) {
+        error = EDEADLK;
+    } else if (write && rw_reader(lock, self)) {
+        // Upgrading a held read lock would wait forever for our own release.
+        error = EDEADLK;
+    } else if (write) {
+        lock->waiting_writers++;
+        while (lock->writer_active || lock->active_readers)
+            pthread_cond_wait(&lock->wake, &lock->control);
+        lock->waiting_writers--;
+        lock->writer_active = true;
+        lock->writer = self;
+    } else {
+        BridgeReader *reader = rw_reader(lock, self);
+        // A reader already holding this lock must be able to acquire it
+        // recursively even after a writer queues, or it deadlocks itself.
+        while (lock->writer_active || (lock->waiting_writers && !reader))
+            pthread_cond_wait(&lock->wake, &lock->control);
+        reader = rw_reader(lock, self);
+        if (!reader) {
+            reader = calloc(1, sizeof(*reader));
+            if (reader) {
+                reader->thread = self;
+                reader->next = lock->readers;
+                lock->readers = reader;
+            }
+        }
+        if (!reader) error = ENOMEM;
+        else {
+            reader->holds++;
+            lock->active_readers++;
+        }
+    }
+    pthread_mutex_unlock(&lock->control);
+    pthread_mutex_lock(&registry_lock);
+    entry->in_flight--;
+    pthread_mutex_unlock(&registry_lock);
+    return error;
+}
+
+static int android_rwlock_rdlock(void *address) { return rw_acquire(address, false); }
+static int android_rwlock_wrlock(void *address) { return rw_acquire(address, true); }
+
+static int android_rwlock_init(void *address, const void *attr)
+{
+    if (!address) return EINVAL;
+    if (attr && *(const long *)attr != 0) return ENOTSUP;
+    pthread_mutex_lock(&registry_lock);
+    BridgeEntry *entry = NULL;
+    int error = find_locked(address, BRIDGE_RWLOCK) ? EBUSY :
+                create_locked(address, BRIDGE_RWLOCK, 0, &entry);
+    pthread_mutex_unlock(&registry_lock);
+    return error;
+}
+
+static int android_rwlock_unlock(void *address)
+{
+    pthread_mutex_lock(&registry_lock);
+    BridgeEntry *entry = NULL;
+    int error = acquire_locked(address, BRIDGE_RWLOCK, &entry);
+    pthread_mutex_unlock(&registry_lock);
+    if (error) return error;
+    BridgeRwlock *lock = &entry->native.rwlock;
+    pthread_mutex_lock(&lock->control);
+    pthread_t self = pthread_self();
+    if (lock->writer_active && pthread_equal(lock->writer, self)) {
+        lock->writer_active = false;
+        pthread_cond_broadcast(&lock->wake);
+    } else {
+        BridgeReader **link = &lock->readers;
+        while (*link && !pthread_equal((*link)->thread, self))
+            link = &(*link)->next;
+        if (!*link) error = EPERM;
+        else {
+            BridgeReader *reader = *link;
+            reader->holds--;
+            lock->active_readers--;
+            if (!reader->holds) { *link = reader->next; free(reader); }
+            if (!lock->active_readers) pthread_cond_broadcast(&lock->wake);
+        }
+    }
+    pthread_mutex_unlock(&lock->control);
+    pthread_mutex_lock(&registry_lock);
+    entry->in_flight--;
+    pthread_mutex_unlock(&registry_lock);
+    return error;
+}
+
+static int android_rwlock_destroy(void *address)
+{
+    pthread_mutex_lock(&registry_lock);
+    BridgeEntry *entry = NULL;
+    int error = acquire_locked(address, BRIDGE_RWLOCK, &entry);
+    if (!error) {
+        entry->in_flight--;
+        BridgeRwlock *lock = &entry->native.rwlock;
+        if (entry->in_flight || lock->active_readers || lock->writer_active ||
+            lock->waiting_writers) error = EBUSY;
+        else {
+            int wake_error = pthread_cond_destroy(&lock->wake);
+            int lock_error = wake_error ? 0 : pthread_mutex_destroy(&lock->control);
+            error = wake_error ? wake_error : lock_error;
+            if (!error) unlink_locked(entry);
+        }
+    }
     pthread_mutex_unlock(&registry_lock);
     return error;
 }
@@ -348,9 +551,18 @@ bool android_pthread_compat_resolve(const char *name, const char *version,
     MAP_ANDROID("mutex_destroy", android_mutex_destroy)
     MAP_ANDROID("cond_init", android_cond_init)
     MAP_ANDROID("cond_wait", android_cond_wait)
+    MAP_ANDROID("cond_timedwait", android_cond_timedwait)
+    MAP_ANDROID("condattr_init", android_condattr_init)
+    MAP_ANDROID("condattr_setclock", android_condattr_setclock)
+    MAP_ANDROID("condattr_destroy", android_condattr_destroy)
     MAP_ANDROID("cond_signal", android_cond_signal)
     MAP_ANDROID("cond_broadcast", android_cond_broadcast)
     MAP_ANDROID("cond_destroy", android_cond_destroy)
+    MAP_ANDROID("rwlock_init", android_rwlock_init)
+    MAP_ANDROID("rwlock_rdlock", android_rwlock_rdlock)
+    MAP_ANDROID("rwlock_wrlock", android_rwlock_wrlock)
+    MAP_ANDROID("rwlock_unlock", android_rwlock_unlock)
+    MAP_ANDROID("rwlock_destroy", android_rwlock_destroy)
     MAP_ANDROID("once", android_once)
     (void)0;
 #undef MAP_ANDROID

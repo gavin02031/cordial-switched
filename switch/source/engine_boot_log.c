@@ -19,6 +19,7 @@
 #include "android_stdio_compat.h"
 #include "android_fortify_compat.h"
 #include "android_pthread_compat.h"
+#include "android_sem_compat.h"
 #include "android_tls_compat.h"
 #include "android_thread_attr_compat.h"
 #include "android_thread_lifecycle_compat.h"
@@ -84,6 +85,7 @@ static bool resolve_compatible_import(const char *name, const char *version,
                             android_stdio_compat_resolve(name, version, library, address) ||
                             android_fortify_compat_resolve(name, version, library, address) ||
                             android_pthread_compat_resolve(name, version, library, address) ||
+                            android_sem_compat_resolve(name, version, library, address) ||
                             android_tls_compat_resolve(name, version, library, address) ||
                             android_thread_attr_compat_resolve(name, version, library, address) ||
                             android_thread_lifecycle_compat_resolve(name, version, library, address));

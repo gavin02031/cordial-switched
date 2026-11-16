@@ -108,6 +108,19 @@ actual ARM64 jumps under QEMU. **INFERRED:** the confirmed v0.86 hardware audit
 of 437/629 supported imports may improve by two; neither a successful strict
 link nor any Roblox code execution has yet been observed for this change.
 
+**v0.89 adds 13 observed synchronisation entry points** without exposing
+Bionic's opaque pthread or semaphore storage to Horizon/newlib: five
+reader/writer-lock operations, four process-private counting semaphore
+operations, a condition-variable timed wait, and three condition-attribute
+operations. The wrappers track live readers, writers and blocked calls so
+destroy cannot free an object while threads are using it. Native absolute
+realtime deadlines are supported; Android monotonic condition clocks return
+`ENOTSUP` until that clock can be implemented faithfully. Process-shared
+semaphores return `ENOSYS`, not pretend success. Host concurrency tests cover
+reader/writer exclusion, recursion, deadlines, semaphore overflow and active
+teardown. **INFERRED:** these 13 names appeared in `link-25.txt`, but neither
+their resolution nor engine execution has been checked on Switch hardware.
+
 **v0.88 adds 18 distinct imports from the v0.86 hardware report.** The
 filesystem provider translates Android ARM64 `stat`/`fstat`/`lstat` records,
 `open` flags and `dirent` records instead of passing incompatible newlib

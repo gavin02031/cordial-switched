@@ -65,6 +65,7 @@ jobs:
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_file_compat.c \
             switch/source/android_jump_compat.c \
+            switch/source/android_sem_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
             switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
             switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c \
@@ -197,6 +198,12 @@ jobs:
             switch/tests/android_pthread_compat_test.c switch/source/android_pthread_compat.c -pthread \
             -o /tmp/cordial-android-pthread-test
           timeout 30s /tmp/cordial-android-pthread-test
+      - name: Test Bionic counting semaphores and concurrent teardown
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_sem_compat_test.c switch/source/android_sem_compat.c \
+            -pthread -o /tmp/morrow-android-sem-test
+          timeout 30s /tmp/morrow-android-sem-test
       - name: Test Android Bionic pthread TLS key multiplexing
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
