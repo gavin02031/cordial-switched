@@ -12,7 +12,7 @@ BUILD        := build
 SOURCES      := source
 APP_TITLE    := Cordial Switched
 APP_AUTHOR   := Cordial Switched contributors
-APP_VERSION  := 0.83.0
+APP_VERSION  := 0.84.0
 
 ARCH        := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS      := -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) -D__SWITCH__ $(INCLUDE) \
@@ -58,7 +58,7 @@ endif
 export INCLUDE  := $(foreach dir,$(LIBDIRS),-I$(dir)/include) -I$(CURDIR)/$(BUILD) \
                    $(if $(filter 1,$(WITH_JNIVM)),-isystem $(CURDIR)/../third_party/libjnivm/include)
 export LIBPATHS := $(foreach dir,$(LIBDIRS),-L$(dir)/lib)
-export NROFLAGS := --icon=$(DEVKITPRO)/libnx/default_icon.jpg --nacp=$(OUTPUT).nacp
+export NROFLAGS := --icon=$(CURDIR)/assets/morrow-icon.jpg --nacp=$(OUTPUT).nacp
 
 .PHONY: all clean $(BUILD)
 

@@ -94,6 +94,17 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+**v0.84 includes Morrow's chosen original pastel logo** in the Homebrew Menu
+`.nro` icon. The full-size artwork is in `switch/assets/morrow-logo.webp`;
+the 256-pixel JPEG is the embedded Switch icon. The app is still titled
+Cordial Switched while the engine remains experimental. This preview also
+provides a per-thread Bionic `__cxa_thread_atexit_impl` implementation:
+registered C++ thread-local destructors run on the owning thread at exit,
+including registrations made during teardown. This is covered by host tests,
+not yet confirmed with the Roblox engine on Switch. The `longjmp` import and
+other unresolved imports still block strict relocation, so **no Roblox frame
+or login is claimed**.
+
 **v0.83 handles the next strict linker stop, `__gcov_dump`,** from the v0.82
 `link-19.txt` report. It also resolves `__gcov_flush`: both are void profiler
 hooks, not rendering or gameplay services. Because Horizon has no guest gcov
