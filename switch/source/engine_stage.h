@@ -28,6 +28,9 @@ typedef struct {
     unsigned relr_applied;
     unsigned packed_applied;
     unsigned symbol_applied;
+    // Verified solely from the guest ELF's SHF_ALLOC section and PT_LOAD,
+    // never inferred from a missing import or a guessed address.
+    bool dyninit_section_verified;
     // Counts may be partial if malformed input stops the read-only scan.
     unsigned unsupported_relocations_seen;
     unsigned tls_relocations_seen;

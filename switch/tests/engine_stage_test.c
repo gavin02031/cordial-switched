@@ -241,6 +241,71 @@ static void version_fixture(unsigned char *bytes)
     put32(bytes + 0x388, 23); // vna_name -> LIBC.
 }
 
+enum { SECTION_FILE_BYTES = 0x600 };
+
+// GNU start/stop section markers, plus a section-header table deliberately
+// outside the loaded segment. This is a synthetic ELF, not a Roblox binary.
+static void dyninit_section_fixture(unsigned char *bytes)
+{
+    memset(bytes, 0, SECTION_FILE_BYTES);
+    fixture(bytes);
+    unsigned char *dyn = bytes + 0x180;
+    add_dynamic(dyn, 1, 10, 64);       // DT_STRSZ.
+    add_dynamic(dyn, 2, 6, 0x1270);   // DT_SYMTAB.
+    add_dynamic(dyn, 4, 8, 48);       // Two RELA imports.
+    add_dynamic(dyn, 6, 11, 24);      // DT_SYMENT (no RELR).
+    add_dynamic(dyn, 7, 0, 0);
+
+    const char imports[] = "\0__start_ls_rbx_dyninit1\0__stop_ls_rbx_dyninit1";
+    memcpy(bytes + 0x300, imports, sizeof(imports));
+    const unsigned stop_name = 1 + sizeof("__start_ls_rbx_dyninit1");
+    put32(bytes + 0x288, 1); // Dynsym #1 name.
+    bytes[0x28c] = 0x10; // STB_GLOBAL, STT_NOTYPE.
+    put32(bytes + 0x2a0, stop_name); // Dynsym #2 name.
+    bytes[0x2a4] = 0x10;
+
+    put64(bytes + 0x240, 0x1340);
+    put64(bytes + 0x248, ((uint64_t)1 << 32) | 1025); // GLOB_DAT.
+    put64(bytes + 0x250, 0);
+    put64(bytes + 0x258, 0x1348);
+    put64(bytes + 0x260, ((uint64_t)2 << 32) | 1025);
+    put64(bytes + 0x268, 0);
+
+    const char names[] = "\0ls_rbx_dyninit1\0.shstrtab";
+    memcpy(bytes + 0x410, names, sizeof(names));
+    put64(bytes + 40, 0x480);  // e_shoff.
+    put16(bytes + 58, 64);     // e_shentsize.
+    put16(bytes + 60, 3);      // e_shnum.
+    put16(bytes + 62, 2);      // e_shstrndx.
+
+    unsigned char *data = bytes + 0x480 + 64;
+    put32(data, 1);            // Section name offset.
+    put32(data + 4, 1);        // SHT_PROGBITS.
+    put64(data + 8, 2);        // SHF_ALLOC.
+    put64(data + 16, 0x1380);  // The start symbol.
+    put64(data + 24, 0x380);   // File-offset matches PT_LOAD translation.
+    put64(data + 32, 0x20);    // The stop symbol is start+size.
+    put64(data + 48, 8);       // Pointer-aligned entries.
+
+    unsigned char *strings = bytes + 0x480 + 128;
+    put32(strings, 1 + sizeof("ls_rbx_dyninit1"));
+    put32(strings + 4, 3); // SHT_STRTAB.
+    put64(strings + 24, 0x410);
+    put64(strings + 32, sizeof(names));
+}
+
+static bool dyninit_fixture_at(const unsigned char *bytes, EngineStage *stage,
+                               EngineSymbolResolver lookup, uint64_t runtime_base)
+{
+    FILE *file = tmpfile();
+    assert(file);
+    assert(fwrite(bytes, 1, SECTION_FILE_BYTES, file) == SECTION_FILE_BYTES);
+    const bool ok = engine_stage_stream_resolved_at(file, stage, lookup, NULL,
+                                                     runtime_base);
+    fclose(file);
+    return ok;
+}
+
 static bool stage_fixture(const unsigned char *bytes, size_t length, EngineStage *stage)
 {
     FILE *file = tmpfile();
@@ -631,6 +696,41 @@ int main(void)
         assert(audit_fixture_at(bytes, &stage, future_base, optional, NULL));
         assert(get64(stage.image + 0x340) == future_base + 0x380 + 8);
         engine_stage_release(&stage);
+    }
+
+    // The two GNU section boundary names are resolved only from their
+    // actual allocatable ELF section, at the FINAL reserved code address.
+    unsigned char section_bytes[SECTION_FILE_BYTES];
+    dyninit_section_fixture(section_bytes);
+    assert(dyninit_fixture_at(section_bytes, &stage, NULL, future_base));
+    assert(stage.dyninit_section_verified);
+    assert(stage.symbol_applied == 2);
+    assert(get64(stage.image + 0x340) == future_base + 0x380);
+    assert(get64(stage.image + 0x348) == future_base + 0x3a0);
+    engine_stage_release(&stage);
+
+    // Missing, misplaced, unallocated, unaligned, empty or ambiguous section
+    // metadata must never turn undefined linker markers into made-up pointers.
+    for (unsigned invalid = 0; invalid < 8; invalid++) {
+        dyninit_section_fixture(section_bytes);
+        unsigned char *section = section_bytes + 0x480 + 64;
+        switch (invalid) {
+        case 0: put64(section_bytes + 40, 0); break; // No section table.
+        case 1: put64(section + 8, 0); break;        // Not SHF_ALLOC.
+        case 2: put64(section + 24, 0x381); break;   // Wrong file translation.
+        case 3: put64(section + 16, 0x1800); break;  // Outside PT_LOAD.
+        case 4: put64(section + 32, 0); break;       // Empty section.
+        case 5: put64(section + 32, 15); break;      // Unaligned end.
+        case 6: put32(section, 0); break;            // Not correct name.
+        case 7: // Duplicate valid section is ambiguous.
+            memcpy(section_bytes + 0x480 + 192, section, 64);
+            put16(section_bytes + 60, 4);
+            break;
+        }
+        assert(!dyninit_fixture_at(section_bytes, &stage, fake_resolver, future_base));
+        assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+        assert(!stage.dyninit_section_verified);
+        assert(strstr(stage.detail, "__start_ls_rbx_dyninit1"));
     }
 
     // Absolute defined symbols are numeric constants, never biased by the

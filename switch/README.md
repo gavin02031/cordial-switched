@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.88 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.90 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -95,6 +95,28 @@ Use a test account only if full gameplay is eventually reached.
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
 
+**v0.90 adds a conditional, checked resolution path for two guest-owned
+linker section boundaries**, `__start_ls_rbx_dyninit1` and
+`__stop_ls_rbx_dyninit1`. The ELF stage reads the actual section-header
+table and binds them to the final code reservation only if one unambiguous
+`ls_rbx_dyninit1` section is allocated, correctly aligned, backed by
+`PT_LOAD`, and within the image's address range. Absent, stripped, ambiguous,
+or corrupt metadata leaves the imports unresolved. Versioned or unrelated
+symbols are never redirected to these guest pointers. The strict linker
+diagnostic now logs `dyninit_section_verified=0/1` so a future device trace
+can distinguish a real section from an assumption. Synthetic ELF tests cover
+positive and deliberately malformed metadata; **whether the actual Roblox
+ELF carries the section is not yet known**.
+
+**v0.90 also implements three Bionic FORTIFY `fd_set` entry points**:
+`__FD_SET_chk`, `__FD_CLR_chk` and `__FD_ISSET_chk`. They enforce Android's
+1024-descriptor limit and 128-byte object-size checks before modifying
+memory, and accept only the matching `LIBC`/`libc.so` provider. Host tests
+exercise the first/last bits, clearing and intentional FORTIFY aborts.
+**INFERRED:** these five names appeared in the v0.86 missing list, but this
+release has no new Switch hardware import count; actual engine startup,
+Roblox rendering and login remain blocked and unverified.
+
 **v0.87 introduces a paired ARM64 `setjmp`/`longjmp` provider** for the
 observed `LIBC` imports. The provider saves AArch64 callee-saved core and
 floating-point registers into a 32-word Bionic-sized buffer, and checks a
@@ -139,8 +161,9 @@ FORTIFY aborts, and failures that leave file contents unchanged. The desktop
 MCP cannot exercise these Horizon ABI providers, so these use standalone
 compatibility tests. **INFERRED:** these providers should reduce the missing
 import audit; there is no new hardware count or Roblox execution result yet.
-The unresolved dynamic-section boundary symbols and remaining Android
-services still block engine startup. This is not playable v1.0.
+The remaining Android runtime services and linker symbols still block engine
+startup. v0.90 only handles the dynamic-section boundaries when the actual
+guest ELF independently validates their addresses. This is not playable v1.0.
 
 ### Transfer from an iPhone without a PC
 

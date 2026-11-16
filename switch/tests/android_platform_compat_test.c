@@ -281,6 +281,45 @@ int main(void)
     char destination[16] = {0};
     assert(checked_memcpy(destination, "safe", 5, sizeof(destination)) == destination);
     assert(strcmp(destination, "safe") == 0);
+    // Android's checked fd_set functions use exactly 1024 descriptor bits,
+    // independent of the native libc's fd_set layout.
+    assert(android_fortify_compat_resolve("__FD_SET_chk", "LIBC", "libc.so", &address));
+    void (*checked_fd_set)(int, void *, size_t) =
+        (void (*)(int, void *, size_t))(uintptr_t)address;
+    assert(android_fortify_compat_resolve("__FD_ISSET_chk", "LIBC", "libc.so", &address));
+    int (*checked_fd_isset)(int, const void *, size_t) =
+        (int (*)(int, const void *, size_t))(uintptr_t)address;
+    assert(android_fortify_compat_resolve("__FD_CLR_chk", "LIBC", "libc.so", &address));
+    void (*checked_fd_clr)(int, void *, size_t) =
+        (void (*)(int, void *, size_t))(uintptr_t)address;
+    assert(!android_fortify_compat_resolve("__FD_SET_chk", "LIBC_O", "libc.so", &address));
+    assert(!android_fortify_compat_resolve("__FD_SET_chk", "LIBC", "libm.so", &address));
+    unsigned char guest_fds[128] = {0};
+    checked_fd_set(0, guest_fds, sizeof(guest_fds));
+    checked_fd_set(63, guest_fds, sizeof(guest_fds));
+    checked_fd_set(1023, guest_fds, sizeof(guest_fds));
+    assert(checked_fd_isset(0, guest_fds, sizeof(guest_fds)) == 1);
+    assert(checked_fd_isset(63, guest_fds, sizeof(guest_fds)) == 1);
+    assert(checked_fd_isset(64, guest_fds, sizeof(guest_fds)) == 0);
+    assert(checked_fd_isset(1023, guest_fds, sizeof(guest_fds)) == 1);
+    checked_fd_clr(63, guest_fds, sizeof(guest_fds));
+    assert(checked_fd_isset(63, guest_fds, sizeof(guest_fds)) == 0);
+    pid_t fd_failure = fork();
+    assert(fd_failure >= 0);
+    if (!fd_failure) { checked_fd_set(-1, guest_fds, sizeof(guest_fds)); _exit(20); }
+    int fd_status;
+    assert(waitpid(fd_failure, &fd_status, 0) == fd_failure);
+    assert(WIFSIGNALED(fd_status) && WTERMSIG(fd_status) == SIGABRT);
+    fd_failure = fork();
+    assert(fd_failure >= 0);
+    if (!fd_failure) { checked_fd_clr(1024, guest_fds, sizeof(guest_fds)); _exit(21); }
+    assert(waitpid(fd_failure, &fd_status, 0) == fd_failure);
+    assert(WIFSIGNALED(fd_status) && WTERMSIG(fd_status) == SIGABRT);
+    fd_failure = fork();
+    assert(fd_failure >= 0);
+    if (!fd_failure) { (void)checked_fd_isset(8, guest_fds, 16); _exit(22); }
+    assert(waitpid(fd_failure, &fd_status, 0) == fd_failure);
+    assert(WIFSIGNALED(fd_status) && WTERMSIG(fd_status) == SIGABRT);
     assert(android_fortify_compat_resolve("__mempcpy_chk", "LIBC", "libc.so", &address));
     void *(*checked_mempcpy)(void *, const void *, size_t, size_t) =
         (void *(*)(void *, const void *, size_t, size_t))(uintptr_t)address;

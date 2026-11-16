@@ -9,9 +9,14 @@
 enum {
     ELF_HEADER_SIZE = 64,
     PHDR_SIZE = 56,
+    SHDR_SIZE = 64,
     MAX_LOAD_SEGMENTS = 128,
+    MAX_SECTION_HEADERS = 4096,
+    MAX_SECTION_NAME_BYTES = 1024 * 1024,
     PT_LOAD = 1,
     PT_DYNAMIC = 2,
+    SHT_NOBITS = 8,
+    SHF_ALLOC = 2,
     DT_NULL = 0,
     DT_RELA = 7,
     DT_RELASZ = 8,
@@ -67,6 +72,18 @@ typedef struct {
     uint64_t file_bytes;
     uint64_t memory_bytes;
 } Segment;
+
+// The GNU linker can synthesize __start_SECNAME and __stop_SECNAME for
+// identifier-like section names. These are addresses *inside the guest ELF*,
+// not Bionic functions. Never invent them from a name alone: verify the
+// actual section exists and is mapped by a real PT_LOAD segment.
+typedef struct {
+    EngineSymbolResolver resolver;
+    void *context;
+    uint64_t start_address;
+    uint64_t stop_address;
+    bool verified;
+} DyninitBoundary;
 
 static uint32_t u32le(const unsigned char *p)
 {
@@ -135,6 +152,105 @@ static unsigned char *load_at(const EngineStage *stage, const Segment *segments,
             return mapped_at(stage, address, size);
     }
     return NULL;
+}
+
+static bool dyninit_boundary_resolve(const char *name, const char *version,
+                                    const char *library, uint64_t *address,
+                                    void *context)
+{
+    const DyninitBoundary *boundary = context;
+    if (boundary->verified && !version && !library) {
+        if (strcmp(name, "__start_ls_rbx_dyninit1") == 0) {
+            *address = boundary->start_address;
+            return true;
+        }
+        if (strcmp(name, "__stop_ls_rbx_dyninit1") == 0) {
+            *address = boundary->stop_address;
+            return true;
+        }
+    }
+    return boundary->resolver && boundary->resolver(name, version, library,
+                                                    address, boundary->context);
+}
+
+static bool verify_dyninit_section(FILE *file, const unsigned char *header,
+                                   uint64_t file_size, const EngineStage *stage,
+                                   const Segment *segments, unsigned segment_count,
+                                   uint64_t load_bias, DyninitBoundary *boundary)
+{
+    const uint64_t table_offset = u64le(header + 40);
+    const unsigned section_size = u16le(header + 58);
+    const unsigned section_count = u16le(header + 60);
+    const unsigned names_index = u16le(header + 62);
+    if (!table_offset || section_size != SHDR_SIZE || !section_count ||
+        section_count > MAX_SECTION_HEADERS || !names_index ||
+        names_index >= section_count ||
+        !within(table_offset, (uint64_t)section_count * SHDR_SIZE, file_size))
+        return false;
+
+    unsigned char names_header[SHDR_SIZE];
+    if (!read_at(file, table_offset + (uint64_t)names_index * SHDR_SIZE,
+                 names_header, sizeof(names_header)))
+        return false;
+    const uint64_t names_offset = u64le(names_header + 24);
+    const uint64_t names_size = u64le(names_header + 32);
+    if (u32le(names_header + 4) != 3 /* SHT_STRTAB */ ||
+        !names_size || names_size > MAX_SECTION_NAME_BYTES ||
+        !within(names_offset, names_size, file_size))
+        return false;
+
+    static const char wanted[] = "ls_rbx_dyninit1";
+    bool found = false;
+    for (unsigned i = 0; i < section_count; i++) {
+        unsigned char sh[SHDR_SIZE];
+        if (!read_at(file, table_offset + (uint64_t)i * SHDR_SIZE, sh, sizeof(sh)))
+            return false;
+        const uint32_t name_offset = u32le(sh);
+        if (!within(name_offset, sizeof(wanted), names_size))
+            continue;
+        char name[sizeof(wanted)];
+        if (!read_at(file, names_offset + name_offset, name, sizeof(name)))
+            return false;
+        if (memcmp(name, wanted, sizeof(wanted)) != 0)
+            continue;
+        // Duplicate or forged names cannot select an arbitrary guest address.
+        if (found)
+            return false;
+        found = true;
+        const uint32_t type = u32le(sh + 4);
+        const uint64_t flags = u64le(sh + 8);
+        const uint64_t address = u64le(sh + 16);
+        const uint64_t file_offset = u64le(sh + 24);
+        const uint64_t length = u64le(sh + 32);
+        if (!(flags & SHF_ALLOC) || !length || (address & 7) || (length & 7) ||
+            length > UINT64_MAX - address ||
+            address > UINT64_MAX - load_bias ||
+            address + length > UINT64_MAX - load_bias ||
+            !load_at(stage, segments, segment_count, address, (size_t)length, false))
+            return false;
+        bool backed = false;
+        for (unsigned j = 0; j < segment_count; j++) {
+            const Segment *seg = &segments[j];
+            if (address < seg->virtual_address)
+                continue;
+            const uint64_t offset = address - seg->virtual_address;
+            if (!within(offset, length, seg->memory_bytes))
+                continue;
+            if (type != SHT_NOBITS &&
+                (!within(offset, length, seg->file_bytes) ||
+                 seg->offset > UINT64_MAX - offset ||
+                 seg->offset + offset != file_offset))
+                continue;
+            backed = true;
+            break;
+        }
+        if (!backed)
+            return false;
+        boundary->start_address = load_bias + address;
+        boundary->stop_address = load_bias + address + length;
+    }
+    boundary->verified = found;
+    return found;
 }
 
 static bool abort_stage(EngineStage *stage, EngineStageStatus status, const char *message)
@@ -687,6 +803,13 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
     // Unknown symbols and mismatched version requirements fail closed.
     const uint64_t load_bias = (runtime_base ? runtime_base :
                                 (uint64_t)(uintptr_t)stage->image) - low;
+    DyninitBoundary boundary = {.resolver = resolver, .context = context};
+    if (verify_dyninit_section(file, header, probe.file_bytes, stage, segments,
+                               segment_count, load_bias, &boundary)) {
+        stage->dyninit_section_verified = true;
+        resolver = dyninit_boundary_resolve;
+        context = &boundary;
+    }
     unsigned missing_count = 0;
     if ((android_packed_size && !apply_packed_rela(stage, segments, segment_count,
                                                  packed, (size_t)android_packed_size,

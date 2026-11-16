@@ -157,6 +157,35 @@ static ssize_t fortify_readlink(const char *path, char *buffer, size_t count,
     return readlink(path, buffer, count);
 }
 
+// AOSP bionic_fortify.h uses a fixed 1024-bit Android fd_set and aborts if
+// either the descriptor or the compiler-provided object bound is invalid.
+// Operating on its 128-byte bit array avoids depending on a host fd_set ABI.
+static size_t checked_fd_byte(int fd, const void *set, size_t set_size,
+                              const char *operation)
+{
+    if (!set || fd < 0 || fd >= 1024 || set_size < 128)
+        bad_bound(operation);
+    return (unsigned)fd / 8;
+}
+
+static void fortify_fd_set(int fd, void *set, size_t set_size)
+{
+    const size_t byte = checked_fd_byte(fd, set, set_size, "FD_SET");
+    ((unsigned char *)set)[byte] |= (unsigned char)(1u << ((unsigned)fd % 8));
+}
+
+static void fortify_fd_clr(int fd, void *set, size_t set_size)
+{
+    const size_t byte = checked_fd_byte(fd, set, set_size, "FD_CLR");
+    ((unsigned char *)set)[byte] &= (unsigned char)~(1u << ((unsigned)fd % 8));
+}
+
+static int fortify_fd_isset(int fd, const void *set, size_t set_size)
+{
+    const size_t byte = checked_fd_byte(fd, set, set_size, "FD_ISSET");
+    return ((((const unsigned char *)set)[byte] >> ((unsigned)fd % 8)) & 1u) != 0;
+}
+
 static int fortify_vsnprintf(char *dest, size_t count, int flags,
                              size_t capacity, const char *format, va_list args)
 {
@@ -231,6 +260,9 @@ bool android_fortify_compat_resolve(const char *name, const char *version,
     MAP_FORTIFY("__strchr_chk", &fortify_strchr)
     MAP_FORTIFY("__read_chk", &fortify_read)
     MAP_FORTIFY("__readlink_chk", &fortify_readlink)
+    MAP_FORTIFY("__FD_SET_chk", &fortify_fd_set)
+    MAP_FORTIFY("__FD_CLR_chk", &fortify_fd_clr)
+    MAP_FORTIFY("__FD_ISSET_chk", &fortify_fd_isset)
     MAP_FORTIFY("__vsnprintf_chk", &fortify_vsnprintf)
     MAP_FORTIFY("__vsprintf_chk", &fortify_vsprintf)
     MAP_FORTIFY("__stack_chk_fail", &fortify_stack_chk_fail)
