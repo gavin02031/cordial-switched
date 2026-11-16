@@ -38,13 +38,27 @@ JSON null for version and library. Comparison emits every `missing_required`
 entry and exits 1 if any are absent. Do not infer this inventory merely by
 grepping MAP macros: target/compiler gates and runtime providers matter. A
 complete Horizon provider-manifest exporter is not implemented yet, so this
-comparison alone is not an established milestone-A check. CI currently tests
-the audit tool with synthetic fixtures; it does not have the proprietary ELF.
+comparison alone is not an established milestone-A check. When an actual
+manifest is supplied, the command writes both `missing_required` (import
+entries) and `missing_required_distinct` (unique name/version/provider keys),
+prints the complete distinct missing list, and exits with status 1 if any
+required keys remain. Do not confuse either count with relocation sites.
+CI currently tests the audit tool with synthetic fixtures; it does not have
+the proprietary ELF or a verified Horizon provider manifest.
 
 SVC matches can be data or unreachable instructions. A nonzero count needs
 inspection, not automatic patching; zero does not exclude instructions in
-dependencies or generated code. The repository's no-hooking/no-memory-patching
-rules still apply. Record evidence before selecting any compatibility strategy.
+dependencies or generated code. The offline audit also labels a `syscall_hint`
+when the **immediately preceding** aligned instruction is `MOVZ x8/w8, #N`
+with no shift. It recognizes Linux AArch64 numbers 98 (`futex`), 172
+(`getpid`) and 178 (`gettid`), but also retains other immediate values as
+numbers without names. This narrow sequence match is **not** control-flow
+analysis or proof that execution reaches the instruction; it does not infer
+values assembled across multiple instructions. A missing hint is not proof
+that a candidate is harmless. CI exercises the parser with synthetic ARM64
+instructions; the proprietary ELF remains outside the repository.
+The repository's no-hooking/no-memory-patching rules still apply. Record
+evidence before selecting any compatibility strategy.
 
 ## Runtime work still required
 

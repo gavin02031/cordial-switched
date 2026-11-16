@@ -9,6 +9,25 @@ import subprocess
 from pathlib import Path
 
 
+
+# AArch64 Linux syscall ABI passes the syscall number in x8. Recognize only
+# a directly adjacent MOVZ x8/w8, #imm16 with zero halfword shift. This is
+# static evidence, not a control-flow or reachability determination.
+_LINUX_SYSCALL_HINTS = {98: 'futex', 172: 'getpid', 178: 'gettid'}
+
+
+def adjacent_syscall_hint(data, instruction_offset):
+    if instruction_offset < 4:
+        return None
+    prior = struct.unpack_from('<I', data, instruction_offset - 4)[0]
+    if (prior & 0xffe0001f) not in (0xd2800008, 0x52800008):
+        return None
+    syscall_number = (prior >> 5) & 0xffff
+    return {'number': syscall_number,
+            'name': _LINUX_SYSCALL_HINTS.get(syscall_number),
+            'basis': 'immediately_preceding_movz_x8_or_w8'}
+
+
 def svc_candidates(data):
     if len(data) < 64 or data[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', data, 18)[0] != 183:
         raise ValueError('expected a little-endian ELF64 AArch64 library')
@@ -17,17 +36,28 @@ def svc_candidates(data):
     if stride != 56 or not count or count == 65535 or offset + stride * count > len(data):
         raise ValueError('invalid or unsupported program header table')
     found = set()
+    executable_segments = []
     for i in range(count):
         kind, flags, start, address, _, size, memory, _ = struct.unpack_from('<IIQQQQQQ', data, offset + i * stride)
         if start + size > len(data) or size > memory:
             raise ValueError('invalid segment extent')
         if kind != 1 or not flags & 1:
             continue
+        executable_segments.append((kind, flags, start, size))
         for relative in range((-address) % 4, size - 3, 4):
             word = struct.unpack_from('<I', data, start + relative)[0]
             if word == 0xd4000001:  # AArch64 SVC #0, including data in executable segments.
                 found.add((address + relative, start + relative))
-    return [{'virtual_address': hex(a), 'file_offset': hex(o)} for a, o in sorted(found)]
+    candidates = []
+    for address, offset in sorted(found):
+        entry = {'virtual_address': hex(address), 'file_offset': hex(offset)}
+        hint = adjacent_syscall_hint(data, offset)
+        # Do not infer instructions across segment boundaries or file pages.
+        if hint and any(kind == 1 and flags & 1 and start + 4 <= offset < start + size
+                        for kind, flags, start, size in executable_segments):
+            entry['syscall_hint'] = hint
+        candidates.append(entry)
+    return candidates
 
 
 def parse_imports(symbols, versions):
@@ -88,6 +118,36 @@ def inventory(path, readelf):
                 caveat='SVC matches may be data or unreachable code; absence does not exclude computed instructions or syscalls in dependencies. Import inventory is not an execution test.')
 
 
+
+def compare_provider_manifest(imports, providers):
+    """Compare exact ABI keys; preserve sites and also report distinct missing names."""
+    if not isinstance(providers, list):
+        raise ValueError('provider manifest must be a JSON array')
+    available = set()
+    for provider in providers:
+        if not isinstance(provider, dict) or not all(
+                key in provider for key in ('name', 'version', 'library')):
+            raise ValueError('provider manifest record needs name, version and library')
+        if not isinstance(provider['name'], str) or not provider['name']:
+            raise ValueError('provider name must be a nonempty string')
+        if provider['version'] is not None and not isinstance(provider['version'], str):
+            raise ValueError('provider version must be a string or null')
+        if provider['library'] is not None and not isinstance(provider['library'], str):
+            raise ValueError('provider library must be a string or null')
+        available.add((provider['name'], provider['version'], provider['library']))
+    missing = [item for item in imports if item['required'] and
+               (item['name'], item['version'], item['library']) not in available]
+    seen = set()
+    distinct = []
+    for item in missing:
+        key = (item['name'], item['version'], item['library'])
+        if key not in seen:
+            seen.add(key)
+            distinct.append({'name': item['name'], 'version': item['version'],
+                             'library': item['library']})
+    return missing, distinct
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf', type=Path)
@@ -98,14 +158,20 @@ def main():
     report = inventory(args.elf, args.readelf)
     if args.providers:
         supplied = json.loads(args.providers.read_text())
-        available = {(p['name'], p['version'], p['library']) for p in supplied}
-        report['missing_required'] = [p for p in report['imports'] if p['required'] and
-                                     (p['name'], p['version'], p['library']) not in available]
+        (report['missing_required'], report['missing_required_distinct']) = (
+            compare_provider_manifest(report['imports'], supplied))
+        report['missing_required_import_entries'] = len(report['missing_required'])
+        report['missing_required_distinct_count'] = len(report['missing_required_distinct'])
         report['provider_manifest_sha256'] = hashlib.sha256(args.providers.read_bytes()).hexdigest()
     args.output.write_text(json.dumps(report, indent=2) + '\n')
     print(f"{report['required_symbols']} required, {report['optional_symbols']} optional symbols; "
           f"{len(report['svc_zero_candidates'])} SVC #0 candidates")
     if args.providers and report['missing_required']:
+        print(f"Missing {report['missing_required_distinct_count']} distinct required ABI keys "
+              f"across {report['missing_required_import_entries']} import entries:")
+        for item in report['missing_required_distinct']:
+            print(f"  {item['name']} @ {item['version'] or 'unversioned'} "
+                  f"from {item['library'] or 'unspecified'}")
         raise SystemExit(1)
 
 
