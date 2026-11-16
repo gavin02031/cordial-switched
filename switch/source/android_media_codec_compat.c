@@ -99,6 +99,7 @@ bool android_media_codec_compat_resolve(const char *name, const char *version,
         *address = (uint64_t)(uintptr_t)&implementation; else
     MEDIA_MAP(AMediaCodec_createDecoderByType, codec_create)
     MEDIA_MAP(AMediaCodec_createEncoderByType, codec_create)
+    MEDIA_MAP(AMediaCodec_createCodecByName, codec_create)
     MEDIA_MAP(AMediaCodec_delete, codec_delete)
     MEDIA_MAP(AMediaCodec_configure, codec_configure)
     MEDIA_MAP(AMediaCodec_start, codec_state)

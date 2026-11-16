@@ -56,6 +56,7 @@ jobs:
             switch/source/android_log_compat.c switch/source/android_math_compat.c \
             switch/source/android_media_format_compat.c switch/source/android_media_codec_compat.c \
             switch/source/android_image_reader_compat.c \
+            switch/source/android_coverage_compat.c \
             switch/source/android_cxa_compat.c switch/source/android_looper_compat.c \
             switch/source/android_native_window_compat.c \
             switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
@@ -158,6 +159,13 @@ jobs:
             switch/source/android_image_reader_compat.c \
             -o /tmp/morrow-image-reader-test
           /tmp/morrow-image-reader-test
+      - name: Test diagnostic-only gcov hooks
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_coverage_compat_test.c \
+            switch/source/android_coverage_compat.c \
+            -o /tmp/morrow-coverage-compat-test
+          /tmp/morrow-coverage-compat-test
       - name: Test Android Bionic libc and stdio adapters
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

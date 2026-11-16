@@ -7,6 +7,7 @@
 #include "android_log_compat.h"
 #include "android_media_codec_compat.h"
 #include "android_image_reader_compat.h"
+#include "android_coverage_compat.h"
 #include "android_cxa_compat.h"
 #include "android_looper_compat.h"
 #include "android_dl_compat.h"
@@ -69,6 +70,7 @@ static bool resolve_compatible_import(const char *name, const char *version,
                              android_log_compat_resolve(name, address, NULL)) ||
                             android_media_codec_compat_resolve(name, version, library, address) ||
                             android_image_reader_compat_resolve(name, version, library, address) ||
+                            android_coverage_compat_resolve(name, version, library, address) ||
                             android_media_format_compat_resolve(name, version, library, address) ||
                             android_cxa_compat_resolve(name, version, library, address) ||
                             android_looper_compat_resolve(name, version, library, address) ||

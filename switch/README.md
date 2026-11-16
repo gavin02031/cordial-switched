@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.82 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.83 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.82 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.83 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -94,6 +94,21 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+**v0.83 handles the next strict linker stop, `__gcov_dump`,** from the v0.82
+`link-19.txt` report. It also resolves `__gcov_flush`: both are void profiler
+hooks, not rendering or gameplay services. Because Horizon has no guest gcov
+counter registry, a call explicitly warns that coverage was not saved; Morrow
+does not silently claim a profile was written. Compatible pure libc string,
+wide-character and numeric functions now bind only to `LIBC` from `libc.so`,
+and the 16-byte `in6addr_any` / `in6addr_loopback` data constants bind only to
+the observed `LIBC_N` provider. Android `AMediaCodec_createCodecByName` now
+returns null through the same honest unsupported-decoder path as its peers.
+**INFERRED:** the v0.82 audit still reported 292 missing imports and 2,505 ELF
+constructors. Remaining mismatched ABI functions (notably `setjmp`/`longjmp`
+and POSIX structures) are intentionally not forwarded blindly to libnx.
+This is a linker compatibility update, not a verified Roblox frame or login.
+After installing, run Loader L3 and send the next `link-XX.txt`.
+
 **v0.82 handles the next strict linker stop, `__sF@LIBC`,** observed on Switch
 in the v0.81 `link-18.txt` report. The pre-Android-M three-element standard
 stream array now has Bionic's verified 152-byte LP64 stride. FILE-taking stdio

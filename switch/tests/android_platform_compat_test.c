@@ -13,6 +13,7 @@
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <wchar.h>
 
 int main(void)
 {
@@ -80,6 +81,36 @@ int main(void)
     size_t (*android_strlen)(const char *) =
         (size_t (*)(const char *))(uintptr_t)address;
     assert(android_strlen("Switch") == 6);
+    assert(android_libc_compat_resolve("strtoll", "LIBC", "libc.so", &address));
+    long long (*android_strtoll)(const char *, char **, int) =
+        (long long (*)(const char *, char **, int))(uintptr_t)address;
+    assert(android_strtoll("-9876543210", NULL, 10) == -9876543210LL);
+    assert(android_libc_compat_resolve("strcspn", "LIBC", "libc.so", &address));
+    size_t (*android_strcspn)(const char *, const char *) =
+        (size_t (*)(const char *, const char *))(uintptr_t)address;
+    assert(android_strcspn("world.txt", ".") == 5);
+    assert(android_libc_compat_resolve("strcasecmp", "LIBC", "libc.so", &address));
+    int (*android_strcasecmp)(const char *, const char *) =
+        (int (*)(const char *, const char *))(uintptr_t)address;
+    assert(android_strcasecmp("Roblox", "rObLoX") == 0);
+    assert(android_libc_compat_resolve("wcslen", "LIBC", "libc.so", &address));
+    size_t (*android_wcslen)(const wchar_t *) =
+        (size_t (*)(const wchar_t *))(uintptr_t)address;
+    assert(android_wcslen(L"Morrow") == 6);
+    assert(android_libc_compat_resolve("wmemchr", "LIBC", "libc.so", &address));
+    wchar_t *(*android_wmemchr)(const wchar_t *, wchar_t, size_t) =
+        (wchar_t *(*)(const wchar_t *, wchar_t, size_t))(uintptr_t)address;
+    assert(android_wmemchr(L"switch", L'i', 6) != NULL);
+    assert(!android_libc_compat_resolve("wmemchr", "LIBC_N", "libc.so", &address));
+    assert(android_libc_compat_resolve("in6addr_any", "LIBC_N", "libc.so", &address));
+    const unsigned char *ipv6_any = (const unsigned char *)(uintptr_t)address;
+    unsigned char zero_ipv6[16] = {0};
+    assert(memcmp(ipv6_any, zero_ipv6, sizeof(zero_ipv6)) == 0);
+    assert(android_libc_compat_resolve("in6addr_loopback", "LIBC_N", "libc.so", &address));
+    const unsigned char *ipv6_loop = (const unsigned char *)(uintptr_t)address;
+    assert(memcmp(ipv6_loop, zero_ipv6, sizeof(zero_ipv6) - 1) == 0);
+    assert(ipv6_loop[15] == 1);
+    assert(!android_libc_compat_resolve("in6addr_any", "LIBC", "libc.so", &address));
     assert(android_libc_compat_resolve("ldexp", "LIBC", "libc.so", &address));
     double (*android_ldexp)(double, int) = (double (*)(double, int))(uintptr_t)address;
     assert(android_ldexp(1.5, 3) == 12.0);

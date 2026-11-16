@@ -3,12 +3,19 @@
 #include "android_libc_compat.h"
 
 #include <errno.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
+#include <wchar.h>
+
+// Android ARM64 and Horizon AArch64 both use 32-bit wchar_t. Only forward
+// these pure wide-string operations when the native ABI actually matches.
+_Static_assert(sizeof(wchar_t) == 4, "Bionic ARM64 wchar_t must be 4 bytes");
 #ifdef __SWITCH__
 #include <switch.h>
 #else
@@ -30,6 +37,14 @@ static int android_getentropy(void *buffer, size_t count)
     return getentropy(buffer, count);
 #endif
 }
+
+// Bionic exports these 16-byte IPv6 address constants as LIBC_N data
+// symbols. A host's provider version cannot be assumed to match, but their
+// byte representation is defined by RFC 4291 and has no libc struct padding.
+static const _Alignas(16) unsigned char ipv6_unspecified[16] = {0};
+static const _Alignas(16) unsigned char ipv6_loopback[16] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+};
 
 // Android and newlib use different numeric clock IDs. The relevant Android
 // constants are 0=REALTIME, 1=MONOTONIC, 2=PROCESS and 3=THREAD CPU time.
@@ -66,6 +81,17 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         *address = (uint64_t)(uintptr_t)&android_getentropy;
         return true;
     }
+    if (name && address && version && library &&
+        strcmp(version, "LIBC_N") == 0 &&
+        strcmp(library, "libc.so") == 0) {
+        if (strcmp(name, "in6addr_any") == 0)
+            *address = (uint64_t)(uintptr_t)ipv6_unspecified;
+        else if (strcmp(name, "in6addr_loopback") == 0)
+            *address = (uint64_t)(uintptr_t)ipv6_loopback;
+        else
+            *address = 0;
+        return *address != 0;
+    }
     if (!name || !version || !library || !address ||
         strcmp(version, "LIBC") != 0 || strcmp(library, "libc.so") != 0)
         return false;
@@ -88,15 +114,36 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(memset)
     MAP_LIBC(strcpy)
     MAP_LIBC(strncpy)
+    MAP_LIBC(strcat)
+    MAP_LIBC(strncat)
+    MAP_LIBC(strcspn)
+    MAP_LIBC(strspn)
+    MAP_LIBC(strpbrk)
+    MAP_LIBC(strnlen)
+    MAP_LIBC(strcasecmp)
+    MAP_LIBC(strncasecmp)
     MAP_LIBC(vsnprintf)
     MAP_LIBC(snprintf)
     MAP_LIBC(strtol)
     MAP_LIBC(strtoul)
+    MAP_LIBC(strtoll)
+    MAP_LIBC(strtoull)
     MAP_LIBC(strtod)
     MAP_LIBC(strtof)
     MAP_LIBC(atoi)
     MAP_LIBC(atol)
+    MAP_LIBC(atoll)
+    MAP_LIBC(atof)
     MAP_LIBC(abs)
+    MAP_LIBC(isspace)
+    MAP_LIBC(tolower)
+    MAP_LIBC(wcslen)
+    MAP_LIBC(wmemchr)
+    MAP_LIBC(wmemcmp)
+    MAP_LIBC(ldiv)
+    MAP_LIBC(difftime)
+    MAP_LIBC(printf)
+    MAP_LIBC(puts)
     MAP_LIBC(rand)
     MAP_LIBC(srand)
     MAP_LIBC(qsort)

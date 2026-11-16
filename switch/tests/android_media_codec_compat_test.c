@@ -19,8 +19,10 @@ int main(void)
 {
     void *(*decoder)(const char *) = BIND("AMediaCodec_createDecoderByType", void *(*)(const char *));
     void *(*encoder)(const char *) = BIND("AMediaCodec_createEncoderByType", void *(*)(const char *));
+    void *(*named)(const char *) = BIND("AMediaCodec_createCodecByName", void *(*)(const char *));
     assert(decoder("video/avc") == NULL);
     assert(encoder("video/avc") == NULL);
+    assert(named("c2.android.avc.decoder") == NULL);
     int32_t (*start)(void *) = BIND("AMediaCodec_start", int32_t (*)(void *));
     int32_t (*stop)(void *) = BIND("AMediaCodec_stop", int32_t (*)(void *));
     int32_t (*flush)(void *) = BIND("AMediaCodec_flush", int32_t (*)(void *));
