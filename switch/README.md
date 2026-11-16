@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.78 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.79 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.78 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.79 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -165,6 +165,20 @@ been written durably; an unclean exit leaves a recoverable `crash-XX.txt` on
 the next launch. You can leave the exclusive display with **PLUS**. This is
 **not a working Android event loop**, verified Roblox login, or playable
 experience. No real guest frame has been verified on Switch hardware.
+
+**v0.79 fixes an exclusive-launch bootstrap ordering bug.** The opt-in
+**ZL + ZR + Minus** engine path previously created the JNI VM *before* asking
+the mounted SD filesystem for its free space. The VM registers the typed
+`LocalStorageManager` only at creation time, so the engine path could not
+expose that class even when the SD measurement would have succeeded. Normal
+**L3** diagnostics already used the correct order. Both paths now share the
+same preparation routine, which reads SD free space before creating the VM.
+The existing `jni_storage_free_space_measured` and
+`jni_local_storage_manager_registered` fields in the numbered link report
+show whether the actual runtime objects were available; neither is a claim
+that Roblox's storage subsystem initialised. **INFERRED:** restoring the
+required Java class may remove one engine startup obstacle. This still needs
+a real Switch run and does not verify login, a Roblox frame or gameplay.
 
 **v0.78 makes native crash breadcrumbs more reliable.** JNI_OnLoad,
 GameActivity, each App Bridge entry and each main-thread pump callback now

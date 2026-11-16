@@ -47,6 +47,20 @@ static void bind_switch_sd_free_space(void)
     if (R_SUCCEEDED(fsFsGetFreeSpace(sd, "/", &bytes)) && bytes >= 0)
         morrow_jni_runtime_bind_storage_available_bytes(bytes);
 }
+
+static bool prepare_jni_runtime(void)
+{
+    // libjnivm registers LocalStorageManager only while it creates the VM.
+    // Starting it before reading the SD mount made the exclusive engine path
+    // silently lose this class even when the storage service was available.
+    bind_switch_sd_free_space();
+    if (!morrow_jni_runtime_start())
+        return false;
+    bind_switch_system_locale();
+    morrow_jni_runtime_game_activity();
+    morrow_jni_runtime_local_storage_manager();
+    return true;
+}
 #endif
 
 // Keep the existing stage-XX naming while recording a fuller preflight trace.
@@ -143,12 +157,8 @@ static int exclusive_engine_launch(void)
     // window and video state. The Horizon NWindow can now be owned by guest
     // EGL without SDL attempting concurrent presents on the same display.
     horizon_real_link_enable_exclusive_graphics();
-    if (!morrow_jni_runtime_start())
+    if (!prepare_jni_runtime())
         return failure_screen("Exclusive engine launch: real JNI VM unavailable.");
-    bind_switch_sd_free_space();
-    bind_switch_system_locale();
-    morrow_jni_runtime_game_activity();
-    morrow_jni_runtime_local_storage_manager();
     morrow_jni_runtime_bind_horizon_surface(
         nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
     morrow_jni_runtime_bind_asset_manager(ENGINE_REPORT_DIR "/assets");
@@ -379,11 +389,7 @@ int main(void)
 #ifdef MORROW_HAS_JNIVM
             // Register a genuine Java reference to the host-owned window,
             // but do not create another EGL context while SDL is drawing.
-            bind_switch_sd_free_space();
-            if (morrow_jni_runtime_start()) {
-                bind_switch_system_locale();
-                morrow_jni_runtime_game_activity();
-                morrow_jni_runtime_local_storage_manager();
+            if (prepare_jni_runtime()) {
                 morrow_jni_runtime_bind_horizon_surface(
                     nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
                 morrow_jni_runtime_bind_asset_manager(
