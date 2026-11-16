@@ -21,7 +21,8 @@ static void expect_invalid_jump_aborts(uint64_t *buffer)
     assert(child >= 0);
     if (child == 0) {
         // The guard is expected to abort; an ordinary return would be a bug.
-        (void)freopen("/dev/null", "w", stderr);
+        FILE *redirected = freopen("/dev/null", "w", stderr);
+        assert(redirected == stderr);
         morrow_jump_require_valid(buffer);
         _exit(0);
     }
