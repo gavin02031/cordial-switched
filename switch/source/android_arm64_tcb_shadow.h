@@ -4,8 +4,9 @@
 #include <stddef.h>
 
 // AArch64 Bionic reserves slots -1 through 7 relative to the thread pointer.
-// This is deliberately only an in-memory diagnostic layout: installing it in
-// TPIDR_EL0 would replace Horizon's native TLS and is not implemented.
+// This is only an in-memory diagnostic layout; TPIDR_EL0 is not installed.
+// libnx armGetTls uses TPIDRRO_EL0. A guest TPIDR_EL0 bridge still needs
+// validation across native callbacks, thread creation and compiler TLS.
 typedef struct {
     void *bionic_tls;      // TP[-1]
     void *dtv;             // TP[0]

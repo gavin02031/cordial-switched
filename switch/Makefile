@@ -12,15 +12,19 @@ BUILD        := build
 SOURCES      := source
 APP_TITLE    := Cordial Switched
 APP_AUTHOR   := Cordial Switched contributors
-APP_VERSION  := 0.99.0
+APP_VERSION  := 0.99.1
 
 ARCH        := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS      := -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) -D__SWITCH__ $(INCLUDE) \
                `sdl2-config --cflags` `$(PREFIX)pkg-config --cflags SDL2_ttf`
+CFLAGS      += -DMORROW_BUILD_VERSION=\"$(APP_VERSION)\"
 ASFLAGS     := -g $(ARCH)
 LDFLAGS     := -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBS        := `sdl2-config --libs` `$(PREFIX)pkg-config --libs SDL2_ttf` -lGLESv2 -lEGL -lglapi -ldrm_nouveau -lnx -lm
-LIBDIRS     := $(PORTLIBS) $(LIBNX)
+LIBDIRS     := $(MORROW_LIBNX) $(PORTLIBS) $(LIBNX)
+ifneq ($(strip $(MORROW_LIBNX)),)
+CFLAGS += -DMORROW_HAS_POSITIONAL_IO
+endif
 
 # The proven graphics preview remains unchanged by default. The JNI-enabled
 # build is a separate CI artifact until its runtime is checked on hardware.

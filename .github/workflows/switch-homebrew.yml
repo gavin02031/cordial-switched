@@ -321,9 +321,11 @@ jobs:
     container: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
+      - name: Build positional filesystem extension
+        run: bash switch/scripts/build-positional-libnx.sh /tmp/morrow-libnx
       - name: Compile native Horizon target
         working-directory: switch
-        run: make -j2
+        run: make MORROW_LIBNX=/tmp/morrow-libnx -j2
       - name: Check generated executable
         run: |
           test -s switch/cordial-switched.elf
@@ -333,7 +335,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cordial-switched-switch-preview
-          path: switch/cordial-switched.nro
+          path: |
+            switch/cordial-switched.nro
+            switch/AOSP-NOTICE.txt
           if-no-files-found: error
 
   jni-provider-host-test:
@@ -413,10 +417,12 @@ jobs:
           grep -q 'jnivm::VM' /tmp/morrow-jnivm-symbols.txt
       - name: Link standalone on-console JNI diagnostic
         working-directory: switch/jni_probe
-        run: make -j2
+        run: make MORROW_LIBNX=/tmp/morrow-libnx -j2
+      - name: Build positional filesystem extension
+        run: bash switch/scripts/build-positional-libnx.sh /tmp/morrow-libnx
       - name: Link opt-in JNI runtime into main Morrow preview
         working-directory: switch
-        run: make WITH_JNIVM=1 -j2
+        run: make WITH_JNIVM=1 MORROW_LIBNX=/tmp/morrow-libnx -j2
       - name: Check JNI diagnostic executable
         run: |
           test -s switch/jni_probe/morrow-jni-probe.elf
@@ -432,5 +438,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: morrow-switch-jni-runtime-preview
-          path: switch/cordial-switched.nro
+          path: |
+            switch/cordial-switched.nro
+            switch/AOSP-NOTICE.txt
           if-no-files-found: error

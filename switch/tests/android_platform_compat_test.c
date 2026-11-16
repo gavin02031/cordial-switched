@@ -57,8 +57,81 @@ static int call_checked_vsprintf(uint64_t address, char *dest, size_t capacity,
     return result;
 }
 
+static int exit_marker_fd = -1;
+
+static void unexpected_exit_handler(void)
+{
+    const char marker = 'x';
+    (void)write(exit_marker_fd, &marker, 1);
+}
+
+static void test_error_strings_and_immediate_exit(void)
+{
+    uint64_t address = 0;
+    assert(android_libc_compat_resolve("strerror_r", "LIBC", "libc.so", &address));
+    int (*error_string)(int, char *, size_t) =
+        (int (*)(int, char *, size_t))(uintptr_t)address;
+    char buffer[80];
+    errno = EBUSY;
+    assert(error_string(0, buffer, sizeof(buffer)) == 0 && !strcmp(buffer, "Success"));
+    assert(error_string(11, buffer, sizeof(buffer)) == 0 && !strcmp(buffer, "Try again"));
+    // These guest numbers differ from the Horizon/newlib values.
+    assert(error_string(95, buffer, sizeof(buffer)) == 0 &&
+           !strcmp(buffer, "Operation not supported on transport endpoint"));
+    assert(error_string(115, buffer, sizeof(buffer)) == 0 &&
+           !strcmp(buffer, "Operation now in progress"));
+    assert(error_string(133, buffer, sizeof(buffer)) == 0 &&
+           !strcmp(buffer, "Memory page has hardware error"));
+    assert(error_string(41, buffer, sizeof(buffer)) == 0 && !strcmp(buffer, "Unknown error 41"));
+    assert(error_string(INT_MIN, buffer, sizeof(buffer)) == 0 &&
+           !strcmp(buffer, "Unknown error -2147483648"));
+    assert(error_string(INT_MAX, buffer, sizeof(buffer)) == 0 &&
+           !strcmp(buffer, "Unknown error 2147483647"));
+    assert(error_string(0, buffer, 8) == 0 && !strcmp(buffer, "Success"));
+    buffer[7] = 'x';
+    assert(error_string(0, buffer, 7) == 34 && !strcmp(buffer, "Succes") && buffer[7] == 'x');
+    assert(error_string(0, buffer, 1) == 34 && buffer[0] == 0);
+    buffer[0] = 'y';
+    assert(error_string(0, buffer, 0) == 34 && buffer[0] == 'y');
+    assert(error_string(0, NULL, 0) == 34);
+    assert(errno == EBUSY);
+    assert(android_libc_compat_resolve("__gnu_strerror_r", "LIBC", "libc.so", &address));
+    char *(*gnu_error_string)(int, char *, size_t) =
+        (char *(*)(int, char *, size_t))(uintptr_t)address;
+    assert(gnu_error_string(0, buffer, sizeof(buffer)) == buffer && !strcmp(buffer, "Success"));
+    assert(gnu_error_string(0, buffer, 3) == buffer && !strcmp(buffer, "Su"));
+    assert(gnu_error_string(0, buffer, 0) == buffer && !strcmp(buffer, "Su"));
+    assert(errno == EBUSY);
+    const char *names[] = {"strerror_r", "__gnu_strerror_r", "_exit"};
+    for (unsigned i = 0; i < sizeof(names) / sizeof(names[0]); i++) {
+        assert(!android_libc_compat_resolve(names[i], "LIBC_N", "libc.so", &address));
+        assert(!android_libc_compat_resolve(names[i], "LIBC", "libdl.so", &address));
+        assert(!android_libc_compat_resolve(names[i], NULL, NULL, &address));
+    }
+    assert(android_libc_compat_resolve("_exit", "LIBC", "libc.so", &address));
+    void (*immediate_exit)(int) = (void (*)(int))(uintptr_t)address;
+    int descriptors[2];
+    assert(pipe(descriptors) == 0);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) {
+        close(descriptors[0]);
+        exit_marker_fd = descriptors[1];
+        assert(atexit(unexpected_exit_handler) == 0);
+        immediate_exit(37);
+        abort();
+    }
+    close(descriptors[1]);
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 37);
+    assert(read(descriptors[0], buffer, sizeof(buffer)) == 0);
+    close(descriptors[0]);
+}
+
 int main(void)
 {
+    test_error_strings_and_immediate_exit();
     uint64_t address = 0;
     assert(android_stdio_compat_resolve("vasprintf", "LIBC", "libc.so", &address));
     char *allocated_text = NULL;

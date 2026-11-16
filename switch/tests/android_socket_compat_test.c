@@ -7,6 +7,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <sys/resource.h>
 #include <unistd.h>
 
 #include "android_socket_compat.h"
@@ -355,8 +358,171 @@ static void readiness_test(void)
     assert(!android_socket_compat_resolve("select", "LIBC", "libdl.so", &address));
 }
 
+// Bionic headers are deliberately described independently of the adapter.
+typedef struct { void *base; size_t length; } TestIovec;
+typedef struct {
+    void *name;
+    uint32_t name_length;
+    TestIovec *vectors;
+    size_t vector_count;
+    void *control;
+    size_t control_length;
+    int flags;
+} TestMessage;
+typedef struct { TestMessage message; uint32_t length; } TestMultiMessage;
+typedef ssize_t (*SendMessageFn)(int, const TestMessage *, int);
+typedef ssize_t (*ReceiveMessageFn)(int, TestMessage *, int);
+typedef int (*SendMultiFn)(int, TestMultiMessage *, unsigned, int);
+typedef int (*ReceiveMultiFn)(int, TestMultiMessage *, unsigned, int, int64_t *);
+typedef ssize_t (*CheckedSendFn)(int, const void *, size_t, size_t, int,
+                                  const void *, uint32_t);
+
+static void messages_test(bool ipv6)
+{
+    SocketFn open_socket = (SocketFn)(uintptr_t)symbol("socket");
+    AddressFn bind_socket = (AddressFn)(uintptr_t)symbol("bind");
+    NameFn socket_name = (NameFn)(uintptr_t)symbol("getsockname");
+    SendMessageFn send_message = (SendMessageFn)(uintptr_t)symbol("sendmsg");
+    ReceiveMessageFn receive_message = (ReceiveMessageFn)(uintptr_t)symbol("recvmsg");
+    SendMultiFn send_many = (SendMultiFn)(uintptr_t)symbol("sendmmsg");
+    ReceiveMultiFn receive_many = (ReceiveMultiFn)(uintptr_t)symbol("recvmmsg");
+    uint32_t address_length = ipv6 ? 28 : 16;
+    unsigned char address[28] = {0};
+    if (ipv6) { address[0] = 10; address[23] = 1; }
+    else guest_loopback(address);
+    int server = open_socket(ipv6 ? 10 : 2, 2, 0);
+    if (ipv6 && server < 0 && (errno == EAFNOSUPPORT || errno == EPROTONOSUPPORT)) return;
+    assert(server >= 0);
+    int bound = bind_socket(server, address, address_length);
+    if (ipv6 && bound < 0 && (errno == EADDRNOTAVAIL || errno == ENETUNREACH)) {
+        close(server);
+        return;
+    }
+    assert(bound == 0);
+    assert(socket_name(server, address, &address_length) == 0);
+    int client = open_socket(ipv6 ? 10 : 2, 2, 0);
+    assert(client >= 0);
+    TestIovec outgoing[] = {{"scatter", 7}, {NULL, 0}, {"gather", 6}};
+    TestMessage request = {.name = address, .name_length = address_length,
+                           .vectors = outgoing, .vector_count = 3};
+    assert(send_message(client, &request, 0) == 13);
+    char prefix[7] = {0}, suffix[6] = {0};
+    TestIovec incoming[] = {{prefix, sizeof(prefix)}, {suffix, sizeof(suffix)}};
+    unsigned char peer[28] = {0};
+    TestMessage reply = {.name = peer, .name_length = sizeof(peer),
+                         .vectors = incoming, .vector_count = 2};
+    assert(receive_message(server, &reply, 0) == 13);
+    assert(!memcmp(prefix, "scatter", 7) && !memcmp(suffix, "gather", 6));
+    assert(reply.name_length == address_length && peer[0] == address[0]);
+    assert(reply.control_length == 0 && reply.flags == 0);
+    assert(reply.vectors == incoming && reply.vector_count == 2);
+
+    // Datagram truncation must become Android's MSG_TRUNC, never the BSD bit.
+    assert(send_message(client, &request, 0) == 13);
+    incoming[0].length = 2;
+    reply.vector_count = 1;
+    reply.name_length = 1;
+    memset(peer, 0x5a, sizeof(peer));
+    assert(receive_message(server, &reply, 0) == 2);
+    assert(reply.flags & 0x20);
+    assert(reply.name_length == address_length && peer[1] == 0x5a);
+
+    TestMultiMessage batch[2] = {{.message = request}, {.message = request}};
+    assert(send_many(client, batch, 2, 0) == 2);
+    assert(batch[0].length == 13 && batch[1].length == 13);
+    char texts[3][20] = {{0}};
+    TestIovec vectors[3];
+    TestMultiMessage received[3] = {0};
+    for (unsigned i = 0; i < 3; ++i) {
+        vectors[i] = (TestIovec){texts[i], sizeof(texts[i])};
+        received[i].message.vectors = &vectors[i];
+        received[i].message.vector_count = 1;
+        received[i].length = 1234;
+    }
+    int64_t timeout[2] = {1, 0};
+    // Two queued datagrams and three slots: DONTWAIT returns the completed
+    // prefix and leaves the unfilled third output untouched.
+    assert(receive_many(server, received, 3, 0x40, timeout) == 2);
+    assert(received[0].length == 13 && received[1].length == 13);
+    assert(received[2].length == 1234 && texts[2][0] == 0);
+    assert(!memcmp(texts[0], "scattergather", 13));
+    assert(!memcmp(texts[1], "scattergather", 13));
+    assert(timeout[0] >= 0 && timeout[0] <= 1);
+    assert(timeout[1] >= 0 && timeout[1] < 1000000000);
+    assert(receive_many(server, received, 1, 0x40, NULL) == -1);
+    assert(errno == EAGAIN || errno == EWOULDBLOCK);
+
+    uint64_t checked_address = 0;
+    assert(android_socket_compat_resolve("__sendto_chk", "LIBC_O", "libc.so", &checked_address));
+    CheckedSendFn checked = (CheckedSendFn)(uintptr_t)checked_address;
+    assert(checked(client, "checked", 7, 7, 0, address, address_length) == 7);
+    assert(receive_message(server, &received[0].message, 0) == 7);
+    assert(!memcmp(texts[0], "checked", 7));
+    close(client);
+    close(server);
+}
+
+static void messages_invalid_test(void)
+{
+    SendMessageFn send_message = (SendMessageFn)(uintptr_t)symbol("sendmsg");
+    ReceiveMessageFn receive_message = (ReceiveMessageFn)(uintptr_t)symbol("recvmsg");
+    ReceiveMultiFn receive_many = (ReceiveMultiFn)(uintptr_t)symbol("recvmmsg");
+    TestMessage message = {0};
+    assert(send_message(-1, NULL, 0) == -1 && errno == EFAULT);
+    message.vector_count = 1025;
+    assert(send_message(-1, &message, 0) == -1 && errno == EMSGSIZE);
+    message.vector_count = 1;
+    assert(send_message(-1, &message, 0) == -1 && errno == EFAULT);
+    TestIovec vector = {NULL, 1};
+    message.vectors = &vector;
+    assert(send_message(-1, &message, 0) == -1 && errno == EFAULT);
+    vector.base = &message;
+    vector.length = SIZE_MAX;
+    assert(send_message(-1, &message, 0) == -1 && errno == EMSGSIZE);
+    message.vector_count = 0;
+    message.control = &message;
+    message.control_length = 16;
+    assert(send_message(-1, &message, 0) == -1 && errno == EOPNOTSUPP);
+    assert(receive_message(-1, &message, 0) == -1 && errno == EOPNOTSUPP);
+    message.control_length = 0;
+    assert(send_message(-1, &message, 0x200000) == -1 && errno == EOPNOTSUPP);
+    TestMultiMessage multiple = {.message = message};
+    int64_t timeout[2] = {0, 1000000000};
+    assert(receive_many(-1, &multiple, 1, 0, timeout) == -1 && errno == EINVAL);
+    assert(receive_many(-1, NULL, 1, 0, NULL) == -1 && errno == EFAULT);
+    assert(receive_many(-1, &multiple, 33, 0, NULL) == -1 && errno == EINVAL);
+    assert(receive_many(-1, NULL, 0, 0, NULL) == 0);
+    TestIovec oversized = {&message, 0x80001};
+    multiple.message.vector_count = 1;
+    multiple.message.vectors = &oversized;
+    assert(receive_many(-1, &multiple, 1, 0, NULL) == -1 && errno == EMSGSIZE);
+    oversized.length = 0x40001;
+    TestMultiMessage oversized_batch[2] = {multiple, multiple};
+    assert(receive_many(-1, oversized_batch, 2, 0, NULL) == -1 && errno == EMSGSIZE);
+    uint64_t address;
+    assert(!android_socket_compat_resolve("__sendto_chk", "LIBC", "libc.so", &address));
+    assert(!android_socket_compat_resolve("__sendto_chk", "LIBC_O", "libdl.so", &address));
+    assert(!android_socket_compat_resolve("sendmmsg", "LIBC_O", "libc.so", &address));
+    assert(android_socket_compat_resolve("__sendto_chk", "LIBC_O", "libc.so", &address));
+    CheckedSendFn checked = (CheckedSendFn)(uintptr_t)address;
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        struct rlimit no_core = {0, 0};
+        (void)setrlimit(RLIMIT_CORE, &no_core);
+        checked(-1, "x", 2, 1, 0, NULL, 0);
+        _exit(99);
+    }
+    int status;
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+}
+
 int main(void)
 {
+    messages_invalid_test();
+    messages_test(false);
+    messages_test(true);
     reverse_name_test();
     readiness_test();
     negative_tests();
@@ -366,6 +532,6 @@ int main(void)
     ipv6_test();
     dns_test();
     ip_text_test();
-    puts("Android socket ABI tests passed (IPv4 TCP/UDP, IPv6, DNS, flags, readiness)");
+    puts("Android socket ABI tests passed (IPv4 TCP/UDP, IPv6, DNS, flags, readiness, message vectors and batching)");
     return 0;
 }

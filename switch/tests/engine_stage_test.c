@@ -701,6 +701,9 @@ int main(void)
         assert(!stage_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
         assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
         assert(stage.required_missing_relocations == 1);
+        assert(!strcmp(stage.first_required_name, "sample_symbol"));
+        assert(!strcmp(stage.first_required_version, "unversioned"));
+        assert(!strcmp(stage.first_required_library, "unspecified"));
     }
     // Version metadata is validated before weak fallback as for any import.
     version_fixture(bytes);
@@ -757,6 +760,14 @@ int main(void)
     assert(get64(stage.image + 0x340) == 0);
     assert(get64(stage.image + 0x348) == 0);
     engine_stage_release(&stage);
+
+    // Provider lookup order must not hide the required failure behind an
+    // earlier optional reference, as happened in the link-30 device report.
+    section_bytes[0x2a4] = 0x10;
+    assert(!dyninit_fixture_at(section_bytes, &stage, fake_resolver, future_base));
+    assert(stage.weak_undefined_relocations == 1);
+    assert(stage.required_missing_relocations == 1);
+    assert(!strcmp(stage.first_required_name, "__stop_ls_rbx_dyninit1"));
 
     // Missing, misplaced, unallocated, unaligned, empty or ambiguous section
     // metadata must never turn undefined linker markers into made-up pointers.

@@ -12,6 +12,18 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#if defined(__SWITCH__) && defined(MORROW_HAS_POSITIONAL_IO)
+// Implemented inside the matching libnx fsdev translation unit, not through
+// newlib's cursor-changing lseek/read/lseek positional I/O fallback.
+ssize_t morrowFsdevPread(int fd, void *buffer, size_t count, off_t offset);
+ssize_t morrowFsdevPwrite(int fd, const void *buffer, size_t count, off_t offset);
+#define file_pread morrowFsdevPread
+#define file_pwrite morrowFsdevPwrite
+#elif !defined(__SWITCH__)
+#define file_pread pread
+#define file_pwrite pwrite
+#endif
+
 _Static_assert(sizeof(AndroidFileStat) == 128, "Android ARM64 stat size");
 _Static_assert(offsetof(AndroidFileStat, size) == 48, "Android stat size offset");
 _Static_assert(offsetof(AndroidFileStat, access_sec) == 72, "Android stat time offset");
@@ -294,6 +306,12 @@ bool android_file_compat_resolve(const char *name, const char *version,
     MAP("__open_2", file_open_2)
     MAP("fcntl", file_fcntl)
     MAP("lseek", file_lseek)
+
+#if !defined(__SWITCH__) || defined(MORROW_HAS_POSITIONAL_IO)
+    MAP("pread", file_pread)
+    MAP("pread64", file_pread)
+    MAP("pwrite", file_pwrite)
+#endif
     MAP("ftruncate", file_ftruncate)
     MAP("fchmod", file_fchmod)
     MAP("opendir", file_opendir)

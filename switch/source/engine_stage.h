@@ -40,6 +40,11 @@ typedef struct {
     // symbols use S=0; they do not imply an implemented Android provider.
     unsigned weak_undefined_relocations;
     unsigned required_missing_relocations;
+    // Provider lookup failures include weak imports. Preserve the first
+    // mandatory import separately so a hardware report names the real stop.
+    char first_required_name[76];
+    char first_required_version[45];
+    char first_required_library[45];
     // Verified solely from the guest ELF's SHF_ALLOC section and PT_LOAD,
     // never inferred from a missing import or a guessed address.
     bool dyninit_section_verified;

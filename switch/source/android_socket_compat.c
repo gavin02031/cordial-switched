@@ -5,6 +5,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
+#include <limits.h>
+#include <stdio.h>
 #include <poll.h>
 #include <sys/select.h>
 #include <netinet/in.h>
@@ -13,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifdef __SWITCH__
@@ -323,6 +327,225 @@ static ssize_t guest_send(int fd, const void *buffer, size_t size, int flags)
 static ssize_t guest_recv(int fd, void *buffer, size_t size, int flags)
 {
     return guest_recvfrom(fd, buffer, size, flags, NULL, NULL);
+}
+
+// Android LP64 msghdr uses size_t for both vector and ancillary lengths;
+// Horizon's BSD ABI uses int and socklen_t. Copy each field and vector rather
+// than allowing native recvmsg to overwrite the guest's pointers or lengths.
+typedef struct {
+    void *name;
+    uint32_t name_length;
+    struct GuestIovec *vectors;
+    size_t vector_count;
+    void *control;
+    size_t control_length;
+    int flags;
+} GuestMessage;
+typedef struct GuestIovec { void *base; size_t length; } GuestIovec;
+typedef struct { GuestMessage message; uint32_t length; } GuestMultiMessage;
+_Static_assert(sizeof(GuestMessage) == 56, "Bionic LP64 msghdr size");
+_Static_assert(offsetof(GuestMessage, vectors) == 16, "Bionic msghdr vector offset");
+_Static_assert(offsetof(GuestMessage, control_length) == 40, "Bionic msghdr ancillary length");
+_Static_assert(sizeof(GuestMultiMessage) == 64, "Bionic LP64 mmsghdr stride");
+
+typedef struct {
+    struct sockaddr_storage name;
+    struct iovec *vectors;
+    size_t data_bytes;
+} MessageStorage;
+
+// libnx serialises message I/O through a bounded BSD service command (HOS 7+).
+// Bound the aggregate before handing it to native size calculations.
+enum { MESSAGE_MAX_DATA = 0x80000, MESSAGE_MAX_BATCH = 32 };
+
+static bool prepare_message(const GuestMessage *guest, struct msghdr *native,
+                             MessageStorage *storage, bool receive)
+{
+    if (!guest) { errno = EFAULT; return false; }
+    // Ancillary data needs a separate cmsghdr/type translator; forwarding
+    // a Bionic control buffer into BSD would misread header sizes and types.
+    if (guest->control_length) { errno = EOPNOTSUPP; return false; }
+    if (guest->vector_count > 1024) { errno = EMSGSIZE; return false; }
+    if (guest->vector_count && !guest->vectors) { errno = EFAULT; return false; }
+    memset(native, 0, sizeof(*native));
+    if (guest->name) {
+        native->msg_name = &storage->name;
+        if (receive) {
+            memset(&storage->name, 0, sizeof(storage->name));
+            native->msg_namelen = sizeof(storage->name);
+        } else if (!to_native(guest->name, guest->name_length,
+                               &storage->name, &native->msg_namelen)) return false;
+    } else if (!receive && guest->name_length) { errno = EINVAL; return false; }
+    if (guest->vector_count) {
+        storage->vectors = calloc(guest->vector_count, sizeof(*storage->vectors));
+        if (!storage->vectors) { errno = ENOMEM; return false; }
+    }
+    size_t total = 0;
+    for (size_t i = 0; i < guest->vector_count; ++i) {
+        const GuestIovec *vector = &guest->vectors[i];
+        if (vector->length > MESSAGE_MAX_DATA - total) { errno = EMSGSIZE; return false; }
+        if (vector->length && !vector->base) { errno = EFAULT; return false; }
+        total += vector->length;
+        storage->vectors[i].iov_base = vector->base;
+        storage->vectors[i].iov_len = vector->length;
+    }
+    storage->data_bytes = total;
+    native->msg_iov = storage->vectors;
+    native->msg_iovlen = guest->vector_count;
+    return true;
+}
+
+static bool finish_message(GuestMessage *guest, const struct msghdr *native,
+                            const MessageStorage *storage)
+{
+    if (guest->name && native->msg_namelen) {
+        if (!to_guest(&storage->name, guest->name, &guest->name_length)) return false;
+    } else guest->name_length = 0;
+    guest->control_length = 0;
+    guest->flags = 0;
+    if (native->msg_flags & MSG_OOB) guest->flags |= 1;
+    if (native->msg_flags & MSG_CTRUNC) guest->flags |= 8;
+    if (native->msg_flags & MSG_TRUNC) guest->flags |= 0x20;
+#ifdef MSG_EOR
+    if (native->msg_flags & MSG_EOR) guest->flags |= 0x80;
+#endif
+    return true;
+}
+
+static ssize_t guest_sendmsg(int fd, const GuestMessage *message, int flags)
+{
+    int native_flags;
+    if (!translate_message_flags(flags, &native_flags)) return -1;
+    struct msghdr native;
+    MessageStorage storage = {0};
+    ssize_t result = -1;
+    if (prepare_message(message, &native, &storage, false) && ready())
+        result = sendmsg(fd, &native, native_flags);
+    const int saved = errno;
+    free(storage.vectors);
+    errno = saved;
+    return result;
+}
+
+static ssize_t guest_recvmsg(int fd, GuestMessage *message, int flags)
+{
+    int native_flags;
+    if (!translate_message_flags(flags, &native_flags)) return -1;
+    struct msghdr native;
+    MessageStorage storage = {0};
+    ssize_t result = -1;
+    if (prepare_message(message, &native, &storage, true) && ready()) {
+        result = recvmsg(fd, &native, native_flags);
+        if (result >= 0 && !finish_message(message, &native, &storage)) result = -1;
+    }
+    const int saved = errno;
+    free(storage.vectors);
+    errno = saved;
+    return result;
+}
+
+static int guest_mmsg(int fd, GuestMultiMessage *messages, unsigned count,
+                       int flags, int64_t *timeout, bool receive)
+{
+    if (count > MESSAGE_MAX_BATCH) { errno = EINVAL; return -1; }
+    if (!count) return 0;
+    if (!messages) { errno = EFAULT; return -1; }
+    int native_flags, extra_flags = 0;
+#ifdef MSG_WAITFORONE
+    if (receive && (flags & 0x10000)) {
+        extra_flags = MSG_WAITFORONE;
+        flags &= ~0x10000;
+    }
+#endif
+    if (!translate_message_flags(flags, &native_flags)) return -1;
+    native_flags |= extra_flags;
+    struct timespec native_timeout, *timeout_pointer = NULL;
+    if (timeout) {
+        if (timeout[0] < 0 || timeout[1] < 0 || timeout[1] >= 1000000000) {
+            errno = EINVAL; return -1;
+        }
+        native_timeout.tv_sec = timeout[0];
+        native_timeout.tv_nsec = timeout[1];
+        if ((int64_t)native_timeout.tv_sec != timeout[0]) { errno = EOVERFLOW; return -1; }
+        timeout_pointer = &native_timeout;
+    }
+    struct mmsghdr *native = calloc(count, sizeof(*native));
+    MessageStorage *storage = calloc(count, sizeof(*storage));
+    if (!native || !storage) { free(native); free(storage); errno = ENOMEM; return -1; }
+    int result = -1;
+    size_t total = 0;
+    for (unsigned i = 0; i < count; ++i) {
+        if (!prepare_message(&messages[i].message, &native[i].msg_hdr,
+                              &storage[i], receive)) goto done;
+        if (storage[i].data_bytes > MESSAGE_MAX_DATA - total) {
+            errno = EMSGSIZE; goto done;
+        }
+        total += storage[i].data_bytes;
+    }
+    if (!ready()) goto done;
+    struct timespec started;
+    if (receive && timeout && clock_gettime(CLOCK_MONOTONIC, &started) != 0) goto done;
+    result = receive ? recvmmsg(fd, native, count, native_flags, timeout_pointer)
+                     : sendmmsg(fd, native, count, native_flags);
+    if (result > 0) {
+        for (int i = 0; i < result; ++i) {
+            messages[i].length = native[i].msg_len;
+            if (receive && !finish_message(&messages[i].message, &native[i].msg_hdr,
+                                            &storage[i])) { result = -1; break; }
+        }
+    }
+    if (receive && timeout && result >= 0) {
+        // libnx passes a copy of the timeout to BSD and does not copy it back.
+        // Measure the wait so the guest receives remaining time on both hosts.
+        const int saved_errno = errno;
+        struct timespec finished;
+        if (clock_gettime(CLOCK_MONOTONIC, &finished) == 0 &&
+            finished.tv_sec >= started.tv_sec) {
+            int64_t seconds = finished.tv_sec - started.tv_sec;
+            int64_t nanos = finished.tv_nsec - started.tv_nsec;
+            if (nanos < 0) { --seconds; nanos += 1000000000; }
+            if (seconds >= 0) {
+                if (seconds > timeout[0] ||
+                    (seconds == timeout[0] && nanos >= timeout[1])) {
+                    timeout[0] = timeout[1] = 0;
+                } else {
+                    timeout[0] -= seconds;
+                    timeout[1] -= nanos;
+                    if (timeout[1] < 0) { --timeout[0]; timeout[1] += 1000000000; }
+                }
+            }
+        }
+        errno = saved_errno;
+    }
+done:;
+    const int saved = errno;
+    for (unsigned i = 0; i < count; ++i) free(storage[i].vectors);
+    free(storage);
+    free(native);
+    errno = saved;
+    return result;
+}
+
+static int guest_sendmmsg(int fd, GuestMultiMessage *messages, unsigned count, int flags)
+{
+    return guest_mmsg(fd, messages, count, flags, NULL, false);
+}
+
+static int guest_recvmmsg(int fd, GuestMultiMessage *messages, unsigned count,
+                           int flags, int64_t *timeout)
+{
+    return guest_mmsg(fd, messages, count, flags, timeout, true);
+}
+
+static ssize_t guest_sendto_chk(int fd, const void *buffer, size_t size,
+                                 size_t buffer_size, int flags,
+                                 const void *address, uint32_t address_len)
+{
+    if (size > buffer_size) {
+        fprintf(stderr, "Bionic FORTIFY violation in sendto\n");
+        abort();
+    }
+    return guest_sendto(fd, buffer, size, flags, address, address_len);
 }
 
 // Android SOL_SOCKET (1) and its option numbers do not match libnx's BSD
@@ -749,9 +972,13 @@ bool android_socket_compat_resolve(const char *name, const char *version,
                                    const char *library, uint64_t *address)
 {
     if (!name || !version || !library || !address ||
-        strcmp(version, "LIBC") || strcmp(library, "libc.so"))
-        return false;
+        strcmp(library, "libc.so")) return false;
     *address = 0;
+    if (!strcmp(name, "__sendto_chk") && !strcmp(version, "LIBC_O")) {
+        *address = (uint64_t)(uintptr_t)&guest_sendto_chk;
+        return true;
+    }
+    if (strcmp(version, "LIBC")) return false;
 #define MAP(symbol, target) if (!strcmp(name, symbol)) *address = (uint64_t)(uintptr_t)&target; else
     MAP("getnameinfo", guest_getnameinfo)
     MAP("poll", guest_poll)
@@ -764,6 +991,10 @@ bool android_socket_compat_resolve(const char *name, const char *version,
     MAP("accept", guest_accept)
     MAP("getsockname", guest_getsockname)
     MAP("getpeername", guest_getpeername)
+    MAP("sendmsg", guest_sendmsg)
+    MAP("recvmsg", guest_recvmsg)
+    MAP("sendmmsg", guest_sendmmsg)
+    MAP("recvmmsg", guest_recvmmsg)
     MAP("sendto", guest_sendto)
     MAP("recvfrom", guest_recvfrom)
     MAP("send", guest_send)

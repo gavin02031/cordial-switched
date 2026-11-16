@@ -51,6 +51,10 @@
 #include "horizon_code_address.h"
 #include "horizon_code_memory.h"
 
+#ifndef MORROW_BUILD_VERSION
+#define MORROW_BUILD_VERSION "development"
+#endif
+
 static HorizonCodeMemory reservation;
 // JNI_OnLoad can register callbacks whose function pointers live in the
 // mapped library. After entering it, neither the RX mapping nor its source
@@ -299,6 +303,17 @@ static void printable(char *out, size_t size, const char *message)
     out[i] = 0;
 }
 
+static void log_required_import(FILE *log, const char *prefix, const EngineStage *stage)
+{
+    char name[76], version[45], library[45];
+    printable(name, sizeof(name), stage->first_required_name);
+    printable(version, sizeof(version), stage->first_required_version);
+    printable(library, sizeof(library), stage->first_required_library);
+    log_line(log, "%s_first_required_missing_name=%s", prefix, name[0] ? name : "none");
+    log_line(log, "%s_first_required_missing_version=%s", prefix, version[0] ? version : "none");
+    log_line(log, "%s_first_required_missing_provider=%s", prefix, library[0] ? library : "none");
+}
+
 static void log_import_summary(FILE *log, const char *prefix,
                                const ImportDiagnostics *diagnostics)
 {
@@ -378,6 +393,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         return;
     }
     log_line(log, "# Morrow native engine entry readiness attempt");
+    log_line(log, "morrow_build_version=%s", MORROW_BUILD_VERSION);
     log_line(log, "# JNI_OnLoad is opt-in and blocked unless strict mapping and runtime gates pass.");
     log_line(log, "engine_execution_action=%s",
              action == 1 ? "jni_onload" : action == 2 ? "game_activity" :
@@ -1027,6 +1043,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         printable(safe, sizeof(safe), stage.detail);
         log_line(log, "strict_stage_detail=%s", safe);
         log_import_summary(log, "strict", &missing);
+        log_required_import(log, "strict", &stage);
         log_line(log, "rela_applied=%u", stage.rela_applied);
         log_line(log, "relr_applied=%u", stage.relr_applied);
         log_line(log, "aps2_applied=%u", stage.packed_applied);
@@ -1227,6 +1244,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             printable(safe, sizeof(safe), audit.detail);
             log_line(log, "full_audit_detail=%s", safe);
             log_import_summary(log, "full_audit", &all_imports);
+            log_required_import(log, "full_audit", &audit);
             log_line(log, "full_audit_weak_undefined_relocations=%u", audit.weak_undefined_relocations);
             log_line(log, "full_audit_required_missing_relocations=%u", audit.required_missing_relocations);
             free(all_imports.complete_list);

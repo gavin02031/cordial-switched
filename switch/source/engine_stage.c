@@ -499,6 +499,13 @@ static bool apply_rela(EngineStage *stage, const Segment *segments,
             if (packed) stage->packed_applied++;
             return true;
         }
+        if (!stage->required_missing_relocations) {
+            snprintf(stage->first_required_name, sizeof(stage->first_required_name), "%s", name);
+            snprintf(stage->first_required_version, sizeof(stage->first_required_version),
+                     "%s", version ? version : "unversioned");
+            snprintf(stage->first_required_library, sizeof(stage->first_required_library),
+                     "%s", library ? library : "unspecified");
+        }
         if (stage->required_missing_relocations != UINT_MAX)
             stage->required_missing_relocations++;
         if (audit_missing) {
