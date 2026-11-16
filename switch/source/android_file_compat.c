@@ -19,9 +19,14 @@ _Static_assert(offsetof(AndroidDirectoryEntry, name) == 19, "Android dirent name
 _Static_assert(sizeof(AndroidDirectoryEntry) == 280, "Android dirent size");
 _Static_assert(sizeof(off_t) == 8, "64-bit file offsets required");
 
+static bool stat_fields_fit(int64_t block_size, uint64_t links)
+{
+    return block_size >= INT32_MIN && block_size <= INT32_MAX && links <= UINT32_MAX;
+}
+
 static int copy_stat(const struct stat *native, AndroidFileStat *guest)
 {
-    if (native->st_blksize > INT32_MAX || (uint64_t)native->st_nlink > UINT32_MAX) {
+    if (!stat_fields_fit(native->st_blksize, native->st_nlink)) {
         errno = EOVERFLOW;
         return -1;
     }
