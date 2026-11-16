@@ -95,17 +95,18 @@ Use a test account only if full gameplay is eventually reached.
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
 
-**v0.97 expands the Android libc import bridge with ten more providers.**
+**v0.97 expands the Android libc import bridge with eight more providers.**
 Seven numeric `_l` parsers (`strtol_l`, `strtoll_l`, `strtoul_l`,
 `strtoull_l`, `strtof_l`, `strtod_l`, `strtold_l`) follow Bionic's documented
 non-`_l` conversion semantics, without treating the opaque guest locale as
 a different native locale structure. ARM64 `strtold_l` is explicitly gated on
-the IEEE binary128 long-double ABI. The `fchmod` and `fchown` imports call
-native descriptor operations, preserving real filesystem errors; `fchmod`
-rejects unknown mode bits before any mutation. The `geteuid` import reports
-the native effective UID, without inventing a Switch account identity.
-Tests exercise numeric overflow/end pointers, file modes and native identity.
-**INFERRED:** six of these names were seen missing in v0.86, but we have no
+the IEEE binary128 long-double ABI. The `fchmod` import calls the native
+descriptor operation, preserving real filesystem errors and rejecting unknown
+mode bits before any mutation. `fchown` and `geteuid` remain unresolved:
+Horizon/newlib cannot provide the required POSIX user identity or ownership
+semantics, and returning fabricated success would be misleading.
+Tests exercise numeric overflow/end pointers, file modes and negative import
+resolution. **INFERRED:** four of these names were seen missing in v0.86, but we have no
 newer Switch import audit or evidence that the guest has entered Roblox.
 
 **v0.96 translates Bionic socket creation flags and descriptor commands.**

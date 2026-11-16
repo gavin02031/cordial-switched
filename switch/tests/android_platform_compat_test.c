@@ -48,10 +48,7 @@ static int call_checked_vsprintf(uint64_t address, char *dest, size_t capacity,
 int main(void)
 {
     uint64_t address = 0;
-    assert(android_libc_compat_resolve("geteuid", "LIBC", "libc.so", &address));
-    uint32_t (*guest_geteuid)(void) = (void *)(uintptr_t)address;
-    assert(guest_geteuid() == (uint32_t)geteuid());
-    assert(!android_libc_compat_resolve("geteuid", "LIBC_N", "libc.so", &address));
+    assert(!android_libc_compat_resolve("geteuid", "LIBC", "libc.so", &address));
     assert(android_libc_compat_resolve("localeconv", "LIBC", "libc.so", &address));
     struct lconv *(*android_localeconv)(void) =
         (struct lconv *(*)(void))(uintptr_t)address;
