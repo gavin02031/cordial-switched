@@ -30,7 +30,24 @@ int main(void)
     assert(!android_math_compat_resolve("sinf", NULL, "libm.so", &address));
     assert(!android_math_compat_resolve("sinf", "LIBC", NULL, &address));
     assert(!android_math_compat_resolve("stderr", "LIBC", "libc.so", &address));
-    assert(!android_math_compat_resolve("powl", "LIBC", "libm.so", &address));
+    assert(android_math_compat_resolve("powl", "LIBC", "libm.so", &address));
+    long double (*powerl)(long double, long double) =
+        (long double (*)(long double, long double))(uintptr_t)address;
+    assert(powerl(2.0L, 4.0L) == 16.0L);
+    assert(android_math_compat_resolve("fmal", "LIBC", "libm.so", &address));
+    long double (*fused)(long double, long double, long double) =
+        (long double (*)(long double, long double, long double))(uintptr_t)address;
+    assert(fused(2.0L, 3.0L, 1.0L) == 7.0L);
+    assert(android_math_compat_resolve("roundl", "LIBC", "libm.so", &address));
+    long double (*round_long)(long double) =
+        (long double (*)(long double))(uintptr_t)address;
+    assert(round_long(-2.5L) == -3.0L);
+    assert(android_math_compat_resolve("llroundl", "LIBC", "libm.so", &address));
+    long long (*long_integer)(long double) =
+        (long long (*)(long double))(uintptr_t)address;
+    assert(long_integer(-2.5L) == -3);
+    assert(!android_math_compat_resolve("powl", "LIBC_O", "libm.so", &address));
+    assert(!android_math_compat_resolve("powl", "LIBC", "libc.so", &address));
     assert(android_math_compat_resolve("sincosf", "LIBC", "libm.so", &address));
     void (*sincos_pair_f)(float, float *, float *) =
         (void (*)(float, float *, float *))(uintptr_t)address;

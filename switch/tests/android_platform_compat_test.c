@@ -5,6 +5,8 @@
 
 #include <assert.h>
 #include <getopt.h>
+#include <limits.h>
+#include <locale.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -46,6 +48,43 @@ static int call_checked_vsprintf(uint64_t address, char *dest, size_t capacity,
 int main(void)
 {
     uint64_t address = 0;
+    assert(android_libc_compat_resolve("localeconv", "LIBC", "libc.so", &address));
+    struct lconv *(*android_localeconv)(void) =
+        (struct lconv *(*)(void))(uintptr_t)address;
+    struct lconv *numeric = android_localeconv();
+    assert(numeric && strcmp(numeric->decimal_point, ".") == 0 &&
+           !numeric->thousands_sep[0] && numeric->int_frac_digits == CHAR_MAX &&
+           numeric->int_n_sign_posn == CHAR_MAX && android_localeconv() == numeric);
+    assert(!android_libc_compat_resolve("localeconv", "LIBC", "libm.so", &address));
+
+    typedef struct {
+        void *name; uint32_t name_length; void *iov; size_t iov_length;
+        void *control; size_t control_length; int flags;
+    } GuestMessage;
+    typedef struct { size_t length; int level, type; } GuestControl;
+    assert(android_libc_compat_resolve("__cmsg_nxthdr", "LIBC", "libc.so", &address));
+    GuestControl *(*next_control)(const GuestMessage *, const GuestControl *) =
+        (GuestControl *(*)(const GuestMessage *, const GuestControl *))(uintptr_t)address;
+    _Alignas(8) unsigned char controls[64] = {0};
+    GuestMessage message = {.control = controls, .control_length = sizeof(controls)};
+    GuestControl *first = (GuestControl *)controls;
+    first->length = 19; // 24-byte aligned stride.
+    GuestControl *second = (GuestControl *)(controls + 24);
+    second->length = 16;
+    assert(next_control(&message, first) == second);
+    assert(next_control(&message, second) == (GuestControl *)(controls + 40));
+    message.control_length = 39;
+    assert(next_control(&message, first) == NULL);
+    message.control_length = sizeof(controls);
+    first->length = SIZE_MAX;
+    assert(next_control(&message, first) == NULL);
+    first->length = 8;
+    assert(next_control(&message, first) == NULL);
+    first->length = 19;
+    assert(next_control(&message, (GuestControl *)(controls + 60)) == NULL);
+    assert(next_control(NULL, first) == NULL);
+    assert(!android_libc_compat_resolve("__cmsg_nxthdr", "LIBC_N", "libc.so", &address));
+
     assert(android_stdio_compat_resolve("stderr", "LIBC", "libc.so", &address));
     FILE *android_stderr = *(FILE **)(uintptr_t)address;
     assert(android_stderr && android_stderr != stderr);

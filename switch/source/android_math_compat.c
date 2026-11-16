@@ -1,8 +1,16 @@
 #include "android_math_compat.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
+
+// Android arm64 uses IEEE binary128 long double. The Switch ARM64 toolchain
+// must agree before exposing those by-value libm signatures to the guest.
+#ifdef __aarch64__
+_Static_assert(sizeof(long double) == 16 && LDBL_MANT_DIG == 113,
+               "Android arm64 long double ABI is binary128");
+#endif
 
 // Bionic exposes GNU-style paired trigonometric results. A native sincos
 // symbol is not guaranteed in devkitA64's newlib; these signatures use only
@@ -89,6 +97,10 @@ bool android_math_compat_resolve(const char *name, const char *version,
     MAP_MATH(log2f)
     MAP_MATH(expf)
     MAP_MATH(cosf)
+    MAP_MATH(fmal)
+    MAP_MATH(llroundl)
+    MAP_MATH(powl)
+    MAP_MATH(roundl)
     if (strcmp(name, "sincosf") == 0)
         *address = (uint64_t)(uintptr_t)&bionic_sincosf;
     else if (strcmp(name, "sincos") == 0)

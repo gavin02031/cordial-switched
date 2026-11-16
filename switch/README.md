@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.90 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.91 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -94,6 +94,22 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.91 adds 13 more observed Android/Bionic import providers** across three
+areas. Four `libm.so@LIBC` long-double functions (`fmal`, `powl`, `roundl`,
+`llroundl`) are gated on the AArch64 binary128 ABI at compile time. Seven
+UTF-8 conversion functions (`mbrtowc`, `mbrlen`, `mbtowc`, `wcrtomb`,
+`mbsnrtowcs`, `mbsrtowcs`, `wcsnrtombs`) use Bionic's actual eight-byte
+`mbstate_t` footprint rather than passing guest storage to native newlib.
+Their decoder validates incomplete sequences, code points, surrogates and
+overlong encodings; tests cover roundtrips, partial input and bounded output.
+Finally, `__cmsg_nxthdr` checks Android ancillary-data header bounds before
+advancing, and `localeconv` supplies the native C-locale numeric structure
+with Android LP64 field offsets. Malformed control messages return NULL.
+The incompatible Android `locale_t`, sockets, native signal handling and
+other services remain unimplemented. **INFERRED:** these 13 names appeared
+in the v0.86 report; without a new hardware audit they are not a verified
+decrease from 192, and no real Roblox frame or login has been observed.
 
 **v0.90 adds a conditional, checked resolution path for two guest-owned
 linker section boundaries**, `__start_ls_rbx_dyninit1` and

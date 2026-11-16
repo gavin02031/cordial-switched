@@ -63,6 +63,7 @@ jobs:
             switch/source/android_egl_gles_compat.c \
             switch/source/android_dl_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
+            switch/source/android_wchar_compat.c \
             switch/source/android_file_compat.c \
             switch/source/android_jump_compat.c \
             switch/source/android_sem_compat.c \
@@ -142,6 +143,12 @@ jobs:
             switch/tests/android_math_compat_test.c switch/source/android_math_compat.c -lm \
             -o /tmp/cordial-android-math-test
           /tmp/cordial-android-math-test
+      - name: Test Android LP64 UTF-8 guest state and conversion
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_wchar_compat_test.c switch/source/android_wchar_compat.c \
+            -o /tmp/morrow-wchar-compat-test
+          /tmp/morrow-wchar-compat-test
       - name: Test versioned Android NDK media formats
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

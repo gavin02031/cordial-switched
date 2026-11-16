@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdatomic.h>
 #include <ctype.h>
@@ -105,6 +106,88 @@ static int android_sched_yield(void)
 #else
     return sched_yield();
 #endif
+}
+
+// Bionic's ARM64 msghdr/cmsghdr layout is Linux LP64, not a host BSD socket
+// header. Only calculate the next ancillary-data header after checking every
+// address and size against the original guest control buffer.
+typedef struct {
+    void *name;
+    uint32_t name_length;
+    void *iov;
+    size_t iov_length;
+    void *control;
+    size_t control_length;
+    int flags;
+} AndroidMsghdr;
+
+typedef struct {
+    size_t length;
+    int level;
+    int type;
+} AndroidCmsghdr;
+
+_Static_assert(offsetof(AndroidMsghdr, control) == 32 &&
+               offsetof(AndroidMsghdr, control_length) == 40 &&
+               sizeof(AndroidCmsghdr) == 16, "Android LP64 socket header layout");
+
+static AndroidCmsghdr *android_cmsg_nxthdr(const AndroidMsghdr *msg,
+                                           const AndroidCmsghdr *current)
+{
+    if (!msg || !msg->control || !current)
+        return NULL;
+    const uintptr_t base = (uintptr_t)msg->control;
+    const uintptr_t here = (uintptr_t)current;
+    if (here < base || msg->control_length > UINTPTR_MAX - base)
+        return NULL;
+    const uintptr_t end = base + msg->control_length;
+    if (here > end || (size_t)(end - here) < sizeof(*current) ||
+        current->length < sizeof(*current) ||
+        current->length > (size_t)(end - here) ||
+        current->length > SIZE_MAX - 7)
+        return NULL;
+    const size_t stride = (current->length + 7) & ~(size_t)7;
+    if (stride > (size_t)(end - here) ||
+        sizeof(*current) > (size_t)(end - here) - stride)
+        return NULL;
+    return (AndroidCmsghdr *)(here + stride);
+}
+
+// Bionic localeconv returns the C-locale numeric format independently of the
+// host's process locale. The 10 pointers + 14 signed-char slots are its LP64
+// public struct lconv; no opaque newlib locale objects cross this boundary.
+typedef struct {
+    char *decimal_point, *thousands_sep, *grouping;
+    char *int_curr_symbol, *currency_symbol, *mon_decimal_point;
+    char *mon_thousands_sep, *mon_grouping, *positive_sign, *negative_sign;
+    char int_frac_digits, frac_digits, p_cs_precedes, p_sep_by_space;
+    char n_cs_precedes, n_sep_by_space, p_sign_posn, n_sign_posn;
+    char int_p_cs_precedes, int_p_sep_by_space;
+    char int_n_cs_precedes, int_n_sep_by_space;
+    char int_p_sign_posn, int_n_sign_posn;
+} AndroidLconv;
+
+_Static_assert(offsetof(AndroidLconv, int_frac_digits) == 80 &&
+               sizeof(AndroidLconv) == 96, "Android LP64 localeconv layout");
+
+static AndroidLconv *android_localeconv(void)
+{
+    static char dot[] = ".";
+    static char empty[] = "";
+    static AndroidLconv value = {
+        .decimal_point = dot, .thousands_sep = empty, .grouping = empty,
+        .int_curr_symbol = empty, .currency_symbol = empty,
+        .mon_decimal_point = empty, .mon_thousands_sep = empty,
+        .mon_grouping = empty, .positive_sign = empty, .negative_sign = empty,
+        .int_frac_digits = CHAR_MAX, .frac_digits = CHAR_MAX,
+        .p_cs_precedes = CHAR_MAX, .p_sep_by_space = CHAR_MAX,
+        .n_cs_precedes = CHAR_MAX, .n_sep_by_space = CHAR_MAX,
+        .p_sign_posn = CHAR_MAX, .n_sign_posn = CHAR_MAX,
+        .int_p_cs_precedes = CHAR_MAX, .int_p_sep_by_space = CHAR_MAX,
+        .int_n_cs_precedes = CHAR_MAX, .int_n_sep_by_space = CHAR_MAX,
+        .int_p_sign_posn = CHAR_MAX, .int_n_sign_posn = CHAR_MAX,
+    };
+    return &value;
 }
 
 // Bionic exports these 16-byte IPv6 address constants as LIBC_N data
@@ -294,6 +377,10 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         *address = (uint64_t)(uintptr_t)&android_arc4random_buf;
     else if (strcmp(name, "sched_yield") == 0)
         *address = (uint64_t)(uintptr_t)&android_sched_yield;
+    else if (strcmp(name, "__cmsg_nxthdr") == 0)
+        *address = (uint64_t)(uintptr_t)&android_cmsg_nxthdr;
+    else if (strcmp(name, "localeconv") == 0)
+        *address = (uint64_t)(uintptr_t)&android_localeconv;
 #undef MAP_LIBC
     return *address != 0;
 }

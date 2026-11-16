@@ -14,6 +14,7 @@
 #include "android_media_format_compat.h"
 #include "android_math_compat.h"
 #include "android_libc_compat.h"
+#include "android_wchar_compat.h"
 #include "android_file_compat.h"
 #include "android_jump_compat.h"
 #include "android_stdio_compat.h"
@@ -81,6 +82,7 @@ static bool resolve_compatible_import(const char *name, const char *version,
                             android_math_compat_resolve(name, version, library, address) ||
                             android_jump_compat_resolve(name, version, library, address) ||
                             android_libc_compat_resolve(name, version, library, address) ||
+                            android_wchar_compat_resolve(name, version, library, address) ||
                             android_file_compat_resolve(name, version, library, address) ||
                             android_stdio_compat_resolve(name, version, library, address) ||
                             android_fortify_compat_resolve(name, version, library, address) ||
