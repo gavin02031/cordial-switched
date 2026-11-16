@@ -1,6 +1,9 @@
+#define _POSIX_C_SOURCE 200809L
 #include "android_wchar_compat.h"
 
 #include <assert.h>
+#include <locale.h>
+#include <wctype.h>
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -18,8 +21,50 @@ static uint64_t lookup(const char *name)
     return address;
 }
 
+static void locale_test(void)
+{
+    locale_t (*create)(int, const char *, locale_t) = (void *)(uintptr_t)lookup("newlocale");
+    void (*release)(locale_t) = (void *)(uintptr_t)lookup("freelocale");
+    locale_t (*activate)(locale_t) = (void *)(uintptr_t)lookup("uselocale");
+    locale_t locale = create(0x1fbf, "C", (locale_t)0);
+    assert(locale);
+    locale_t previous = activate(locale);
+    assert(previous && activate((locale_t)0) == locale);
+    assert(activate(previous) == locale);
+    const char *classifiers[] = {"iswlower_l", "iswspace_l", "iswprint_l", "iswblank_l",
+        "iswcntrl_l", "iswupper_l", "iswalpha_l", "iswdigit_l", "iswpunct_l", "iswxdigit_l"};
+    const wint_t yes[] = {L'a', L' ', L'A', 9, 10, L'A', L'z', L'5', L'!', L'F'};
+    for (size_t i = 0; i < sizeof(yes)/sizeof(yes[0]); ++i) {
+        int (*classify)(wint_t, locale_t) = (void *)(uintptr_t)lookup(classifiers[i]);
+        assert(classify(yes[i], locale) != 0);
+        assert(classify(WEOF, locale) == 0);
+        uint64_t ignored;
+        assert(!android_wchar_compat_resolve(classifiers[i], "LIBC_N", "libc.so", &ignored));
+    }
+    wint_t (*upper)(wint_t, locale_t) = (void *)(uintptr_t)lookup("towupper_l");
+    wint_t (*lower)(wint_t, locale_t) = (void *)(uintptr_t)lookup("towlower_l");
+    assert(upper(L'a', locale) == L'A' && lower(L'Z', locale) == L'z');
+    int (*compare)(const char *, const char *, locale_t) = (void *)(uintptr_t)lookup("strcoll_l");
+    int (*wide_compare)(const wchar_t *, const wchar_t *, locale_t) = (void *)(uintptr_t)lookup("wcscoll_l");
+    assert(compare("a", "b", locale) < 0 && wide_compare(L"z", L"a", locale) > 0);
+    size_t (*transform)(char *, const char *, size_t, locale_t) = (void *)(uintptr_t)lookup("strxfrm_l");
+    size_t (*wide_transform)(wchar_t *, const wchar_t *, size_t, locale_t) = (void *)(uintptr_t)lookup("wcsxfrm_l");
+    char text[8]; wchar_t wide[8];
+    assert(transform(text, "abc", sizeof(text), locale) == 3 && !strcmp(text, "abc"));
+    assert(wide_transform(wide, L"abc", 8, locale) == 3 && !wcscmp(wide, L"abc"));
+    release(locale);
+    assert(!create(0x40000000, "C", (locale_t)0) && errno == EINVAL);
+    assert(!create(1, NULL, (locale_t)0) && errno == EINVAL);
+    assert(!create(1, "morrow-no-such-locale", (locale_t)0));
+    for (int mask = 1; mask <= 32; mask <<= 1) {
+        locale = create(mask, "C", (locale_t)0);
+        assert(locale); release(locale);
+    }
+}
+
 int main(void)
 {
+    locale_test();
     uint64_t ignored = 0;
     assert(!android_wchar_compat_resolve("mbrtowc", "LIBC_O", "libc.so", &ignored));
     assert(!android_wchar_compat_resolve("mbrtowc", "LIBC", "libm.so", &ignored));

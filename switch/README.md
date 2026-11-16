@@ -107,6 +107,15 @@ and visible Roblox frames remain unverified. **v1.0 is reserved for verified
 playable gameplay**, with 30 FPS as the initial Switch Lite target and 60 FPS
 as a performance goal requiring on-console measurements.
 
+The same v0.95 development line also provides 19 locale-related imports:
+`newlocale`, `uselocale`, `freelocale`, narrow/wide collation and transform,
+and ten wide-character classifiers plus upper/lower conversion. Android
+category masks are translated; locale handles stay opaque native objects.
+Unsupported locale names fail through the native provider instead of silently
+selecting a replacement. The checked locale is `C`; availability of other
+locales depends on the Switch C library. These adapters do not establish
+Roblox UI text rendering or a working account session.
+
 **v0.94 validates the ELF constructor call targets** from a strictly relocated,
 non-executable staging image, checking the final RX pages and Bionic's null/-1
 sentinels without calling guest code. See [the constructor preflight notes](docs/morrow-v094-constructors.md).

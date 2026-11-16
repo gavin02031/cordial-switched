@@ -309,6 +309,12 @@ jobs:
             switch/tests/android_socket_compat_test.c switch/source/android_socket_compat.c \
             -o /tmp/morrow-arm64-socket-test
           timeout 60s qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/morrow-arm64-socket-test
+      - name: Test ARM64 locale handles and wide-character calls
+        run: |
+          aarch64-linux-gnu-gcc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_wchar_compat_test.c switch/source/android_wchar_compat.c \
+            -o /tmp/morrow-arm64-wchar-test
+          timeout 60s qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/morrow-arm64-wchar-test
 
   build:
     runs-on: ubuntu-latest

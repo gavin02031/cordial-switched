@@ -1,6 +1,9 @@
+#define _POSIX_C_SOURCE 200809L
 #include "android_wchar_compat.h"
 
 #include <errno.h>
+#include <locale.h>
+#include <wctype.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -204,6 +207,25 @@ static size_t bionic_wcsnrtombs(char *destination, const wchar_t **source,
     return output;
 }
 
+// Locale objects remain opaque native handles throughout this provider.
+// Bionic category bits differ from newlib (including LC_ALL_MASK).
+static locale_t bionic_newlocale(int categories, const char *name, locale_t base)
+{
+    if (!name) { errno = EINVAL; return (locale_t)0; }
+    int native = 0;
+    if (categories == 0x1fbf) native = LC_ALL_MASK;
+    else {
+        if (categories & ~0x3f) { errno = EINVAL; return (locale_t)0; }
+        if (categories & 1) native |= LC_CTYPE_MASK;
+        if (categories & 2) native |= LC_NUMERIC_MASK;
+        if (categories & 4) native |= LC_TIME_MASK;
+        if (categories & 8) native |= LC_COLLATE_MASK;
+        if (categories & 16) native |= LC_MONETARY_MASK;
+        if (categories & 32) native |= LC_MESSAGES_MASK;
+    }
+    return newlocale(native, name, base);
+}
+
 bool android_wchar_compat_resolve(const char *name, const char *version,
                                   const char *library, uint64_t *address)
 {
@@ -212,6 +234,25 @@ bool android_wchar_compat_resolve(const char *name, const char *version,
         return false;
     *address = 0;
 #define MAP(name_, target_) if (!strcmp(name, name_)) *address = (uint64_t)(uintptr_t)&target_; else
+    MAP("newlocale", bionic_newlocale)
+    MAP("freelocale", freelocale)
+    MAP("uselocale", uselocale)
+    MAP("strcoll_l", strcoll_l)
+    MAP("strxfrm_l", strxfrm_l)
+    MAP("wcscoll_l", wcscoll_l)
+    MAP("wcsxfrm_l", wcsxfrm_l)
+    MAP("iswlower_l", iswlower_l)
+    MAP("iswspace_l", iswspace_l)
+    MAP("iswprint_l", iswprint_l)
+    MAP("iswblank_l", iswblank_l)
+    MAP("iswcntrl_l", iswcntrl_l)
+    MAP("iswupper_l", iswupper_l)
+    MAP("iswalpha_l", iswalpha_l)
+    MAP("iswdigit_l", iswdigit_l)
+    MAP("iswpunct_l", iswpunct_l)
+    MAP("iswxdigit_l", iswxdigit_l)
+    MAP("towupper_l", towupper_l)
+    MAP("towlower_l", towlower_l)
     MAP("mbrtowc", bionic_mbrtowc)
     MAP("mbrlen", bionic_mbrlen)
     MAP("mbtowc", bionic_mbtowc)
