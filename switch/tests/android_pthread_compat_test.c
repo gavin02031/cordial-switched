@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <time.h>
+#include <stdlib.h>
 
 // Deliberately model Android LP64 storage, never host pthread structures.
 typedef struct { int32_t private_words[10]; } BionicMutex;
@@ -247,6 +248,30 @@ int main(void)
     assert(cond_init(&explicit_cond, &unsupported_attr) == ENOTSUP);
     assert(cond_init(&explicit_cond, NULL) == 0);
     assert(cond_destroy(&explicit_cond) == 0);
+
+    // Keep enough live objects to exercise bucket collisions and removal
+    // from chains. Destroy in a different order, then reuse the same storage.
+    enum { MANY_LOCKS = 4096 };
+    BionicMutex *many = calloc(MANY_LOCKS, sizeof(*many));
+    assert(many);
+    for (unsigned i = 0; i < MANY_LOCKS; ++i) {
+        assert(bridge_lock(&many[i]) == 0);
+        assert(bridge_unlock(&many[i]) == 0);
+    }
+    for (unsigned i = 0; i < MANY_LOCKS; ++i) {
+        unsigned slot = (i * 2053u) % MANY_LOCKS;
+        assert(bridge_lock(&many[slot]) == 0);
+        assert(bridge_destroy(&many[slot]) == EBUSY);
+        assert(bridge_unlock(&many[slot]) == 0);
+        assert(bridge_destroy(&many[slot]) == 0);
+    }
+    for (unsigned i = 0; i < MANY_LOCKS; ++i) {
+        assert(mutex_init(&many[i], NULL) == 0);
+        assert(bridge_lock(&many[i]) == 0);
+        assert(bridge_unlock(&many[i]) == 0);
+        assert(bridge_destroy(&many[i]) == 0);
+    }
+    free(many);
 
     puts("android_pthread_compat_test: Bionic mutex, cond and once ABI bridge passed");
     return 0;

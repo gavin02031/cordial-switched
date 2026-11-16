@@ -51,12 +51,25 @@ typedef struct BridgeEntry {
 
 enum { BRIDGE_MAX_OBJECTS = 16384 };
 static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
-static BridgeEntry *registry;
+// Engine worker threads revisit the same locks frequently. Hash by guest
+// address so each lock/unlock does not scan every registered engine object.
+// The registry mutex still protects buckets and lifetime counters together.
+enum { BRIDGE_BUCKETS = 1024 };
+static BridgeEntry *registry[BRIDGE_BUCKETS];
+
+static unsigned registry_bucket(const void *address, BridgeKind kind)
+{
+    uintptr_t key = (uintptr_t)address >> 2;
+    key ^= key >> 17;
+    key *= UINT64_C(0x9e3779b97f4a7c15);
+    key ^= key >> 32;
+    return (unsigned)(key ^ (unsigned)kind) & (BRIDGE_BUCKETS - 1);
+}
 static unsigned registry_count;
 
 static BridgeEntry *find_locked(void *address, BridgeKind kind)
 {
-    for (BridgeEntry *entry = registry; entry; entry = entry->next) {
+    for (BridgeEntry *entry = registry[registry_bucket(address, kind)]; entry; entry = entry->next) {
         if (entry->android_address == address && entry->kind == kind)
             return entry;
     }
@@ -120,8 +133,9 @@ static int create_locked(void *address, BridgeKind kind, int mutex_type,
     }
     entry->android_address = address;
     entry->kind = kind;
-    entry->next = registry;
-    registry = entry;
+    unsigned bucket = registry_bucket(address, kind);
+    entry->next = registry[bucket];
+    registry[bucket] = entry;
     registry_count++;
     *result = entry;
     return 0;
@@ -236,7 +250,7 @@ static int android_mutex_unlock(void *address)
 
 static void unlink_locked(BridgeEntry *entry)
 {
-    BridgeEntry **link = &registry;
+    BridgeEntry **link = &registry[registry_bucket(entry->android_address, entry->kind)];
     while (*link && *link != entry) link = &(*link)->next;
     if (*link) {
         *link = entry->next;
