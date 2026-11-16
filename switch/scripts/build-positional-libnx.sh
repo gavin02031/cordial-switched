@@ -20,7 +20,7 @@ test "$(git -C "$source_dir" rev-parse HEAD)" = "$revision"
 cp "$script_dir/../source/horizon_fsdev_positional_io.inc" "$source_dir/nx/source/runtime/devices/"
 printf '\n#include "horizon_fsdev_positional_io.inc"\n' >> "$source_dir/nx/source/runtime/devices/fs_dev.c"
 "$DEVKITPRO/devkitA64/bin/aarch64-none-elf-gcc" \
-    -O2 -g -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+    -O2 -g -Wall -Wextra -Werror -Wno-error=old-style-declaration -Wno-error=sign-compare -Wno-error=unused-parameter -ffunction-sections -fdata-sections \
     -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIC -ftls-model=local-exec \
     -D__SWITCH__ -DLIBNX_NO_DEPRECATION \
     -I"$DEVKITPRO/libnx/include" -iquote "$DEVKITPRO/libnx/include/switch" \
