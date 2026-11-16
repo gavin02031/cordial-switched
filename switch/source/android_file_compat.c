@@ -249,6 +249,25 @@ static int file_fchmod(int fd, mode_t mode)
     return fchmod(fd, mode);
 }
 
+// FAT/exFAT has no Unix owner metadata. Keep this import addressable for
+// relocation, but never report that an ownership mutation succeeded on Horizon.
+static int file_fchown(int fd, uid_t owner, gid_t group)
+{
+#ifdef __SWITCH__
+    (void)owner;
+    (void)group;
+    struct stat descriptor_info;
+    if (fd < 0 || fstat(fd, &descriptor_info) < 0) {
+        errno = EBADF;
+    } else {
+        errno = EOPNOTSUPP;
+    }
+    return -1;
+#else
+    return fchown(fd, owner, group);
+#endif
+}
+
 typedef struct {
     DIR *native;
     AndroidDirectoryEntry entry;
@@ -314,6 +333,7 @@ bool android_file_compat_resolve(const char *name, const char *version,
 #endif
     MAP("ftruncate", file_ftruncate)
     MAP("fchmod", file_fchmod)
+    MAP("fchown", file_fchown)
     MAP("opendir", file_opendir)
     MAP("readdir", file_readdir)
     MAP("closedir", file_closedir)

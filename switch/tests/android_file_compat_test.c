@@ -35,6 +35,7 @@ int main(void)
     LOAD(lseek, int64_t, (int, int64_t, int));
     LOAD(ftruncate, int, (int, int64_t));
     LOAD(fchmod, int, (int, mode_t));
+    LOAD(fchown, int, (int, uid_t, gid_t));
     LOAD(opendir, void *, (const char *));
     LOAD(readdir, AndroidDirectoryEntry *, (void *));
     LOAD(closedir, int, (void *));
@@ -52,8 +53,9 @@ int main(void)
     assert(guest_fchmod(fd, 0100000) == -1 && errno == EINVAL);
     assert(fstat(fd, &permissions) == 0 && (permissions.st_mode & 0777) == 0640);
     assert(guest_fchmod(-1, 0600) == -1 && errno == EBADF);
-    uint64_t ignored_owner = 0;
-    assert(!android_file_compat_resolve("fchown", "LIBC", "libc.so", &ignored_owner));
+    // The native host supports POSIX ownership; Horizon reports it unsupported.
+    assert(guest_fchown(fd, (uid_t)-1, (gid_t)-1) == 0);
+    assert(guest_fchown(-1, (uid_t)-1, (gid_t)-1) == -1 && errno == EBADF);
     assert(guest_open(path, 2 | 0100 | 0200, 0600u) == -1 && errno == EEXIST);
     assert(write(fd, "abc", 3) == 3);
     assert(guest_lseek(fd, 1, 0) == 1);

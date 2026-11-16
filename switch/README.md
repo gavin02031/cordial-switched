@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.99 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.99.2 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -94,6 +94,13 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.99.2 makes the required `fchown` symbol linkable without falsely
+claiming filesystem ownership support.** Desktop POSIX builds forward to real
+`fchown`; Horizon returns `EOPNOTSUPP` for a valid descriptor (or `EBADF` for an
+invalid one). This can move the linker to its next missing import, but guest
+code actually requesting ownership changes will still fail. A passing link is
+not proof of engine startup or functional Android filesystem semantics.
 
 **v0.99 handles absent ELF weak imports and reports them separately.**
 See [the v0.99 loader notes](docs/morrow-v099-weak-imports.md) for the new
