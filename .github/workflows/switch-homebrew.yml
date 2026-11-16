@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test offline Android ELF audit
+        run: python3 -m unittest discover -s switch/tools -p 'test_*.py'
       - name: Test native sidebar touch targets
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
