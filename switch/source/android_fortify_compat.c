@@ -139,21 +139,21 @@ static char *fortify_strchr(const char *source, int character, size_t source_len
 // Do the checks before entering the host fd layer, including on zero-byte I/O.
 static ssize_t fortify_read(int fd, void *buffer, size_t count, size_t capacity)
 {
-    if (count > capacity || count > SSIZE_MAX) bad_bound("read");
+    if (count > capacity || count > (size_t)PTRDIFF_MAX) bad_bound("read");
     return read(fd, buffer, count);
 }
 
 static ssize_t fortify_write(int fd, const void *buffer, size_t count,
                              size_t capacity)
 {
-    if (count > capacity || count > SSIZE_MAX) bad_bound("write");
+    if (count > capacity || count > (size_t)PTRDIFF_MAX) bad_bound("write");
     return write(fd, buffer, count);
 }
 
 static ssize_t fortify_readlink(const char *path, char *buffer, size_t count,
                                 size_t capacity)
 {
-    if (count > capacity || count > SSIZE_MAX) bad_bound("readlink");
+    if (count > capacity || count > (size_t)PTRDIFF_MAX) bad_bound("readlink");
     return readlink(path, buffer, count);
 }
 
