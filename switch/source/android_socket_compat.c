@@ -15,7 +15,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#ifndef __SWITCH__
 #include <sys/uio.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 
