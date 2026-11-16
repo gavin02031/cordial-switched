@@ -40,6 +40,9 @@ typedef struct {
     // symbols use S=0; they do not imply an implemented Android provider.
     unsigned weak_undefined_relocations;
     unsigned required_missing_relocations;
+    // Set only after every relocation table has been scanned. An unresolved
+    // import can still make the stage unusable after this point.
+    bool relocation_scan_complete;
     // Provider lookup failures include weak imports. Preserve the first
     // mandatory import separately so a hardware report names the real stop.
     char first_required_name[76];

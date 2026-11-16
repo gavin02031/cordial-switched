@@ -386,6 +386,7 @@ int main(void)
     EngineStage stage;
     assert(stage_fixture(bytes, sizeof(bytes), &stage));
     assert(stage.status == ENGINE_STAGE_PREPARED);
+    assert(stage.relocation_scan_complete);
     assert(stage.image_size == 4096);
     assert(stage.lowest_virtual_address == 0x1000);
     assert(stage.rela_applied == 1);
@@ -856,6 +857,7 @@ int main(void)
     put64(bytes + 0x268, 0);
     assert(!audit_fixture(bytes, &stage, fake_resolver, NULL));
     assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+    assert(stage.relocation_scan_complete);
     assert(strstr(stage.detail, "2 unresolved imports"));
     assert(stage.image == NULL);
     assert(!audit_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
@@ -881,6 +883,7 @@ int main(void)
     assert(stage.status == ENGINE_STAGE_UNSUPPORTED_RELOCATION);
     assert(stage.unsupported_relocations_seen == 1);
     assert(stage.tls_relocations_seen == 1);
+    assert(stage.relocation_scan_complete);
     assert(strstr(stage.detail, "1 missing imports"));
     boot_fixture(bytes, sizeof(bytes), &audited_boot, audited_log, sizeof(audited_log));
     assert(strstr(audited_log, "missing_import_lookups=1"));
@@ -906,6 +909,7 @@ int main(void)
     put32(bytes + 0x2d8, 24); // Out-of-range string-table offset.
     assert(!resolve_fixture(bytes, &stage, fake_resolver, (void *)&address));
     assert(stage.status == ENGINE_STAGE_INVALID);
+    assert(!stage.relocation_scan_complete);
 
     version_fixture(bytes);
     assert(resolve_fixture(bytes, &stage, versioned_resolver, (void *)&address));

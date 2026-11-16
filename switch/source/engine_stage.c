@@ -907,6 +907,7 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
         }
     }
 
+    stage->relocation_scan_complete = true;
     if (stage->unsupported_relocations_seen) {
         char detail[120];
         snprintf(detail, sizeof(detail),

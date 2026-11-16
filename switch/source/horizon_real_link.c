@@ -186,10 +186,32 @@ typedef struct {
     MissingImport examples[24];
     MissingImport *complete_list;
     unsigned complete_capacity;
+    MissingImport *resolved_list;
+    unsigned resolved_capacity;
+    bool resolved_keys_truncated;
     unsigned lookups;
     unsigned supported;
     unsigned missing;
 } ImportDiagnostics;
+
+// The SD report is a source of evidence about the *actual* Horizon resolver,
+// not an inferred list of MAP names. Refuse a complete manifest if the fixed
+// report fields cannot contain any of the accepted ABI keys.
+static bool snapshot_import(MissingImport *value, const char *name,
+                            const char *version, const char *library)
+{
+    if (!value) return false;
+    const char *entry_name = name ? name : "?";
+    const char *entry_version = version ? version : "unversioned";
+    const char *entry_library = library ? library : "unspecified";
+    const bool fits = strlen(entry_name) < sizeof(value->name) &&
+                      strlen(entry_version) < sizeof(value->version) &&
+                      strlen(entry_library) < sizeof(value->library);
+    snprintf(value->name, sizeof(value->name), "%s", entry_name);
+    snprintf(value->version, sizeof(value->version), "%s", entry_version);
+    snprintf(value->library, sizeof(value->library), "%s", entry_library);
+    return fits;
+}
 
 static FILE *new_log(char *path, size_t capacity)
 {
@@ -271,17 +293,20 @@ static bool resolve_compatible(const char *name, const char *version,
             android_thread_attr_compat_resolve(name, version, library, address) ||
             android_thread_lifecycle_compat_resolve(name, version, library, address));
     if (supported) {
-        if (diagnostics && diagnostics->supported < UINT32_MAX)
-            diagnostics->supported++;
+        if (diagnostics) {
+            if (diagnostics->resolved_list &&
+                diagnostics->supported < diagnostics->resolved_capacity &&
+                !snapshot_import(&diagnostics->resolved_list[diagnostics->supported],
+                                 name, version, library))
+                diagnostics->resolved_keys_truncated = true;
+            if (diagnostics->supported < UINT32_MAX)
+                diagnostics->supported++;
+        }
     } else if (diagnostics) {
         MissingImport value = {0};
-        // Match symbol names to their version and owning DSO; a same-named
-        // libc function does not automatically implement its Android ABI.
-        snprintf(value.name, sizeof(value.name), "%.75s", name ? name : "?");
-        snprintf(value.version, sizeof(value.version), "%.44s",
-                 version ? version : "unversioned");
-        snprintf(value.library, sizeof(value.library), "%.44s",
-                 library ? library : "unspecified");
+        // A name alone cannot establish ABI compatibility: keep the version
+        // and owning Android DSO for every rejected provider lookup.
+        snapshot_import(&value, name, version, library);
         if (!diagnostics->first.name[0]) diagnostics->first = value;
         if (diagnostics->complete_list &&
             diagnostics->missing < diagnostics->complete_capacity)
@@ -343,6 +368,27 @@ static void log_import_summary(FILE *log, const char *prefix,
         printable(version, sizeof(version), entry->version);
         printable(library, sizeof(library), entry->library);
         log_line(log, "%s_missing_import_%03u=%s @ %s from %s",
+                 prefix, i + 1, name, version, library);
+    }
+}
+
+static void log_resolved_imports(FILE *log, const char *prefix,
+                                 const ImportDiagnostics *diagnostics)
+{
+    const unsigned recorded = diagnostics->resolved_list ?
+        (diagnostics->supported < diagnostics->resolved_capacity ?
+         diagnostics->supported : diagnostics->resolved_capacity) : 0;
+    log_line(log, "%s_resolved_imports_reported=%u", prefix, recorded);
+    log_line(log, "%s_resolved_import_list_complete=%s", prefix,
+             recorded == diagnostics->supported &&
+             !diagnostics->resolved_keys_truncated ? "yes" : "no");
+    for (unsigned i = 0; i < recorded; i++) {
+        const MissingImport *entry = &diagnostics->resolved_list[i];
+        char name[80], version[48], library[48];
+        printable(name, sizeof(name), entry->name);
+        printable(version, sizeof(version), entry->version);
+        printable(library, sizeof(library), entry->library);
+        log_line(log, "%s_resolved_import_%03u=%s @ %s from %s",
                  prefix, i + 1, name, version, library);
     }
 }
@@ -1231,23 +1277,31 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             // The v0.81 hardware report revealed 298 missing imports, but
             // printed only 24. Keep the full read-only gap on the heap so it
             // can be diagnosed in one pass without inflating this stack frame.
-            enum { MAX_REPORTED_IMPORTS = 512 };
-            all_imports.complete_list = calloc(MAX_REPORTED_IMPORTS,
+            enum { MAX_MISSING_IMPORTS = 512, MAX_RESOLVED_IMPORTS = 1024 };
+            all_imports.complete_list = calloc(MAX_MISSING_IMPORTS,
                                                sizeof(MissingImport));
             if (all_imports.complete_list)
-                all_imports.complete_capacity = MAX_REPORTED_IMPORTS;
+                all_imports.complete_capacity = MAX_MISSING_IMPORTS;
+            all_imports.resolved_list = calloc(MAX_RESOLVED_IMPORTS,
+                                               sizeof(MissingImport));
+            if (all_imports.resolved_list)
+                all_imports.resolved_capacity = MAX_RESOLVED_IMPORTS;
             log_line(log, "event=full_final_base_audit_started");
             const bool all_ready = engine_stage_stream_audit_at(
                 file, &audit, resolve_compatible, &all_imports,
                 (uint64_t)(uintptr_t)reservation.mapped);
             log_line(log, "full_audit_status=%d", audit.status);
+            log_line(log, "full_audit_relocation_scan_complete=%s",
+                     audit.relocation_scan_complete ? "yes" : "no");
             printable(safe, sizeof(safe), audit.detail);
             log_line(log, "full_audit_detail=%s", safe);
             log_import_summary(log, "full_audit", &all_imports);
+            log_resolved_imports(log, "full_audit", &all_imports);
             log_required_import(log, "full_audit", &audit);
             log_line(log, "full_audit_weak_undefined_relocations=%u", audit.weak_undefined_relocations);
             log_line(log, "full_audit_required_missing_relocations=%u", audit.required_missing_relocations);
             free(all_imports.complete_list);
+            free(all_imports.resolved_list);
             log_line(log, "full_audit_unsupported_relocations=%u",
                      audit.unsupported_relocations_seen);
             log_line(log, "full_audit_tls_relocations=%u", audit.tls_relocations_seen);

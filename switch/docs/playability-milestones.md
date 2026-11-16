@@ -37,14 +37,35 @@ obtained from a verified target provider inventory. Unversioned references use
 JSON null for version and library. Comparison emits every `missing_required`
 entry and exits 1 if any are absent. Do not infer this inventory merely by
 grepping MAP macros: target/compiler gates and runtime providers matter. A
-complete Horizon provider-manifest exporter is not implemented yet, so this
-comparison alone is not an established milestone-A check. When an actual
-manifest is supplied, the command writes both `missing_required` (import
+target-observed Horizon provider-manifest exporter is available from a **new**
+final-base diagnostic report, but a complete report has not yet been collected.
+It does not guess providers from the source tree:
+
+```sh
+python3 switch/tools/export_horizon_providers.py /path/to/link-XX.txt \
+  --output /path/to/horizon-providers.json \
+  --evidence-output /path/to/horizon-provider-evidence.json
+python3 switch/tools/audit_android_elf.py /path/to/libroblox.so \
+  --readelf readelf --providers /path/to/horizon-providers.json \
+  --output /path/to/audit-with-providers.json
+```
+
+The exporter accepts only a final-base report with a completed relocation scan,
+complete numbered success **and** missing-import inventories, consistent lookup
+counts and a recorded build identity. Every accepted key was presented to the
+actual Horizon resolver. Distinct matches do not prove that a provider's runtime
+behaviour is sufficient for Roblox. The evidence JSON contains the link report's
+SHA-256 and lookup totals; keep it with the offline audit. Older link reports
+(including link-31) lack the resolved-import inventory and cannot be upgraded
+into this form by inference. The private ELF and target report still need to be
+made available to the same trusted runtime before milestone A can be verified.
+
+With a verified manifest, the audit writes both `missing_required` (import
 entries) and `missing_required_distinct` (unique name/version/provider keys),
 prints the complete distinct missing list, and exits with status 1 if any
 required keys remain. Do not confuse either count with relocation sites.
-CI currently tests the audit tool with synthetic fixtures; it does not have
-the proprietary ELF or a verified Horizon provider manifest.
+CI exercises the parsers with synthetic fixtures, without committing or
+uploading the proprietary ELF.
 
 SVC matches can be data or unreachable instructions. A nonzero count needs
 inspection, not automatic patching; zero does not exclude instructions in
