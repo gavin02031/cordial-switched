@@ -108,13 +108,14 @@ actual ARM64 jumps under QEMU. **INFERRED:** the confirmed v0.86 hardware audit
 of 437/629 supported imports may improve by two; neither a successful strict
 link nor any Roblox code execution has yet been observed for this change.
 
-**v0.88 adds 21 distinct imports from the v0.86 hardware report.** The
+**v0.88 adds 18 distinct imports from the v0.86 hardware report.** The
 filesystem provider translates Android ARM64 `stat`/`fstat`/`lstat` records,
 `open` flags and `dirent` records instead of passing incompatible newlib
-layouts to the engine. It also binds `__open_2`, `lseek`, `pread`/`pread64`,
-`pwrite`, `ftruncate`, and directory open/read/close. Unsupported open flags
-fail before creating or truncating a file. Positional I/O uses the native
-positional calls, preserving a shared descriptor's offset. Directory types
+layouts to the engine. It also binds `__open_2`, `lseek`, `ftruncate`, and
+directory open/read/close. Unsupported open flags fail before creating or
+truncating a file. `pread`, `pread64` and `pwrite` remain unresolved: newlib
+emulates positional I/O with seek/read-or-write/seek, which races with other
+users of the same descriptor. Directory types
 on Horizon are reported as `DT_UNKNOWN`; callers can request `stat`.
 
 `optarg`, `optind`, `environ`, `tzname`, `timezone` and `daylight` now expose

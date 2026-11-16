@@ -148,18 +148,6 @@ static int64_t file_lseek(int fd, int64_t offset, int whence)
     return lseek(fd, (off_t)offset, native);
 }
 
-// These offset-based calls must not be emulated with seek/read/seek: another
-// engine thread may share the descriptor's current offset.
-static int64_t file_pread(int fd, void *buffer, uint64_t count, int64_t offset)
-{
-    if (count > INT64_MAX) { errno = EINVAL; return -1; }
-    return pread(fd, buffer, (size_t)count, (off_t)offset);
-}
-static int64_t file_pwrite(int fd, const void *buffer, uint64_t count, int64_t offset)
-{
-    if (count > INT64_MAX) { errno = EINVAL; return -1; }
-    return pwrite(fd, buffer, (size_t)count, (off_t)offset);
-}
 static int file_ftruncate(int fd, int64_t length)
 {
     return ftruncate(fd, (off_t)length);
@@ -221,9 +209,6 @@ bool android_file_compat_resolve(const char *name, const char *version,
     MAP("open", file_open)
     MAP("__open_2", file_open_2)
     MAP("lseek", file_lseek)
-    MAP("pread", file_pread)
-    MAP("pread64", file_pread)
-    MAP("pwrite", file_pwrite)
     MAP("ftruncate", file_ftruncate)
     MAP("opendir", file_opendir)
     MAP("readdir", file_readdir)
