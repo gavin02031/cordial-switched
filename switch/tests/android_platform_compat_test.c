@@ -42,11 +42,37 @@ int main(void)
     assert(strcmp(buffer, "value=17") == 0);
     assert(fclose(temporary) == 0);
 
-    // Never confuse Bionic's data symbol with the host's FILE storage or
+    // A legacy Android caller computes `&__sF[1]` using Bionic's 152-byte
+    // stride. Those opaque bytes must never be passed straight to newlib.
+    assert(android_stdio_compat_resolve("__sF", "LIBC", "libc.so", &address));
+    assert(address != 0);
+    FILE *legacy_stdin = (FILE *)(uintptr_t)address;
+    FILE *legacy_stdout = (FILE *)(uintptr_t)(address + 152);
+    FILE *legacy_stderr = (FILE *)(uintptr_t)(address + 304);
+    assert(android_fileno(legacy_stdin) == fileno(stdin));
+    assert(android_fileno(legacy_stdout) == fileno(stdout));
+    assert(android_fileno(legacy_stderr) == fileno(stderr));
+    assert(android_fflush(legacy_stdout) == 0);
+    assert(android_fflush(legacy_stderr) == 0);
+    assert(android_stdio_compat_resolve("fputs", "LIBC", "libc.so", &address));
+    int (*android_fputs)(const char *, FILE *) =
+        (int (*)(const char *, FILE *))(uintptr_t)address;
+    assert(android_fputs("", legacy_stdout) >= 0);
+    assert(android_stdio_compat_resolve("fclose", "LIBC", "libc.so", &address));
+    int (*android_fclose)(FILE *) = (int (*)(FILE *))(uintptr_t)address;
+    errno = 0;
+    assert(android_fclose(legacy_stdout) == EOF && errno == EBADF);
+    assert(android_fileno(legacy_stdout) == fileno(stdout));
+    assert(android_stdio_compat_resolve("fseek", "LIBC", "libc.so", &address));
+    assert(android_stdio_compat_resolve("ftell", "LIBC", "libc.so", &address));
+    assert(android_stdio_compat_resolve("setvbuf", "LIBC", "libc.so", &address));
+
+    // Never confuse Bionic's data symbols with the host's FILE storage or
     // permit a foreign provider/version to acquire our fake handles.
     assert(!android_stdio_compat_resolve("stderr", "LIBM", "libc.so", &address));
     assert(!android_stdio_compat_resolve("stderr", "LIBC", "libm.so", &address));
-    assert(!android_stdio_compat_resolve("__sF", "LIBC", "libc.so", &address));
+    assert(!android_stdio_compat_resolve("__sF", "LIBC_N", "libc.so", &address));
+    assert(!android_stdio_compat_resolve("__sF", "LIBC", "libm.so", &address));
     assert(!android_stdio_compat_resolve("__fwrite_chk", "LIBC", "libc.so", &address));
     assert(!android_stdio_compat_resolve("stderr", "LIBC", "libc.so", NULL));
 
@@ -58,6 +84,23 @@ int main(void)
     double (*android_ldexp)(double, int) = (double (*)(double, int))(uintptr_t)address;
     assert(android_ldexp(1.5, 3) == 12.0);
     assert(!android_libc_compat_resolve("ldexp", "LIBC", "libm.so", &address));
+    assert(android_libc_compat_resolve("getentropy", NULL, NULL, &address));
+    int (*android_getentropy)(void *, size_t) =
+        (int (*)(void *, size_t))(uintptr_t)address;
+    unsigned char random_buffer[32] = {0};
+    assert(android_getentropy(random_buffer, sizeof(random_buffer)) == 0);
+    // A successful call must produce actual random data, not an all-zero
+    // placeholder. A 256-bit all-zero sample is negligibly likely.
+    unsigned nonzero = 0;
+    for (size_t i = 0; i < sizeof(random_buffer); i++)
+        nonzero |= random_buffer[i];
+    assert(nonzero != 0);
+    errno = 0;
+    assert(android_getentropy(random_buffer, 257) == -1 && errno == EIO);
+    errno = 0;
+    assert(android_getentropy(NULL, 1) == -1 && errno == EFAULT);
+    assert(!android_libc_compat_resolve("getentropy", "LIBC", "libc.so", &address));
+    assert(!android_libc_compat_resolve("getentropy", NULL, "libc.so", &address));
     assert(android_libc_compat_resolve("clock_gettime", "LIBC", "libc.so", &address));
     int (*android_clock_gettime)(int, struct timespec *) =
         (int (*)(int, struct timespec *))(uintptr_t)address;

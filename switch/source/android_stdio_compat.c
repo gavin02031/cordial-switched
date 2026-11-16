@@ -22,11 +22,41 @@ static FILE *android_stdin_data = (FILE *)android_stdin_marker;
 static FILE *android_stdout_data = (FILE *)android_stdout_marker;
 static FILE *android_stderr_data = (FILE *)android_stderr_marker;
 
+// A legacy Android dependency still imports the pre-M `FILE __sF[3]` array.
+// Bionic's LP64 FILE is an opaque, 152-byte structure, unlike newlib's FILE.
+// Keep a correctly strided, readable array, but redirect every FILE-taking
+// entry point we advertise to the real host stream. This follows Cordial's
+// native/legacy_stdio.cpp, which fixed the _IO_fflush crash on desktop.
+// See Android bionic libc/include/bits/struct_file.h for the LP64 stride.
+enum { ANDROID_LEGACY_FILE_BYTES = 152, ANDROID_LEGACY_STREAMS = 3 };
+static _Alignas(sizeof(void *)) unsigned char
+    android_legacy_sf[ANDROID_LEGACY_STREAMS][ANDROID_LEGACY_FILE_BYTES];
+
+static int legacy_stream_index(FILE *stream)
+{
+    const uintptr_t start = (uintptr_t)&android_legacy_sf[0][0];
+    const uintptr_t value = (uintptr_t)stream;
+    const size_t size = sizeof(android_legacy_sf);
+    if (value < start || value - start >= size) return -1;
+    return (int)((value - start) / ANDROID_LEGACY_FILE_BYTES);
+}
+
+static bool is_standard_stream(FILE *stream)
+{
+    return stream == android_stdin_data || stream == android_stdout_data ||
+           stream == android_stderr_data || legacy_stream_index(stream) >= 0;
+}
+
 static FILE *host_stream(FILE *stream)
 {
     if (stream == android_stdin_data) return stdin;
     if (stream == android_stdout_data) return stdout;
     if (stream == android_stderr_data) return stderr;
+    switch (legacy_stream_index(stream)) {
+    case 0: return stdin;
+    case 1: return stdout;
+    case 2: return stderr;
+    }
     return stream;
 }
 
@@ -103,12 +133,26 @@ static int stdio_fclose(FILE *stream)
 {
     // Keep the host's process-global streams alive if an Android caller
     // tries to close one. The caller receives an actual failure.
-    if (stream == android_stdin_data || stream == android_stdout_data ||
-        stream == android_stderr_data) {
+    if (is_standard_stream(stream)) {
         errno = EBADF;
         return EOF;
     }
     return fclose(stream);
+}
+
+static int stdio_fseek(FILE *stream, long offset, int whence)
+{
+    return fseek(host_stream(stream), offset, whence);
+}
+
+static long stdio_ftell(FILE *stream)
+{
+    return ftell(host_stream(stream));
+}
+
+static int stdio_setvbuf(FILE *stream, char *buffer, int mode, size_t size)
+{
+    return setvbuf(host_stream(stream), buffer, mode, size);
 }
 
 static int stdio_fseeko(FILE *stream, off_t offset, int whence)
@@ -139,10 +183,11 @@ bool android_stdio_compat_resolve(const char *name, const char *version,
     }
     if (strcmp(version, "LIBC") != 0)
         return false;
-    // Do not advertise __sF: our handles are not a real contiguous Bionic
-    // FILE array, and Android code indexing them would corrupt memory.
+    // The __sF array has the exact Bionic LP64 stride, while its pointers
+    // are translated above. Never pass any of its slots to newlib directly.
 #define MAP_STDIO(symbol, target) \
     if (strcmp(name, symbol) == 0) *address = (uint64_t)(uintptr_t)(target); else
+    MAP_STDIO("__sF", android_legacy_sf)
     MAP_STDIO("stderr", &android_stderr_data)
     MAP_STDIO("stdout", &android_stdout_data)
     MAP_STDIO("stdin", &android_stdin_data)
@@ -157,6 +202,9 @@ bool android_stdio_compat_resolve(const char *name, const char *version,
     MAP_STDIO("fileno", &stdio_fileno)
     MAP_STDIO("fclose", &stdio_fclose)
     MAP_STDIO("fopen", &fopen)
+    MAP_STDIO("fseek", &stdio_fseek)
+    MAP_STDIO("ftell", &stdio_ftell)
+    MAP_STDIO("setvbuf", &stdio_setvbuf)
     MAP_STDIO("fseeko", &stdio_fseeko)
     MAP_STDIO("ftello", &stdio_ftello)
     *address = 0;

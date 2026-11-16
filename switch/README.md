@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.81 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.82 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -48,7 +48,7 @@ Download the resulting `cordial-switched-switch-preview` artifact from the
 workflow run; its contents are `cordial-switched.nro`.
 
 The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
-v0.81 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+v0.82 variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
 registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
 whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
 object with four zero fields for the Switch's fullscreen display, registers a
@@ -94,6 +94,23 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+**v0.82 handles the next strict linker stop, `__sF@LIBC`,** observed on Switch
+in the v0.81 `link-18.txt` report. The pre-Android-M three-element standard
+stream array now has Bionic's verified 152-byte LP64 stride. FILE-taking stdio
+wrappers translate each legacy slot to the corresponding Horizon stream; the
+host must never dereference those opaque bytes as a newlib FILE. The wrappers
+also refuse to close global standard streams. Host tests verify every slot,
+the 152-byte addressing, version/provider checks and safe refusal to close.
+The unversioned `getentropy` import also uses libnx's OS-seeded ChaCha RNG,
+with Android's 256-byte limit and error handling, instead of fabricated bytes.
+The v0.81 audit progressed to 629 import lookups and found 298 unresolved
+imports; v0.82 therefore saves up to 512 names and versions in the next
+`link-XX.txt`, instead of hiding all but 24. The full list is a read-only
+diagnostic, not newly supported functionality. **INFERRED:** even after `__sF`
+is resolved, many missing libc/Android imports and 2,505 constructors prevent
+real `JNI_OnLoad`, Roblox graphics, login and gameplay. Send the latest Loader
+L3 report after updating; experimental ZL+ZR+Minus may still refuse entry.
+
 **v0.81 addresses two observed v0.80 linker blockers** from a real Switch
 `link-17.txt` (L3 export/link diagnostic). The strict and NX-audit linker
 now relocates defined, already-loaded ARM64 dynamic symbols against the

@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -172,6 +173,8 @@ typedef struct {
 typedef struct {
     MissingImport first;
     MissingImport examples[24];
+    MissingImport *complete_list;
+    unsigned complete_capacity;
     unsigned lookups;
     unsigned supported;
     unsigned missing;
@@ -263,6 +266,9 @@ static bool resolve_compatible(const char *name, const char *version,
         snprintf(value.library, sizeof(value.library), "%.44s",
                  library ? library : "unspecified");
         if (!diagnostics->first.name[0]) diagnostics->first = value;
+        if (diagnostics->complete_list &&
+            diagnostics->missing < diagnostics->complete_capacity)
+            diagnostics->complete_list[diagnostics->missing] = value;
         if (diagnostics->missing < 24)
             diagnostics->examples[diagnostics->missing] = value;
         if (diagnostics->missing < UINT32_MAX) diagnostics->missing++;
@@ -295,12 +301,20 @@ static void log_import_summary(FILE *log, const char *prefix,
         log_line(log, "%s_first_missing_version=%s", prefix, version);
         log_line(log, "%s_first_missing_provider=%s", prefix, library);
     }
-    for (unsigned i = 0; i < diagnostics->missing && i < 24; i++) {
+    const unsigned limit = diagnostics->complete_list ?
+        diagnostics->complete_capacity : 24;
+    const unsigned recorded = diagnostics->missing < limit ? diagnostics->missing : limit;
+    log_line(log, "%s_missing_imports_reported=%u", prefix, recorded);
+    log_line(log, "%s_missing_import_list_complete=%s", prefix,
+             recorded == diagnostics->missing ? "yes" : "no");
+    for (unsigned i = 0; i < recorded; i++) {
+        const MissingImport *entry = diagnostics->complete_list ?
+            &diagnostics->complete_list[i] : &diagnostics->examples[i];
         char name[80], version[48], library[48];
-        printable(name, sizeof(name), diagnostics->examples[i].name);
-        printable(version, sizeof(version), diagnostics->examples[i].version);
-        printable(library, sizeof(library), diagnostics->examples[i].library);
-        log_line(log, "%s_missing_import_%02u=%s @ %s from %s",
+        printable(name, sizeof(name), entry->name);
+        printable(version, sizeof(version), entry->version);
+        printable(library, sizeof(library), entry->library);
+        log_line(log, "%s_missing_import_%03u=%s @ %s from %s",
                  prefix, i + 1, name, version, library);
     }
 }
@@ -1163,6 +1177,14 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             // full import gap without manufacturing dummy function pointers.
             EngineStage audit = {0};
             ImportDiagnostics all_imports = {0};
+            // The v0.81 hardware report revealed 298 missing imports, but
+            // printed only 24. Keep the full read-only gap on the heap so it
+            // can be diagnosed in one pass without inflating this stack frame.
+            enum { MAX_REPORTED_IMPORTS = 512 };
+            all_imports.complete_list = calloc(MAX_REPORTED_IMPORTS,
+                                               sizeof(MissingImport));
+            if (all_imports.complete_list)
+                all_imports.complete_capacity = MAX_REPORTED_IMPORTS;
             log_line(log, "event=full_final_base_audit_started");
             const bool all_ready = engine_stage_stream_audit_at(
                 file, &audit, resolve_compatible, &all_imports,
@@ -1171,6 +1193,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             printable(safe, sizeof(safe), audit.detail);
             log_line(log, "full_audit_detail=%s", safe);
             log_import_summary(log, "full_audit", &all_imports);
+            free(all_imports.complete_list);
             log_line(log, "full_audit_unsupported_relocations=%u",
                      audit.unsupported_relocations_seen);
             log_line(log, "full_audit_tls_relocations=%u", audit.tls_relocations_seen);

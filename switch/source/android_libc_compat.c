@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "android_libc_compat.h"
 
@@ -8,6 +9,27 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef __SWITCH__
+#include <switch.h>
+#else
+#include <unistd.h>
+#endif
+
+// Android's unversioned getentropy is not a general-purpose random() call.
+// Use libnx's OS-seeded ChaCha generator on Switch and libc's getentropy in
+// host tests. Both produce random bytes and never report success with zeros.
+// Android/glibc reject requests above 256 bytes rather than truncating them.
+static int android_getentropy(void *buffer, size_t count)
+{
+    if (count > 256) { errno = EIO; return -1; }
+    if (!buffer && count) { errno = EFAULT; return -1; }
+#ifdef __SWITCH__
+    if (count) randomGet(buffer, count);
+    return 0;
+#else
+    return getentropy(buffer, count);
+#endif
+}
 
 // Android and newlib use different numeric clock IDs. The relevant Android
 // constants are 0=REALTIME, 1=MONOTONIC, 2=PROCESS and 3=THREAD CPU time.
@@ -39,6 +61,11 @@ static int android_clock_gettime(int android_clock, struct timespec *time_value)
 bool android_libc_compat_resolve(const char *name, const char *version,
                                  const char *library, uint64_t *address)
 {
+    if (name && address && !version && !library &&
+        strcmp(name, "getentropy") == 0) {
+        *address = (uint64_t)(uintptr_t)&android_getentropy;
+        return true;
+    }
     if (!name || !version || !library || !address ||
         strcmp(version, "LIBC") != 0 || strcmp(library, "libc.so") != 0)
         return false;
