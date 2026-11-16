@@ -1,10 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
 #include "android_socket_compat.h"
 
+#include <arpa/inet.h>
 #include <errno.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -49,7 +52,32 @@ enum {
     GUEST_MSG_DONTWAIT = 0x40,
     GUEST_MSG_WAITALL = 0x100,
     GUEST_MSG_NOSIGNAL = 0x4000,
+    GUEST_AI_PASSIVE = 0x0001,
+    GUEST_AI_CANONNAME = 0x0002,
+    GUEST_AI_NUMERICHOST = 0x0004,
+    GUEST_AI_NUMERICSERV = 0x0008,
+    GUEST_AI_ALL = 0x0100,
+    GUEST_AI_ADDRCONFIG = 0x0400,
+    GUEST_AI_V4MAPPED = 0x0800,
 };
+
+// Bionic puts ai_canonname before ai_addr. Linux/glibc puts ai_addr first;
+// copying native struct addrinfo into guest storage would corrupt pointers.
+typedef struct GuestAddrinfo {
+    int ai_flags;
+    int ai_family;
+    int ai_socktype;
+    int ai_protocol;
+    uint32_t ai_addrlen;
+    char *ai_canonname;
+    void *ai_addr;
+    struct GuestAddrinfo *ai_next;
+} GuestAddrinfo;
+
+_Static_assert(sizeof(GuestAddrinfo) == 48, "Android LP64 addrinfo size");
+_Static_assert(offsetof(GuestAddrinfo, ai_canonname) == 24, "Bionic canonname slot");
+_Static_assert(offsetof(GuestAddrinfo, ai_addr) == 32, "Bionic address slot");
+_Static_assert(offsetof(GuestAddrinfo, ai_next) == 40, "Bionic next slot");
 
 _Static_assert(sizeof(struct sockaddr_in) == 16, "Native IPv4 sockaddr must be 16 bytes");
 _Static_assert(sizeof(struct sockaddr_in6) == 28, "Native IPv6 sockaddr must be 28 bytes");
@@ -152,9 +180,13 @@ static bool translate_message_flags(int guest, int *native)
 #ifdef MSG_WAITALL
     MAP_FLAG(GUEST_MSG_WAITALL, MSG_WAITALL)
 #endif
+#ifdef MSG_NOSIGNAL
+    MAP_FLAG(GUEST_MSG_NOSIGNAL, MSG_NOSIGNAL)
+#else
     // Horizon does not deliver POSIX SIGPIPE to this NRO; suppressing a
     // SIGPIPE is therefore a no-op, while EPIPE still comes back normally.
     guest &= ~GUEST_MSG_NOSIGNAL;
+#endif
 #undef MAP_FLAG
     if (guest) { errno = EOPNOTSUPP; return false; }
     return true;
@@ -270,6 +302,267 @@ static ssize_t guest_recvfrom(int fd, void *buffer, size_t size, int flags,
     return to_guest(&native, address, address_len) ? result : -1;
 }
 
+static ssize_t guest_send(int fd, const void *buffer, size_t size, int flags)
+{
+    return guest_sendto(fd, buffer, size, flags, NULL, 0);
+}
+
+static ssize_t guest_recv(int fd, void *buffer, size_t size, int flags)
+{
+    return guest_recvfrom(fd, buffer, size, flags, NULL, NULL);
+}
+
+// Android SOL_SOCKET (1) and its option numbers do not match libnx's BSD
+// SOL_SOCKET (0xffff). Restrict to int-valued options whose semantics match.
+static bool native_socket_option(int guest_level, int guest_option,
+                                 int *native_level, int *native_option)
+{
+    if (guest_level != 1) { errno = ENOPROTOOPT; return false; }
+    *native_level = SOL_SOCKET;
+    switch (guest_option) {
+    case 2: *native_option = SO_REUSEADDR; return true;
+    case 6: *native_option = SO_BROADCAST; return true;
+    case 7: *native_option = SO_SNDBUF; return true;
+    case 8: *native_option = SO_RCVBUF; return true;
+    case 9: *native_option = SO_KEEPALIVE; return true;
+    default: errno = ENOPROTOOPT; return false;
+    }
+}
+
+static int guest_setsockopt(int fd, int level, int option,
+                            const void *value, uint32_t value_len)
+{
+    int native_level, native_option;
+    if (!native_socket_option(level, option, &native_level, &native_option)) return -1;
+    if (!value) { errno = EFAULT; return -1; }
+    if (value_len != sizeof(int)) { errno = EINVAL; return -1; }
+    if (!ready()) return -1;
+    return setsockopt(fd, native_level, native_option, value, sizeof(int));
+}
+
+static int guest_getsockopt(int fd, int level, int option,
+                            void *value, uint32_t *value_len)
+{
+    int native_level, native_option;
+    if (!native_socket_option(level, option, &native_level, &native_option)) return -1;
+    if (!value || !value_len) { errno = EFAULT; return -1; }
+    if (*value_len < sizeof(int)) { errno = EINVAL; return -1; }
+    if (!ready()) return -1;
+    socklen_t native_len = sizeof(int);
+    const int status = getsockopt(fd, native_level, native_option, value, &native_len);
+    if (!status) *value_len = native_len;
+    return status;
+}
+
+static int guest_inet_pton(int family, const char *text, void *address)
+{
+    int native_family;
+    if (!translate_domain(family, &native_family)) return -1;
+    if (!text || !address) { errno = EFAULT; return -1; }
+    return inet_pton(native_family, text, address);
+}
+
+static const char *guest_inet_ntop(int family, const void *address, char *text,
+                                   uint32_t text_len)
+{
+    int native_family;
+    if (!translate_domain(family, &native_family)) return NULL;
+    if (!address || !text) { errno = EFAULT; return NULL; }
+    return inet_ntop(native_family, address, text, (socklen_t)text_len);
+}
+
+// Android's EAI_* values are positive, whereas native providers may use
+// different constants (glibc uses negative values). Keep native DNS errors
+// out of the Android result domain.
+static int guest_eai(int native)
+{
+    if (native == 0) return 0;
+    if (native == EAI_AGAIN) return 2;
+    if (native == EAI_BADFLAGS) return 3;
+    if (native == EAI_FAIL) return 4;
+    if (native == EAI_FAMILY) return 5;
+    if (native == EAI_MEMORY) return 6;
+#ifdef EAI_NODATA
+    if (native == EAI_NODATA) return 7;
+#endif
+    if (native == EAI_NONAME) return 8;
+    if (native == EAI_SERVICE) return 9;
+    if (native == EAI_SOCKTYPE) return 10;
+    if (native == EAI_SYSTEM) return 11;
+#ifdef EAI_BADHINTS
+    if (native == EAI_BADHINTS) return 12;
+#endif
+#ifdef EAI_PROTOCOL
+    if (native == EAI_PROTOCOL) return 13;
+#endif
+#ifdef EAI_OVERFLOW
+    if (native == EAI_OVERFLOW) return 14;
+#endif
+    return 4;
+}
+
+static bool native_socktype(int guest, int *native)
+{
+    switch (guest) {
+    case 0: *native = 0; return true;
+    case GUEST_SOCK_STREAM: *native = SOCK_STREAM; return true;
+    case GUEST_SOCK_DGRAM: *native = SOCK_DGRAM; return true;
+    case GUEST_SOCK_RAW: *native = SOCK_RAW; return true;
+    default: return false;
+    }
+}
+
+static bool guest_socktype(int native, int *guest)
+{
+    if (native == 0) *guest = 0;
+    else if (native == SOCK_STREAM) *guest = GUEST_SOCK_STREAM;
+    else if (native == SOCK_DGRAM) *guest = GUEST_SOCK_DGRAM;
+    else if (native == SOCK_RAW) *guest = GUEST_SOCK_RAW;
+    else return false;
+    return true;
+}
+
+static bool native_ai_flags(int guest, int *native)
+{
+    *native = 0;
+#define AI_MAP(guest_flag, native_flag) \
+    if (guest & guest_flag) { *native |= native_flag; guest &= ~guest_flag; }
+    AI_MAP(GUEST_AI_PASSIVE, AI_PASSIVE)
+    AI_MAP(GUEST_AI_CANONNAME, AI_CANONNAME)
+    AI_MAP(GUEST_AI_NUMERICHOST, AI_NUMERICHOST)
+#ifdef AI_NUMERICSERV
+    AI_MAP(GUEST_AI_NUMERICSERV, AI_NUMERICSERV)
+#endif
+#ifdef AI_ALL
+    AI_MAP(GUEST_AI_ALL, AI_ALL)
+#endif
+#ifdef AI_ADDRCONFIG
+    AI_MAP(GUEST_AI_ADDRCONFIG, AI_ADDRCONFIG)
+#endif
+#ifdef AI_V4MAPPED
+    AI_MAP(GUEST_AI_V4MAPPED, AI_V4MAPPED)
+#endif
+#undef AI_MAP
+    return guest == 0;
+}
+
+static void guest_freeaddrinfo(GuestAddrinfo *entry)
+{
+    while (entry) {
+        GuestAddrinfo *next = entry->ai_next;
+        free(entry->ai_canonname);
+        free(entry->ai_addr);
+        free(entry);
+        entry = next;
+    }
+}
+
+static int guest_getaddrinfo(const char *host, const char *service,
+                             const GuestAddrinfo *hints, GuestAddrinfo **result)
+{
+    if (!result) { errno = EFAULT; return 11; }
+    *result = NULL;
+    if (!host && !service) return 8;
+
+    struct addrinfo native_hints = {0};
+    const struct addrinfo *native_hints_ptr = NULL;
+    if (hints) {
+        if (hints->ai_addr || hints->ai_canonname || hints->ai_next || hints->ai_addrlen)
+            return 12; // EAI_BADHINTS: input hints are not a result list
+        if (hints->ai_family != 0 && !translate_domain(hints->ai_family,
+                                                       &native_hints.ai_family)) return 5;
+        if (!native_socktype(hints->ai_socktype, &native_hints.ai_socktype)) return 10;
+        if (hints->ai_protocol != 0 && hints->ai_protocol != IPPROTO_TCP &&
+            hints->ai_protocol != IPPROTO_UDP) return 13;
+        native_hints.ai_protocol = hints->ai_protocol;
+        if (!native_ai_flags(hints->ai_flags, &native_hints.ai_flags)) return 3;
+        native_hints_ptr = &native_hints;
+    }
+    if (!ready()) return 11;
+
+    struct addrinfo *native_results = NULL;
+    const int error = getaddrinfo(host, service, native_hints_ptr, &native_results);
+    if (error) return guest_eai(error);
+
+    GuestAddrinfo *first = NULL;
+    GuestAddrinfo **tail = &first;
+    int outcome = 0;
+    unsigned count = 0;
+    for (const struct addrinfo *current = native_results; current; current = current->ai_next) {
+        if (++count > 128) { outcome = 6; break; }
+        uint32_t guest_length;
+        int guest_family;
+        if (current->ai_family == AF_INET && current->ai_addrlen >= 16) {
+            guest_family = GUEST_AF_INET;
+            guest_length = 16;
+        } else if (current->ai_family == AF_INET6 && current->ai_addrlen >= 28) {
+            guest_family = GUEST_AF_INET6;
+            guest_length = 28;
+        } else { outcome = 5; break; }
+        if (!current->ai_addr ||
+            current->ai_addrlen > sizeof(struct sockaddr_storage)) {
+            outcome = 4;
+            break;
+        }
+        int guest_type;
+        if (!guest_socktype(current->ai_socktype, &guest_type)) {
+            outcome = 10;
+            break;
+        }
+        GuestAddrinfo *entry = calloc(1, sizeof(*entry));
+        if (!entry) { outcome = 6; break; }
+        entry->ai_addr = calloc(1, guest_length);
+        if (current->ai_canonname) entry->ai_canonname = strdup(current->ai_canonname);
+        if (!entry->ai_addr || (current->ai_canonname && !entry->ai_canonname)) {
+            free(entry->ai_addr);
+            free(entry->ai_canonname);
+            free(entry);
+            outcome = 6;
+            break;
+        }
+        struct sockaddr_storage native = {0};
+        memcpy(&native, current->ai_addr, current->ai_addrlen);
+        uint32_t out_length = guest_length;
+        if (!to_guest(&native, entry->ai_addr, &out_length)) {
+            free(entry->ai_addr);
+            free(entry->ai_canonname);
+            free(entry);
+            outcome = 5;
+            break;
+        }
+        entry->ai_addrlen = out_length;
+        entry->ai_family = guest_family;
+        entry->ai_socktype = guest_type;
+        entry->ai_protocol = current->ai_protocol;
+        // Return only canonical-name and address information we can validate.
+        entry->ai_flags = hints ? hints->ai_flags : 0;
+        *tail = entry;
+        tail = &entry->ai_next;
+    }
+    freeaddrinfo(native_results);
+    if (outcome || !first) {
+        guest_freeaddrinfo(first);
+        return outcome ? outcome : 4;
+    }
+    *result = first;
+    return 0;
+}
+
+static const char *guest_gai_strerror(int error)
+{
+    static const char *const messages[] = {
+        "Success", "Address family not supported for hostname",
+        "Temporary failure in name resolution", "Invalid address flags",
+        "Name resolution failed", "Address family not supported",
+        "Out of memory", "No address associated with hostname",
+        "Name or service not known", "Service not supported",
+        "Socket type not supported", "System error", "Invalid address hints",
+        "Unknown protocol", "Address buffer overflow"
+    };
+    return (error >= 0 && (unsigned)error < sizeof(messages) / sizeof(messages[0]))
+        ? messages[error] : "Unknown address resolution error";
+}
+
 bool android_socket_compat_resolve(const char *name, const char *version,
                                    const char *library, uint64_t *address)
 {
@@ -288,6 +581,15 @@ bool android_socket_compat_resolve(const char *name, const char *version,
     MAP("getpeername", guest_getpeername)
     MAP("sendto", guest_sendto)
     MAP("recvfrom", guest_recvfrom)
+    MAP("send", guest_send)
+    MAP("recv", guest_recv)
+    MAP("setsockopt", guest_setsockopt)
+    MAP("getsockopt", guest_getsockopt)
+    MAP("inet_pton", guest_inet_pton)
+    MAP("inet_ntop", guest_inet_ntop)
+    MAP("getaddrinfo", guest_getaddrinfo)
+    MAP("freeaddrinfo", guest_freeaddrinfo)
+    MAP("gai_strerror", guest_gai_strerror)
     { return false; }
 #undef MAP
     return true;

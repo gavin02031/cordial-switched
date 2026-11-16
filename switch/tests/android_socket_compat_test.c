@@ -16,6 +16,25 @@ typedef int (*AcceptFn)(int, void *, uint32_t *);
 typedef int (*ShutdownFn)(int, int);
 typedef ssize_t (*SendFn)(int, const void *, size_t, int, const void *, uint32_t);
 typedef ssize_t (*RecvFn)(int, void *, size_t, int, void *, uint32_t *);
+typedef ssize_t (*SendSimpleFn)(int, const void *, size_t, int);
+typedef ssize_t (*RecvSimpleFn)(int, void *, size_t, int);
+typedef int (*SetOptionFn)(int, int, int, const void *, uint32_t);
+typedef int (*GetOptionFn)(int, int, int, void *, uint32_t *);
+typedef int (*ParseIpFn)(int, const char *, void *);
+typedef const char *(*FormatIpFn)(int, const void *, char *, uint32_t);
+
+// Keep the Bionic layout in this test independent of the implementation.
+typedef struct GuestAddrinfo {
+    int ai_flags, ai_family, ai_socktype, ai_protocol;
+    uint32_t ai_addrlen;
+    char *ai_canonname;
+    void *ai_addr;
+    struct GuestAddrinfo *ai_next;
+} GuestAddrinfo;
+typedef int (*GetaddrinfoFn)(const char *, const char *,
+                             const GuestAddrinfo *, GuestAddrinfo **);
+typedef void (*FreeaddrinfoFn)(GuestAddrinfo *);
+typedef const char *(*GaiErrorFn)(int);
 
 static uint64_t symbol(const char *name)
 {
@@ -69,8 +88,21 @@ static void tcp_test(void)
     ShutdownFn shutdown_socket = (ShutdownFn)(uintptr_t)symbol("shutdown");
     SendFn send_socket = (SendFn)(uintptr_t)symbol("sendto");
     RecvFn recv_socket = (RecvFn)(uintptr_t)symbol("recvfrom");
+    SendSimpleFn send_simple = (SendSimpleFn)(uintptr_t)symbol("send");
+    RecvSimpleFn recv_simple = (RecvSimpleFn)(uintptr_t)symbol("recv");
+    SetOptionFn set_option = (SetOptionFn)(uintptr_t)symbol("setsockopt");
+    GetOptionFn get_option = (GetOptionFn)(uintptr_t)symbol("getsockopt");
     int listener = open_socket(2, 1, 0);
     assert(listener >= 0);
+    int reuse = 1;
+    assert(set_option(listener, 1, 2, &reuse, sizeof(reuse)) == 0);
+    reuse = 0;
+    uint32_t option_length = sizeof(reuse);
+    assert(get_option(listener, 1, 2, &reuse, &option_length) == 0);
+    assert(option_length == sizeof(reuse) && reuse == 1);
+    assert(set_option(listener, 1, 4, &reuse, sizeof(reuse)) == -1);
+    assert(errno == ENOPROTOOPT); // SO_ERROR needs Android errno remapping
+    assert(set_option(listener, 1, 2, &reuse, 1) == -1 && errno == EINVAL);
     unsigned char loopback[16];
     guest_loopback(loopback);
     assert(bind_socket(listener, loopback, sizeof(loopback)) == 0);
@@ -94,6 +126,10 @@ static void tcp_test(void)
     char text[16] = {0};
     assert(recv_socket(accepted, text, sizeof(text), 0, NULL, NULL) == 6);
     assert(!memcmp(text, "morrow", 6));
+    assert(send_simple(accepted, "reply", 5, 0) == 5);
+    memset(text, 0, sizeof(text));
+    assert(recv_simple(client, text, sizeof(text), 0) == 5);
+    assert(!memcmp(text, "reply", 5));
     assert(shutdown_socket(client, 1) == 0);
     close(accepted);
     close(client);
@@ -167,12 +203,81 @@ static void ipv6_test(void)
     close(receiver);
 }
 
+static void dns_test(void)
+{
+    GetaddrinfoFn resolve = (GetaddrinfoFn)(uintptr_t)symbol("getaddrinfo");
+    FreeaddrinfoFn release = (FreeaddrinfoFn)(uintptr_t)symbol("freeaddrinfo");
+    GaiErrorFn error_text = (GaiErrorFn)(uintptr_t)symbol("gai_strerror");
+    GuestAddrinfo hints = {0};
+    GuestAddrinfo *result = NULL;
+    hints.ai_family = 2;
+    hints.ai_socktype = 1;
+    hints.ai_flags = 0x4 | 0x8; // Bionic AI_NUMERICHOST | AI_NUMERICSERV
+    assert(resolve("127.0.0.1", "443", &hints, &result) == 0);
+    assert(result && result->ai_family == 2 && result->ai_socktype == 1);
+    assert(result->ai_addrlen == 16 && result->ai_addr);
+    const unsigned char *ip = result->ai_addr;
+    assert(ip[0] == 2 && ip[1] == 0 && ip[2] == 1 && ip[3] == 187);
+    assert(ip[4] == 127 && ip[5] == 0 && ip[6] == 0 && ip[7] == 1);
+    release(result);
+    release(NULL);
+
+    result = NULL;
+    hints.ai_family = 10;
+    assert(resolve("::1", "8080", &hints, &result) == 0);
+    assert(result && result->ai_family == 10 && result->ai_addrlen == 28);
+    ip = result->ai_addr;
+    assert(ip[0] == 10 && ip[1] == 0 && ip[2] == 31 && ip[3] == 144);
+    assert(ip[23] == 1);
+    release(result);
+
+    hints.ai_family = 999;
+    assert(resolve("127.0.0.1", "80", &hints, &result) == 5);
+    hints.ai_family = 2;
+    hints.ai_flags = 0x1000000;
+    assert(resolve("127.0.0.1", "80", &hints, &result) == 3);
+    hints.ai_flags = 0;
+    hints.ai_socktype = 999;
+    assert(resolve("127.0.0.1", "80", &hints, &result) == 10);
+    hints.ai_socktype = 1;
+    hints.ai_protocol = 999;
+    assert(resolve("127.0.0.1", "80", &hints, &result) == 13);
+    hints.ai_protocol = 0;
+    hints.ai_addrlen = 16;
+    assert(resolve("127.0.0.1", "80", &hints, &result) == 12);
+    hints.ai_addrlen = 0;
+    assert(resolve(NULL, NULL, &hints, &result) == 8);
+    assert(resolve("127.0.0.1", "80", &hints, NULL) == 11 && errno == EFAULT);
+    assert(strlen(error_text(3)) && strlen(error_text(12345)));
+}
+
+static void ip_text_test(void)
+{
+    ParseIpFn parse = (ParseIpFn)(uintptr_t)symbol("inet_pton");
+    FormatIpFn format = (FormatIpFn)(uintptr_t)symbol("inet_ntop");
+    unsigned char raw[16] = {0};
+    char text[48] = {0};
+    assert(parse(2, "127.0.0.1", raw) == 1);
+    assert(raw[0] == 127 && raw[3] == 1);
+    assert(format(2, raw, text, sizeof(text)) == text);
+    assert(!strcmp(text, "127.0.0.1"));
+    memset(raw, 0, sizeof(raw));
+    assert(parse(10, "::1", raw) == 1);
+    assert(raw[15] == 1);
+    assert(format(10, raw, text, sizeof(text)) == text);
+    assert(!strcmp(text, "::1"));
+    assert(parse(999, "127.0.0.1", raw) == -1 && errno == EAFNOSUPPORT);
+    assert(parse(2, "invalid", raw) == 0);
+}
+
 int main(void)
 {
     negative_tests();
     tcp_test();
     udp_test();
     ipv6_test();
-    puts("Android socket ABI tests passed (negative cases, IPv4 TCP/UDP, IPv6)");
+    dns_test();
+    ip_text_test();
+    puts("Android socket ABI tests passed (IPv4 TCP/UDP, IPv6, DNS, options, text)");
     return 0;
 }
