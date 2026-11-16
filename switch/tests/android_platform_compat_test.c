@@ -33,6 +33,18 @@ static int call_checked_vsnprintf(uint64_t address, char *dest, size_t length,
     return result;
 }
 
+static int call_android_vasprintf(uint64_t address, char **output,
+                                 const char *format, ...)
+{
+    int (*function)(char **, const char *, va_list) =
+        (int (*)(char **, const char *, va_list))(uintptr_t)address;
+    va_list arguments;
+    va_start(arguments, format);
+    int result = function(output, format, arguments);
+    va_end(arguments);
+    return result;
+}
+
 static int call_checked_vsprintf(uint64_t address, char *dest, size_t capacity,
                                  const char *format, ...)
 {
@@ -48,6 +60,16 @@ static int call_checked_vsprintf(uint64_t address, char *dest, size_t capacity,
 int main(void)
 {
     uint64_t address = 0;
+    assert(android_stdio_compat_resolve("vasprintf", "LIBC", "libc.so", &address));
+    char *allocated_text = NULL;
+    assert(call_android_vasprintf(address, &allocated_text, "value=%d:%s", 27, "ok") == 11);
+    assert(allocated_text && !strcmp(allocated_text, "value=27:ok"));
+    free(allocated_text);
+    allocated_text = (char *)(uintptr_t)0x1;
+    assert(call_android_vasprintf(address, &allocated_text, NULL) == -1 &&
+           errno == EINVAL && allocated_text == (char *)(uintptr_t)0x1);
+    assert(call_android_vasprintf(address, NULL, "%s", "nope") == -1 && errno == EINVAL);
+    assert(!android_stdio_compat_resolve("vasprintf", "LIBC_N", "libc.so", &address));
     assert(!android_libc_compat_resolve("geteuid", "LIBC", "libc.so", &address));
     assert(android_libc_compat_resolve("localeconv", "LIBC", "libc.so", &address));
     struct lconv *(*android_localeconv)(void) =

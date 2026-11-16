@@ -75,6 +75,30 @@ static int stdio_vfprintf(FILE *stream, const char *format, va_list arguments)
     return vfprintf(host_stream(stream), format, arguments);
 }
 
+static int stdio_vasprintf(char **output, const char *format, va_list arguments)
+{
+    if (!output || !format) { errno = EINVAL; return -1; }
+    *output = NULL;
+    va_list measure;
+    va_copy(measure, arguments);
+    const int length = vsnprintf(NULL, 0, format, measure);
+    va_end(measure);
+    if (length < 0) return -1;
+    char *buffer = malloc((size_t)length + 1);
+    if (!buffer) { errno = ENOMEM; return -1; }
+    va_list emit;
+    va_copy(emit, arguments);
+    const int written = vsnprintf(buffer, (size_t)length + 1, format, emit);
+    va_end(emit);
+    if (written != length) {
+        free(buffer);
+        errno = EIO;
+        return -1;
+    }
+    *output = buffer;
+    return length;
+}
+
 static size_t stdio_fread(void *data, size_t size, size_t count, FILE *stream)
 {
     return fread(data, size, count, host_stream(stream));
@@ -243,6 +267,7 @@ bool android_stdio_compat_resolve(const char *name, const char *version,
     MAP_STDIO("stdin", &android_stdin_data)
     MAP_STDIO("fprintf", &stdio_fprintf)
     MAP_STDIO("vfprintf", &stdio_vfprintf)
+    MAP_STDIO("vasprintf", &stdio_vasprintf)
     MAP_STDIO("fread", &stdio_fread)
     MAP_STDIO("fwrite", &stdio_fwrite)
     MAP_STDIO("fputs", &stdio_fputs)

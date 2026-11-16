@@ -704,6 +704,9 @@ int main(void)
     dyninit_section_fixture(section_bytes);
     assert(dyninit_fixture_at(section_bytes, &stage, NULL, future_base));
     assert(stage.dyninit_section_verified);
+    assert(stage.dyninit_status == ENGINE_DYNINIT_VERIFIED);
+    assert(!strcmp(engine_dyninit_status_name(stage.dyninit_status),
+                   "verified_pt_load_boundary"));
     assert(stage.symbol_applied == 2);
     assert(get64(stage.image + 0x340) == future_base + 0x380);
     assert(get64(stage.image + 0x348) == future_base + 0x3a0);
@@ -711,7 +714,7 @@ int main(void)
 
     // Missing, misplaced, unallocated, unaligned, empty or ambiguous section
     // metadata must never turn undefined linker markers into made-up pointers.
-    for (unsigned invalid = 0; invalid < 8; invalid++) {
+    for (unsigned invalid = 0; invalid < 9; invalid++) {
         dyninit_section_fixture(section_bytes);
         unsigned char *section = section_bytes + 0x480 + 64;
         switch (invalid) {
@@ -726,11 +729,18 @@ int main(void)
             memcpy(section_bytes + 0x480 + 192, section, 64);
             put16(section_bytes + 60, 4);
             break;
+        case 8: put16(section_bytes + 62, 7); break; // Invalid names index.
         }
         assert(!dyninit_fixture_at(section_bytes, &stage, fake_resolver, future_base));
         assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
         assert(!stage.dyninit_section_verified);
         assert(strstr(stage.detail, "__start_ls_rbx_dyninit1"));
+        const EngineDyninitStatus expected = invalid == 0
+            ? ENGINE_DYNINIT_NO_HEADERS : invalid == 6
+            ? ENGINE_DYNINIT_NOT_FOUND : invalid == 8
+            ? ENGINE_DYNINIT_BAD_HEADERS : ENGINE_DYNINIT_INVALID_SECTION;
+        assert(stage.dyninit_status == expected);
+        assert(strcmp(engine_dyninit_status_name(expected), "unknown") != 0);
     }
 
     // Absolute defined symbols are numeric constants, never biased by the

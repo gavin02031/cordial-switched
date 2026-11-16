@@ -19,6 +19,14 @@ typedef enum {
     ENGINE_STAGE_PREPARED
 } EngineStageStatus;
 
+typedef enum {
+    ENGINE_DYNINIT_NO_HEADERS = 0,
+    ENGINE_DYNINIT_BAD_HEADERS,
+    ENGINE_DYNINIT_NOT_FOUND,
+    ENGINE_DYNINIT_INVALID_SECTION,
+    ENGINE_DYNINIT_VERIFIED
+} EngineDyninitStatus;
+
 typedef struct {
     EngineStageStatus status;
     unsigned char *image;
@@ -31,6 +39,7 @@ typedef struct {
     // Verified solely from the guest ELF's SHF_ALLOC section and PT_LOAD,
     // never inferred from a missing import or a guessed address.
     bool dyninit_section_verified;
+    EngineDyninitStatus dyninit_status;
     // Counts may be partial if malformed input stops the read-only scan.
     unsigned unsupported_relocations_seen;
     unsigned tls_relocations_seen;
@@ -70,5 +79,6 @@ bool engine_stage_stream_audit_at(FILE *file, EngineStage *stage,
                                   EngineSymbolResolver resolver, void *context,
                                   uint64_t runtime_base);
 void engine_stage_release(EngineStage *stage);
+const char *engine_dyninit_status_name(EngineDyninitStatus status);
 
 #endif

@@ -174,7 +174,7 @@ static bool dyninit_boundary_resolve(const char *name, const char *version,
 }
 
 static bool verify_dyninit_section(FILE *file, const unsigned char *header,
-                                   uint64_t file_size, const EngineStage *stage,
+                                   uint64_t file_size, EngineStage *stage,
                                    const Segment *segments, unsigned segment_count,
                                    uint64_t load_bias, DyninitBoundary *boundary)
 {
@@ -182,7 +182,11 @@ static bool verify_dyninit_section(FILE *file, const unsigned char *header,
     const unsigned section_size = u16le(header + 58);
     const unsigned section_count = u16le(header + 60);
     const unsigned names_index = u16le(header + 62);
-    if (!table_offset || section_size != SHDR_SIZE || !section_count ||
+    stage->dyninit_status = ENGINE_DYNINIT_NO_HEADERS;
+    if (!table_offset || !section_count)
+        return false;
+    stage->dyninit_status = ENGINE_DYNINIT_BAD_HEADERS;
+    if (section_size != SHDR_SIZE ||
         section_count > MAX_SECTION_HEADERS || !names_index ||
         names_index >= section_count ||
         !within(table_offset, (uint64_t)section_count * SHDR_SIZE, file_size))
@@ -214,9 +218,12 @@ static bool verify_dyninit_section(FILE *file, const unsigned char *header,
         if (memcmp(name, wanted, sizeof(wanted)) != 0)
             continue;
         // Duplicate or forged names cannot select an arbitrary guest address.
-        if (found)
+        if (found) {
+            stage->dyninit_status = ENGINE_DYNINIT_INVALID_SECTION;
             return false;
+        }
         found = true;
+        stage->dyninit_status = ENGINE_DYNINIT_INVALID_SECTION;
         const uint32_t type = u32le(sh + 4);
         const uint64_t flags = u64le(sh + 8);
         const uint64_t address = u64le(sh + 16);
@@ -250,7 +257,23 @@ static bool verify_dyninit_section(FILE *file, const unsigned char *header,
         boundary->stop_address = load_bias + address + length;
     }
     boundary->verified = found;
+    if (found)
+        stage->dyninit_status = ENGINE_DYNINIT_VERIFIED;
+    else
+        stage->dyninit_status = ENGINE_DYNINIT_NOT_FOUND;
     return found;
+}
+
+const char *engine_dyninit_status_name(EngineDyninitStatus status)
+{
+    switch (status) {
+    case ENGINE_DYNINIT_NO_HEADERS: return "no_section_headers";
+    case ENGINE_DYNINIT_BAD_HEADERS: return "malformed_section_headers";
+    case ENGINE_DYNINIT_NOT_FOUND: return "section_not_found";
+    case ENGINE_DYNINIT_INVALID_SECTION: return "section_invalid_or_duplicate";
+    case ENGINE_DYNINIT_VERIFIED: return "verified_pt_load_boundary";
+    }
+    return "unknown";
 }
 
 static bool abort_stage(EngineStage *stage, EngineStageStatus status, const char *message)

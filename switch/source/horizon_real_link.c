@@ -1033,6 +1033,8 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         log_line(log, "symbol_applied=%u", stage.symbol_applied);
         log_line(log, "dyninit_section_verified=%u",
                  stage.dyninit_section_verified ? 1u : 0u);
+        log_line(log, "dyninit_section_status=%s",
+                 engine_dyninit_status_name(stage.dyninit_status));
         if (ready) {
             result->stage_prepared = true;
             detail(result, "Strict link passed; Android JNI/graphics runtime still missing.");

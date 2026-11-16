@@ -1,7 +1,7 @@
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.97 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.98 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
 roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
@@ -94,6 +94,20 @@ Use a test account only if full gameplay is eventually reached.
 **The implemented Activity callbacks are not a complete
 GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
 startup, or Switch hardware proof**.
+
+**v0.98 records why the ELF dyninit section boundary cannot be verified.**
+The latest Switch Lite `link-28.txt` (v0.97) confirms **534 of 629 imports
+supported, 95 unresolved**, versus 437/629 and 192 missing in v0.86.
+Its strict first blocker is unversioned `__start_ls_rbx_dyninit1`:
+`dyninit_section_verified=0`. v0.98 logs `dyninit_section_status` to separate
+missing section headers, malformed metadata, a missing named section, and an
+invalid/duplicate section from a verified mapped boundary. No fallback guesses
+or synthesized symbol addresses are permitted. An extra Bionic `vasprintf`
+provider allocates its actual formatted result with checked length and
+caller-owned storage. Synthetic ELF and stdio regression tests pass; **the
+new status and the additional import are not yet Switch-verified**. Strict
+relocation, constructors, Android runtime and actual Roblox gameplay remain
+blocked. See the next Loader `link-XX.txt` after installing the new build.
 
 **v0.97 expands the Android libc import bridge with eight more providers.**
 Seven numeric `_l` parsers (`strtol_l`, `strtoll_l`, `strtoul_l`,
