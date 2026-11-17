@@ -167,15 +167,15 @@ static int bridge_join(uint64_t token, void **value)
 {
     pthread_mutex_lock(&registry_lock);
     ThreadEntry *entry = find_entry(token);
+    // A worker can reach this before pthread_create publishes native. The
+    // guest identity is already installed by native_start and is sufficient.
+    if (entry && entry->joinable && ensure_identity() == 0 && pthread_getspecific(identity_key) == entry) {
+        pthread_mutex_unlock(&registry_lock);
+        return EDEADLK;
+    }
     if (!entry || !entry->joinable || entry->joining || entry->consumed) {
         pthread_mutex_unlock(&registry_lock);
         return EINVAL;
-    }
-    // A worker can reach this before pthread_create publishes native. The
-    // guest identity is already installed by native_start and is sufficient.
-    if (ensure_identity() == 0 && pthread_getspecific(identity_key) == entry) {
-        pthread_mutex_unlock(&registry_lock);
-        return EDEADLK;
     }
     entry->joining = true;
     pthread_t native = entry->native;
