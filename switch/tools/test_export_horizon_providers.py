@@ -32,7 +32,21 @@ class HorizonProviderExportTests(unittest.TestCase):
         self.assertEqual(evidence['resolved_import_entries'], 3)
         self.assertEqual(evidence['distinct_resolved_abi_keys'], 2)
         self.assertEqual(evidence['missing_import_entries'], 1)
+        self.assertEqual(evidence['distinct_missing_abi_keys'], 1)
         self.assertEqual(evidence['morrow_build_version'], '0.99.4')
+
+    def test_duplicate_missing_lookups_count_once(self):
+        report = BASE_REPORT.replace('full_audit_import_lookups=4',
+                                     'full_audit_import_lookups=5').replace(
+            'full_audit_missing_imports=1', 'full_audit_missing_imports=2').replace(
+            'full_audit_missing_imports_reported=1',
+            'full_audit_missing_imports_reported=2').replace(
+            'full_audit_missing_import_001=futex @ LIBC from libc.so',
+            'full_audit_missing_import_001=futex @ LIBC from libc.so\\n'
+            'full_audit_missing_import_002=futex @ LIBC from libc.so')
+        _, evidence = export_from_report(report)
+        self.assertEqual(evidence['missing_import_entries'], 2)
+        self.assertEqual(evidence['distinct_missing_abi_keys'], 1)
 
     def test_does_not_accept_partial_relocation_scans(self):
         for report in [
