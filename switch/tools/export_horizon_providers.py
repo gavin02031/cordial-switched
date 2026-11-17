@@ -113,6 +113,7 @@ def export_from_report(report):
         import_lookups=lookups,
         resolved_import_entries=supported,
         missing_import_entries=missing,
+        distinct_missing_abi_keys=len(missing_keys),
         distinct_resolved_abi_keys=len(manifest),
         caveat=('Evidence is limited to ABI keys the Horizon resolver was '
                 'actually asked to resolve. It does not establish runtime '
