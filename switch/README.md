@@ -1377,3 +1377,18 @@ A separate known thread-startup limitation remains: devkitPro libsysbase's
 requests a guard size for explicit attributes. Native detached-thread support
 also needs a separate implementation. Neither limitation is bypassed by reporting
 success; guest startup and playable Roblox remain blocked.
+
+### Explicit zero-guard worker attributes
+
+The Horizon attribute adapter now permits explicit process-local, joinable
+threads with a zero guard size. It skips libsysbase's unsupported guard setter
+and rounds the requested stack allocation up to the 4 KiB size required by
+libnx, checking overflow before allocation. The guest attribute retains its
+requested size. Nonzero guard sizes and detached requests remain unsupported;
+libsysbase does not implement the requested guard and detach semantics.
+Android's default nonzero guard request still requires a future implementation.
+
+Host CI exercises this target policy with `__SWITCH__` defined, including
+rounding, overflow and unsupported requests. The actual Switch targets are
+cross-built separately. **INFERRED:** successful worker creation on hardware;
+this is not evidence of Roblox startup or gameplay.

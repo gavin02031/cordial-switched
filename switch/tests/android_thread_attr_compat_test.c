@@ -92,6 +92,26 @@ int main(void)
     assert(getdetach(&frame.value, &detach) == EINVAL);
     assert(init(&frame.value) == 0);
 
+    pthread_attr_t native;
+#ifdef __SWITCH__
+    assert(android_thread_attr_compat_to_native(&frame.value, &native) == ENOTSUP);
+    assert(setguard(&frame.value, 0) == 0);
+    assert(setstack(&frame.value, 16385) == 0);
+    assert(android_thread_attr_compat_to_native(&frame.value, &native) == 0);
+    size_t rounded;
+    assert(pthread_attr_getstacksize(&native, &rounded) == 0 && rounded == 20480);
+    assert(frame.value.stack_size == 16385);
+    assert(pthread_attr_destroy(&native) == 0);
+    assert(setdetach(&frame.value, 1) == 0);
+    assert(android_thread_attr_compat_to_native(&frame.value, &native) == ENOTSUP);
+    assert(setdetach(&frame.value, 0) == 0);
+    assert(setstack(&frame.value, SIZE_MAX) == 0);
+    assert(android_thread_attr_compat_to_native(&frame.value, &native) == EINVAL);
+#else
+    assert(android_thread_attr_compat_to_native(&frame.value, &native) == 0);
+    assert(pthread_attr_destroy(&native) == 0);
+#endif
+
     puts("android_thread_attr_compat_test: Bionic LP64 attr layout and bounds passed");
     return 0;
 }

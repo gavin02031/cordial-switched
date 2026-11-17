@@ -131,15 +131,27 @@ int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *na
         if (attr->reserved[i])
             return ENOTSUP;
     }
+#ifdef __SWITCH__
+    // libsysbase ignores detached state in thread_create and rejects even a
+    // zero-sized guard through setguardsize. Do not promise either feature.
+    if (attr->guard_size || (attr->flags & ANDROID_ATTR_DETACHED))
+        return ENOTSUP;
+    if (attr->stack_size > SIZE_MAX - 4095) return EINVAL;
+    size_t native_stack_size = (attr->stack_size + 4095) & ~(size_t)4095;
+#else
+    size_t native_stack_size = attr->stack_size;
+#endif
     int result = pthread_attr_init(native);
     if (result)
         return result;
     result = pthread_attr_setdetachstate(native,
               (attr->flags & ANDROID_ATTR_DETACHED) ? PTHREAD_CREATE_DETACHED : PTHREAD_CREATE_JOINABLE);
     if (!result)
-        result = pthread_attr_setstacksize(native, attr->stack_size);
+        result = pthread_attr_setstacksize(native, native_stack_size);
+#ifndef __SWITCH__
     if (!result)
         result = pthread_attr_setguardsize(native, attr->guard_size);
+#endif
     if (result)
         pthread_attr_destroy(native);
     return result;
