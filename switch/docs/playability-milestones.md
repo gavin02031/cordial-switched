@@ -148,3 +148,22 @@ not just an assumed zero-based image, for crash-report correlation.
 Port startup signatures/order from existing Cordial code and Android traces;
 do not guess Java field values or native argument layouts. Completing the
 constructor runner alone does not supply the missing Android application.
+
+### Private anonymous data mappings
+
+The runtime now exposes the engine's LIBC imports for mmap, mprotect and
+munmap. The supported mapping is private anonymous data, offset zero, with
+no access, read access or read/write access. On Horizon it obtains a
+page-aligned backing allocation, maps a kernel alias and changes permissions
+on the alias. A non-fixed address hint may be ignored. File mappings, fixed
+addresses, executable permissions, remap and memory advice remain unavailable.
+Protection and release accept a subrange of one live region. Removing a
+middle range retains the surviving pieces and their shared backing allocation.
+Backing memory can therefore stay committed until the final piece is removed.
+
+Loader L3 probes a private page and records zero initial contents, a byte
+surviving protection changes, kernel-reported permissions and cleanup in the
+numbered link report. The probe uses Morrow-owned memory only. An allocation
+or permission failure is evidence of a target limitation. Host CI tests use
+Linux mappings and observe actual protection faults in child processes.
+Neither those results nor a successful cross-build demonstrates a Roblox frame.

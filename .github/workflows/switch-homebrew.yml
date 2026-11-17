@@ -89,7 +89,7 @@ jobs:
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_wchar_compat.c \
             switch/source/android_socket_compat.c \
-            switch/source/android_file_compat.c \
+            switch/source/android_file_compat.c switch/source/android_mapping_compat.c \
             switch/source/android_jump_compat.c \
             switch/source/android_sem_compat.c \
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
@@ -217,6 +217,10 @@ jobs:
             switch/source/android_fortify_compat.c \
             -lm -o /tmp/cordial-android-platform-test
           /tmp/cordial-android-platform-test
+      - name: Test guest anonymous data mappings and page permissions
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source switch/tests/android_mapping_compat_test.c switch/source/android_mapping_compat.c -pthread -o /tmp/morrow-mapping-test
+          timeout 30s /tmp/morrow-mapping-test
       - name: Test Android ARM64 filesystem layouts and descriptor semantics
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

@@ -31,6 +31,7 @@
 #include "android_wchar_compat.h"
 #include "android_socket_compat.h"
 #include "android_file_compat.h"
+#include "android_mapping_compat.h"
 #include "android_jump_compat.h"
 #include "android_stdio_compat.h"
 #include "android_fortify_compat.h"
@@ -285,6 +286,7 @@ static bool resolve_compatible(const char *name, const char *version,
             android_wchar_compat_resolve(name, version, library, address) ||
             android_socket_compat_resolve(name, version, library, address) ||
                             android_file_compat_resolve(name, version, library, address) ||
+                            android_mapping_compat_resolve(name, version, library, address) ||
             android_stdio_compat_resolve(name, version, library, address) ||
             android_fortify_compat_resolve(name, version, library, address) ||
             android_pthread_compat_resolve(name, version, library, address) ||
@@ -424,6 +426,43 @@ static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
     engine_tls_scratch_release(&template_image);
 }
 
+// Inspect MMU permissions without deliberately faulting the console.
+static void probe_guest_data_mapping(FILE *log)
+{
+    uint64_t map, protect, unmap;
+    if (!android_mapping_compat_resolve("mmap", "LIBC", "libc.so", &map) ||
+        !android_mapping_compat_resolve("mprotect", "LIBC", "libc.so", &protect) ||
+        !android_mapping_compat_resolve("munmap", "LIBC", "libc.so", &unmap)) {
+        log_line(log, "guest_mapping_probe=provider_unavailable");
+        return;
+    }
+    void *(*map_fn)(void *, size_t, int, int, int, int64_t) = (void *)(uintptr_t)map;
+    int (*protect_fn)(void *, size_t, int) = (void *)(uintptr_t)protect;
+    int (*unmap_fn)(void *, size_t) = (void *)(uintptr_t)unmap;
+    unsigned char *p = map_fn(NULL, 4096, 3, 0x22, -1, 0);
+    if (p == (void *)-1) {
+        log_line(log, "guest_mapping_probe=map_failed_errno_%d", errno);
+        return;
+    }
+    bool contents = p[0] == 0 && p[4095] == 0;
+    p[4095] = 73;
+    MemoryInfo info;
+    u32 page_info;
+    bool read_only = protect_fn(p, 4096, 1) == 0 &&
+        R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p)) &&
+        info.perm == Perm_R;
+    bool preserved = read_only && p[4095] == 73;
+    bool inaccessible = protect_fn(p, 4096, 0) == 0 &&
+        R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p)) &&
+        info.perm == Perm_None;
+    bool writable = protect_fn(p, 4096, 3) == 0 &&
+        R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p)) &&
+        info.perm == Perm_Rw;
+    bool released = unmap_fn(p, 4096) == 0;
+    log_line(log, "guest_mapping_probe_zero=%d read_only=%d data=%d none=%d rw=%d released=%d",
+             contents, read_only, preserved, inaccessible, writable, released);
+}
+
 void horizon_real_link_run(RealLinkResult *result, unsigned action)
 {
     if (!result) return;
@@ -440,6 +479,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     }
     log_line(log, "# Morrow native engine entry readiness attempt");
     log_line(log, "morrow_build_version=%s", MORROW_BUILD_VERSION);
+    if (action == 0) probe_guest_data_mapping(log);
     log_line(log, "# JNI_OnLoad is opt-in and blocked unless strict mapping and runtime gates pass.");
     log_line(log, "engine_execution_action=%s",
              action == 1 ? "jni_onload" : action == 2 ? "game_activity" :
