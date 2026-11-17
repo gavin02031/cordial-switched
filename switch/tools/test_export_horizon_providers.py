@@ -66,6 +66,23 @@ class HorizonProviderExportTests(unittest.TestCase):
             with self.subTest(report=report[-100:]), self.assertRaises(ValueError):
                 export_from_report(report)
 
+    def test_conflicting_observations_fail_closed(self):
+        # A resolved and missing record for the same exact ABI key cannot
+        # establish a trustworthy provider manifest, even with valid counts.
+        contradictory = BASE_REPORT.replace(
+            'missing_import_001=futex @ LIBC from libc.so',
+            'missing_import_001=pread @ LIBC from libc.so')
+        with self.assertRaisesRegex(ValueError, 'both resolved and missing'):
+            export_from_report(contradictory)
+        # Version/provider identity remains exact: similarly named keys in
+        # different ABI namespaces are not contradictory.
+        distinct = BASE_REPORT.replace(
+            'missing_import_001=futex @ LIBC from libc.so',
+            'missing_import_001=pread @ OTHER from libother.so')
+        providers, evidence = export_from_report(distinct)
+        self.assertEqual(len(providers), 2)
+        self.assertEqual(evidence['missing_import_entries'], 1)
+
     def test_different_abi_providers_are_not_collapsed(self):
         report = BASE_REPORT.replace(
             'resolved_import_002=pread @ LIBC from libc.so',
