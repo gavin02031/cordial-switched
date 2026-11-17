@@ -1349,3 +1349,31 @@ Host tests check a single datagram, file contents and invalid requests.
 These are runtime adapter improvements, not evidence of engine startup.
 **INFERRED:** their behaviour on Switch remains to be measured; the proprietary
 engine has not executed and the required-import gate remains incomplete.
+
+### Worker exit and thread identity
+
+The lifecycle provider now resolves `pthread_exit@LIBC` for bridged workers.
+Both a worker's normal return and explicit exit run Bionic TLS destructors
+before native TLS teardown, preserving its original `pthread_self` token
+inside destructors. Cleanup honours the existing four-round destructor limit
+and clears the native master slot to prevent duplicate cleanup. A worker joining
+its own token returns `EDEADLK` before consulting the native handle, including
+when the creator has not yet returned from `pthread_create`.
+
+`gettid@LIBC` now reads the real Horizon thread ID through `svcGetThreadId`.
+It rejects IDs that cannot fit Android's signed 32-bit `pid_t`, rather than
+truncating them. The Linux host test uses its native thread-ID syscall and checks
+that a worker has a stable ID distinct from the main thread. This import adapter
+does not translate raw Linux syscall instructions inside the engine.
+
+Host lifecycle tests cover 32 workers returning or explicitly exiting, return
+values, destructor re-arming, identity during cleanup and self-join. These tests
+exercise our adapters, not proprietary engine execution. **INFERRED:** Switch
+worker exit, cleanup and thread-ID behaviour remain unverified on hardware.
+Main-thread exit and foreign host-thread teardown are not validated.
+
+A separate known thread-startup limitation remains: devkitPro libsysbase's
+`pthread_attr_setguardsize` returns `ENOSYS`, while the current attribute bridge
+requests a guard size for explicit attributes. Native detached-thread support
+also needs a separate implementation. Neither limitation is bypassed by reporting
+success; guest startup and playable Roblox remain blocked.

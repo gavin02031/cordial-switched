@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "android_thread_lifecycle_compat.h"
 #include "android_thread_attr_compat.h"
+#include "android_tls_compat.h"
 
 #include <assert.h>
 #include <errno.h>
@@ -62,6 +63,43 @@ static void *detached_start(void *arg)
     return NULL;
 }
 
+static void (*bionic_exit)(void *);
+static int (*bionic_join)(uint64_t, void **);
+static int (*bionic_setspecific)(uint32_t, const void *);
+static uint32_t exit_key;
+
+typedef struct {
+    uint64_t identity;
+    unsigned destructor_calls;
+    unsigned rearm_limit;
+    bool explicit_exit;
+    bool reached_after_exit;
+} ExitWorker;
+
+static void exit_destructor(void *opaque)
+{
+    ExitWorker *worker = opaque;
+    assert(bionic_self() == worker->identity);
+    assert(android_thread_lifecycle_compat_shadow_current()[1] ==
+           (void *)(uintptr_t)worker->identity);
+    worker->destructor_calls++;
+    if (worker->destructor_calls < worker->rearm_limit)
+        assert(bionic_setspecific(exit_key, worker) == 0);
+}
+
+static void *exit_worker(void *opaque)
+{
+    ExitWorker *worker = opaque;
+    worker->identity = bionic_self();
+    assert(bionic_join(worker->identity, NULL) == EDEADLK);
+    assert(bionic_setspecific(exit_key, worker) == 0);
+    if (worker->explicit_exit) {
+        bionic_exit(worker);
+        worker->reached_after_exit = true;
+    }
+    return worker;
+}
+
 int main(void)
 {
     int (*create)(uint64_t *, const void *, void *(*)(void *), void *) =
@@ -69,11 +107,13 @@ int main(void)
     int (*join)(uint64_t, void **) = BIND("pthread_join", int (*)(uint64_t, void **));
     int (*detach)(uint64_t) = BIND("pthread_detach", int (*)(uint64_t));
     int (*equal)(uint64_t, uint64_t) = BIND("pthread_equal", int (*)(uint64_t, uint64_t));
+    bionic_exit = BIND("pthread_exit", void (*)(void *));
+    bionic_join = join;
     bionic_self = BIND("pthread_self", uint64_t (*)(void));
     uint64_t rejected = 0;
     assert(!android_thread_lifecycle_compat_resolve("pthread_create", "LIBM", "libc.so", &rejected));
     assert(!android_thread_lifecycle_compat_resolve("pthread_create", "LIBC", "libm.so", &rejected));
-    assert(!android_thread_lifecycle_compat_resolve("pthread_exit", "LIBC", "libc.so", &rejected));
+    assert(!android_thread_lifecycle_compat_resolve("pthread_exit", "LIBC_N", "libc.so", &rejected));
     assert(!android_thread_lifecycle_compat_resolve("pthread_create", "LIBC", "libc.so", NULL));
 
     uint64_t main_id = bionic_self();
@@ -108,6 +148,35 @@ int main(void)
         assert(join(threads[i], NULL) == EINVAL);
         assert(detach(threads[i]) == EINVAL);
     }
+
+    uint64_t tls_address;
+    assert(android_tls_compat_resolve("pthread_key_create", "LIBC", "libc.so", &tls_address));
+    int (*key_create)(uint32_t *, void (*)(void *)) = (void *)(uintptr_t)tls_address;
+    assert(android_tls_compat_resolve("pthread_key_delete", "LIBC", "libc.so", &tls_address));
+    int (*key_delete)(uint32_t) = (void *)(uintptr_t)tls_address;
+    assert(android_tls_compat_resolve("pthread_setspecific", "LIBC", "libc.so", &tls_address));
+    bionic_setspecific = (void *)(uintptr_t)tls_address;
+    assert(key_create(&exit_key, exit_destructor) == 0);
+    ExitWorker exits[32] = {0};
+    uint64_t exit_threads[32];
+    for (unsigned i = 0; i < 32; ++i) {
+        exits[i].explicit_exit = (i % 2) != 0;
+        exits[i].rearm_limit = i % 3 == 0 ? 10 : 1;
+        assert(create(&exit_threads[i], NULL, exit_worker, &exits[i]) == 0);
+    }
+    for (unsigned i = 0; i < 32; ++i) {
+        void *value = NULL;
+        assert(join(exit_threads[i], &value) == 0);
+        assert(value == &exits[i]);
+        assert(exits[i].identity == exit_threads[i]);
+        assert(!exits[i].reached_after_exit);
+        assert(exits[i].destructor_calls == (i % 3 == 0 ? 4u : 1u));
+        assert(join(exit_threads[i], NULL) == EINVAL);
+    }
+    assert(key_delete(exit_key) == 0);
+    // A second cleanup on a thread with no values is harmless.
+    android_tls_compat_cleanup_current();
+    android_tls_compat_cleanup_current();
 
     uint64_t address = 0;
     assert(android_thread_attr_compat_resolve("pthread_attr_init", "LIBC", "libc.so", &address));

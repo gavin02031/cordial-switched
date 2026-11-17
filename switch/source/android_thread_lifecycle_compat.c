@@ -9,6 +9,7 @@
 
 #include "android_thread_attr_compat.h"
 #include "android_arm64_tcb_shadow.h"
+#include "android_tls_compat.h"
 
 // Bionic's pthread_t is a 64-bit pointer to its own thread structure, not a
 // libnx/newlib pthread_t. Stable, non-reused registry addresses keep an old
@@ -79,7 +80,9 @@ static void *native_start(void *opaque)
     // incorrect pthread_self identity.
     if (pthread_setspecific(identity_key, entry) != 0)
         return NULL;
-    return entry->start(entry->argument);
+    void *result = entry->start(entry->argument);
+    android_tls_compat_cleanup_current();
+    return result;
 }
 
 static int bridge_create(uint64_t *token, const void *attr,
@@ -152,6 +155,14 @@ static uint64_t bridge_self(void)
     return (uint64_t)(uintptr_t)entry;
 }
 
+static void bridge_exit(void *value)
+{
+    // libnx clears native TLS slots in index order. Run Bionic destructors
+    // first, while pthread_self still names this worker's original token.
+    android_tls_compat_cleanup_current();
+    pthread_exit(value);
+}
+
 static int bridge_join(uint64_t token, void **value)
 {
     pthread_mutex_lock(&registry_lock);
@@ -159,6 +170,12 @@ static int bridge_join(uint64_t token, void **value)
     if (!entry || !entry->joinable || entry->joining || entry->consumed) {
         pthread_mutex_unlock(&registry_lock);
         return EINVAL;
+    }
+    // A worker can reach this before pthread_create publishes native. The
+    // guest identity is already installed by native_start and is sufficient.
+    if (ensure_identity() == 0 && pthread_getspecific(identity_key) == entry) {
+        pthread_mutex_unlock(&registry_lock);
+        return EDEADLK;
     }
     entry->joining = true;
     pthread_t native = entry->native;
@@ -208,6 +225,7 @@ bool android_thread_lifecycle_compat_resolve(const char *name, const char *versi
     MAP_ANDROID("pthread_join", bridge_join)
     MAP_ANDROID("pthread_detach", bridge_detach)
     MAP_ANDROID("pthread_equal", bridge_equal)
+    MAP_ANDROID("pthread_exit", bridge_exit)
     (void)0;
 #undef MAP_ANDROID
     return *address != 0;

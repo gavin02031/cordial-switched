@@ -9,4 +9,7 @@
 bool android_tls_compat_resolve(const char *name, const char *version,
                                 const char *library, uint64_t *address);
 
+// Run guest key destructors before native teardown clears the thread identity.
+void android_tls_compat_cleanup_current(void);
+
 #endif

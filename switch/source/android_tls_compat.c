@@ -80,6 +80,16 @@ static void master_destructor(void *opaque)
     free(thread);
 }
 
+void android_tls_compat_cleanup_current(void)
+{
+    pthread_mutex_lock(&key_lock);
+    ThreadValues *thread = master_ready ? pthread_getspecific(native_master_key) : NULL;
+    pthread_mutex_unlock(&key_lock);
+    // The destructor clears the native slot, so native thread exit cannot
+    // run the guest destructors a second time. It must run without key_lock.
+    if (thread) master_destructor(thread);
+}
+
 static int android_key_create(uint32_t *out, void (*destructor)(void *))
 {
     if (!out) return EINVAL;

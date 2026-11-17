@@ -28,6 +28,9 @@ _Static_assert(sizeof(wchar_t) == 4, "Bionic ARM64 wchar_t must be 4 bytes");
 #include <switch.h>
 #else
 #include <sched.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 #endif
 
 /*
@@ -428,6 +431,25 @@ static int android_clock_gettime(int android_clock, struct timespec *time_value)
     return clock_gettime(host_clock, time_value);
 }
 
+#if defined(__SWITCH__) || defined(__linux__)
+static int32_t android_gettid(void)
+{
+#ifdef __SWITCH__
+    u64 identity;
+    if (R_FAILED(svcGetThreadId(&identity, CUR_THREAD_HANDLE))) {
+        errno = EIO;
+        return -1;
+    }
+    // Android pid_t is signed 32-bit; never truncate a Horizon thread ID
+    // into a different live identity or a negative error-looking value.
+    if (identity > INT32_MAX) { errno = EOVERFLOW; return -1; }
+    return (int32_t)identity;
+#else
+    return (int32_t)syscall(SYS_gettid);
+#endif
+}
+#endif
+
 // Both providers must expose the same storage used by getopt_long, getenv
 // and tzset. Snapshot globals would go stale as soon as those functions run.
 extern char **environ;
@@ -570,6 +592,11 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(inet_pton)
     MAP_LIBC(inet_ntop)
     MAP_LIBC(getpid)
+#if defined(__SWITCH__) || defined(__linux__)
+    if (strcmp(name, "gettid") == 0)
+        *address = (uint64_t)(uintptr_t)&android_gettid;
+    else
+#endif
     if (strcmp(name, "strerror_r") == 0)
         *address = (uint64_t)(uintptr_t)&android_strerror_r;
     else if (strcmp(name, "__gnu_strerror_r") == 0)

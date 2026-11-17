@@ -4,6 +4,7 @@
 #include "android_fortify_compat.h"
 
 #include <assert.h>
+#include <pthread.h>
 #include <getopt.h>
 #include <limits.h>
 #include <locale.h>
@@ -127,6 +128,16 @@ static void test_error_strings_and_immediate_exit(void)
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 37);
     assert(read(descriptors[0], buffer, sizeof(buffer)) == 0);
     close(descriptors[0]);
+}
+
+static int32_t (*guest_gettid)(void);
+
+static void *tid_worker(void *opaque)
+{
+    int32_t *result = opaque;
+    *result = guest_gettid();
+    assert(*result > 0 && *result == guest_gettid());
+    return NULL;
 }
 
 int main(void)
@@ -689,6 +700,16 @@ int main(void)
     assert(android_libc_compat_resolve("getpid", "LIBC", "libc.so", &address));
     pid_t (*android_getpid)(void) = (pid_t (*)(void))(uintptr_t)address;
     assert(android_getpid() == getpid());
+    assert(android_libc_compat_resolve("gettid", "LIBC", "libc.so", &address));
+    guest_gettid = (int32_t (*)(void))(uintptr_t)address;
+    assert(guest_gettid() == getpid()); // Linux main thread owns the PID.
+    pthread_t tid_thread;
+    int32_t worker_tid = 0;
+    assert(pthread_create(&tid_thread, NULL, tid_worker, &worker_tid) == 0);
+    assert(pthread_join(tid_thread, NULL) == 0);
+    assert(worker_tid != guest_gettid());
+    assert(!android_libc_compat_resolve("gettid", "LIBC_N", "libc.so", &address));
+
     assert(android_libc_compat_resolve("gmtime", "LIBC", "libc.so", &address));
     struct tm *(*android_gmtime)(const time_t *) =
         (struct tm *(*)(const time_t *))(uintptr_t)address;
