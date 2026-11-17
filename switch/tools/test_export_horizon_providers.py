@@ -66,6 +66,22 @@ class HorizonProviderExportTests(unittest.TestCase):
             with self.subTest(report=report[-100:]), self.assertRaises(ValueError):
                 export_from_report(report)
 
+    def test_unknown_version_or_library_does_not_become_provider_evidence(self):
+        # The target logger uses '?' for unavailable ABI metadata. Such
+        # placeholders must not silently become literal version/DSO keys.
+        for record in ('pread @ ? from libc.so',
+                       'pread @ LIBC from ?'):
+            report = BASE_REPORT.replace(
+                'resolved_import_001=pread @ LIBC from libc.so',
+                'resolved_import_001=' + record)
+            with self.subTest(record=record), self.assertRaisesRegex(
+                    ValueError, 'incomplete ABI key'):
+                export_from_report(report)
+        # The explicit unversioned/unspecified sentinel pair is legitimate.
+        providers, _ = export_from_report(BASE_REPORT)
+        self.assertIn({'name': 'close', 'version': None,
+                       'library': None}, providers)
+
     def test_conflicting_observations_fail_closed(self):
         # A resolved and missing record for the same exact ABI key cannot
         # establish a trustworthy provider manifest, even with valid counts.
