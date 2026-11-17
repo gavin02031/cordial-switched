@@ -93,9 +93,14 @@ def export_from_report(report):
         raise ValueError('incomplete resolved-import inventory')
 
     entries = _entries(fields, 'full_audit_resolved_import_', supported)
-    _entries(fields, 'full_audit_missing_import_', missing)
+    missing_entries = _entries(fields, 'full_audit_missing_import_', missing)
     keys = {(item['name'], item['version'], item['library'])
             for item in entries}
+    missing_keys = {(item['name'], item['version'], item['library'])
+                    for item in missing_entries}
+    if keys & missing_keys:
+        raise ValueError('contradictory Horizon resolver observation: '
+                         'ABI key both resolved and missing')
     manifest = [dict(name=n, version=v, library=l)
                 for n, v, l in sorted(keys, key=lambda x:
                                       (x[0], x[1] or '', x[2] or ''))]
