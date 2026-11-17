@@ -82,6 +82,21 @@ class HorizonProviderExportTests(unittest.TestCase):
         self.assertIn({'name': 'close', 'version': None,
                        'library': None}, providers)
 
+    def test_padded_abi_fields_fail_closed(self):
+        # Padding changes the exact version/DSO identity and can make an
+        # unverified provider appear distinct from the target's import.
+        for record in (' pread @ LIBC from libc.so',
+                       'pread  @ LIBC from libc.so',
+                       'pread @  LIBC from libc.so',
+                       'pread @ LIBC from libc.so ',
+                       'pread @ LIBC from  '):
+            report = BASE_REPORT.replace(
+                'resolved_import_001=pread @ LIBC from libc.so',
+                'resolved_import_001=' + record)
+            with self.subTest(record=record), self.assertRaisesRegex(
+                    ValueError, 'incomplete ABI key'):
+                export_from_report(report)
+
     def test_conflicting_observations_fail_closed(self):
         # A resolved and missing record for the same exact ABI key cannot
         # establish a trustworthy provider manifest, even with valid counts.
