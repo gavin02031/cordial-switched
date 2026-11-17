@@ -42,7 +42,7 @@ class HorizonProviderExportTests(unittest.TestCase):
             'full_audit_missing_imports_reported=1',
             'full_audit_missing_imports_reported=2').replace(
             'full_audit_missing_import_001=futex @ LIBC from libc.so',
-            'full_audit_missing_import_001=futex @ LIBC from libc.so\\n'
+            'full_audit_missing_import_001=futex @ LIBC from libc.so\n'
             'full_audit_missing_import_002=futex @ LIBC from libc.so')
         _, evidence = export_from_report(report)
         self.assertEqual(evidence['missing_import_entries'], 2)
