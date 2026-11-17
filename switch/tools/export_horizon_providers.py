@@ -38,7 +38,7 @@ def _abi_key(record):
         raise ValueError('ambiguous ABI-key record')
     name, rest = record.split(' @ ', 1)
     version, library = rest.split(' from ', 1)
-    if not name or name == '?' or not version or not library:
+    if not name or name == '?' or version in ('', '?') or library in ('', '?'):
         raise ValueError('incomplete ABI key')
     if any(ord(ch) < 32 or ord(ch) > 126 for ch in record):
         raise ValueError('non-printable ABI key')
