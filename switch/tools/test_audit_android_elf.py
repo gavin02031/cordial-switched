@@ -1,6 +1,8 @@
 import struct
 import unittest
-from audit_android_elf import parse_imports, svc_candidates, compare_provider_manifest
+from audit_android_elf import (parse_imports, svc_candidates,
+                               text_section_ranges, section_svc_candidates,
+                               compare_provider_manifest)
 
 class AuditTests(unittest.TestCase):
     def test_versions_and_weak(self):
@@ -50,6 +52,53 @@ class AuditTests(unittest.TestCase):
                          'immediately_preceding_movz_x8_or_w8')
         # No instruction-sequence identification is a runtime reachability claim.
         self.assertNotIn('executed', entries[0])
+
+    def test_text_candidates_exclude_other_executable_segment_bytes(self):
+        data = bytearray(512)
+        data[:6] = b'\x7fELF\x02\x01'
+        struct.pack_into('<H', data, 18, 183)
+        struct.pack_into('<Q', data, 32, 64)
+        struct.pack_into('<HH', data, 54, 56, 1)
+        struct.pack_into('<IIQQQQQQ', data, 64, 1, 5, 128, 4096, 0, 64, 64, 4096)
+        # The first SVC is at the start of .text. Its preceding MOVZ lies
+        # outside that section and must not be attributed to .text code.
+        struct.pack_into('<5I', data, 128,
+                         0xd2800008 | (172 << 5), 0xd4000001,
+                         0xd503201f, 0xd2800008 | (178 << 5), 0xd4000001)
+        struct.pack_into('<I', data, 168, 0xd4000001)  # Outside .text.
+        names = b'\0.text\0.shstrtab\0'
+        data[448:448 + len(names)] = names
+        struct.pack_into('<Q', data, 40, 256)
+        struct.pack_into('<HHH', data, 58, 64, 3, 2)
+        struct.pack_into('<IIQQQQIIQQ', data, 320, 1, 1, 6,
+                         0x1004, 132, 28, 0, 0, 4, 0)
+        struct.pack_into('<IIQQQQIIQQ', data, 384, 7, 3, 0,
+                         0, 448, len(names), 0, 0, 1, 0)
+        all_candidates = svc_candidates(data)
+        self.assertEqual(len(all_candidates), 3)
+        ranges = text_section_ranges(data)
+        self.assertEqual(ranges, [(132, 160)])
+        text_candidates = section_svc_candidates(all_candidates, ranges)
+        self.assertEqual(len(text_candidates), 2)
+        self.assertNotIn('syscall_hint', text_candidates[0])
+        self.assertEqual(text_candidates[1]['syscall_hint']['name'], 'gettid')
+        self.assertIsNone(section_svc_candidates(all_candidates, None))
+        self.assertEqual(len(section_svc_candidates(all_candidates, [(132, 146)])), 1)
+        self.assertEqual(section_svc_candidates(all_candidates, []), [])
+
+        # An ELF with no section table is not proof of zero .text syscalls.
+        struct.pack_into('<Q', data, 40, 0)
+        struct.pack_into('<HHH', data, 58, 0, 0, 0)
+        self.assertIsNone(text_section_ranges(data))
+        # Malformed section-name metadata must not claim reliable counts.
+        struct.pack_into('<Q', data, 40, 256)
+        struct.pack_into('<HHH', data, 58, 64, 3, 4)
+        with self.assertRaises(ValueError):
+            text_section_ranges(data)
+        struct.pack_into('<Q', data, 40, 0)
+        struct.pack_into('<HHH', data, 58, 64, 3, 2)
+        with self.assertRaises(ValueError):
+            text_section_ranges(data)
 
     def test_manifest_preserves_import_entries_and_distinct_missing_abi_keys(self):
         imports = [

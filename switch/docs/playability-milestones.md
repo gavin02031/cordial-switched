@@ -27,9 +27,40 @@ python3 switch/tools/audit_android_elf.py /path/to/libroblox.so \
 
 The JSON contains DT_NEEDED entries, all visible undefined dynamic symbols,
 weak/required binding, version/provider identity, the binary SHA-256, and
-aligned SVC #0 candidates in executable PT_LOAD segments. This reads bytes;
+aligned SVC #0 candidates in executable PT_LOAD segments **and separately**
+within a named executable `.text` section, when section headers exist. This reads bytes;
 it never executes or patches guest code. Malformed input or unavailable dynamic
 symbol metadata fails rather than claiming zero imports.
+
+### Verified private ARM64 library audit (2026-11-16)
+
+The user-supplied Android AArch64 `libroblox.so` was independently read with
+GNU `readelf` and the offline auditor, without executing it or checking it in:
+
+| Evidence | Observed result |
+| --- | --- |
+| SHA-256 | `2ce7db6dc4bb3d907b0318fc79617fbf63c66298657286b4f6b5821985e40c43` |
+| Required undefined dynamic imports | 576 |
+| Optional weak dynamic imports | 6 |
+| DT_NEEDED dependencies | 10 |
+| Raw SVC #0 matches in executable PT_LOAD segments | 130 |
+| Raw SVC #0 matches specifically in named `.text` | **16** |
+| `.text` matches with directly preceding `MOVZ x8/w8` Linux syscall number | **7**: `futex` (2), `getpid` (3), `gettid` (2) |
+
+The distinction between **130 segment-wide** and **16 `.text`** matches is
+intentional. Segments may contain data and other executable sections; a
+segment-wide scan does not establish 130 syscall instructions. Conversely, a
+`.text` match is still only a static candidate, not evidence of a reached
+instruction. If section headers are missing, `svc_text_candidates` is `null`
+and the absence cannot be misreported as zero.
+
+The earlier **77 distinct missing imports** was an unverified comparison against
+an older target report, **not** the number of imports in this ELF. The private
+binary supplies the import side, but an independently verified **complete
+Horizon provider manifest** is still needed to reproduce the exact outstanding
+Milestone A list. Do not ask for a separate Switch run per missing symbol or
+substitute provider names inferred from source. The Switch remains necessary
+for checks of guest runtime behaviour and constructor execution.
 
 Optionally pass `--providers /path/to/providers.json`. This file is a JSON array
 of `{ "name": "pread", "version": "LIBC", "library": "libc.so" }` records

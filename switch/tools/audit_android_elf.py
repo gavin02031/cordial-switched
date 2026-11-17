@@ -60,6 +60,71 @@ def svc_candidates(data):
     return candidates
 
 
+def text_section_ranges(data):
+    """Return file ranges of executable .text sections, or None if stripped.
+
+    PT_LOAD has permission to execute but can also contain literal pools and
+    non-code data. A segment-wide SVC count must not be reported as a count
+    of instructions found inside the ELF's named .text section.
+    """
+    if len(data) < 64 or data[:6] != b'\x7fELF\x02\x01':
+        raise ValueError('expected a little-endian ELF64 image')
+    section_offset = struct.unpack_from('<Q', data, 40)[0]
+    stride, count, names_index = struct.unpack_from('<HHH', data, 58)
+    if section_offset == 0 and count == 0:
+        return None  # A valid ELF can omit its section headers entirely.
+    if (section_offset == 0 or stride != 64 or not count or
+            not names_index or names_index >= count or
+            count == 65535 or names_index == 65535 or
+            section_offset + stride * count > len(data)):
+        raise ValueError('invalid or unsupported section header table')
+
+    def section(index):
+        return struct.unpack_from('<IIQQQQIIQQ', data,
+                                  section_offset + index * stride)
+
+    names = section(names_index)
+    if names[1] != 3 or names[4] + names[5] > len(data):
+        raise ValueError('missing or invalid section-name string table')
+    names_start, names_end = names[4], names[4] + names[5]
+    result = []
+    for index in range(count):
+        sh = section(index)
+        if sh[1] != 1 or not sh[2] & 4:  # SHT_PROGBITS, SHF_EXECINSTR
+            continue
+        if sh[0] >= names[5]:
+            raise ValueError('invalid executable section name offset')
+        name_start = names_start + sh[0]
+        name_end = data.find(b'\0', name_start, names_end)
+        if name_end < 0:
+            raise ValueError('unterminated executable section name')
+        if data[name_start:name_end] != b'.text':
+            continue
+        start, size = sh[4], sh[5]
+        if start + size > len(data):
+            raise ValueError('.text section extends past the ELF')
+        result.append((start, start + size))
+    return result
+
+
+def section_svc_candidates(candidates, ranges):
+    if ranges is None:
+        return None
+    result = []
+    for candidate in candidates:
+        offset = int(candidate['file_offset'], 16)
+        for start, end in ranges:
+            if start <= offset and offset + 4 <= end:
+                entry = dict(candidate)
+                # An adjacent MOVZ outside .text is not an adjacent .text
+                # instruction; keep the segment-wide hint separate.
+                if offset - 4 < start:
+                    entry.pop('syscall_hint', None)
+                result.append(entry)
+                break
+    return result
+
+
 def parse_imports(symbols, versions):
     providers = {}
     library = None
@@ -103,6 +168,8 @@ def parse_imports(symbols, versions):
 def inventory(path, readelf):
     data = path.read_bytes()
     candidates = svc_candidates(data)
+    text_ranges = text_section_ranges(data)
+    text_candidates = section_svc_candidates(candidates, text_ranges)
     def inspect(*args):
         return subprocess.run([readelf, *args, str(path)], check=True, text=True,
                               capture_output=True, env={'LC_ALL': 'C', 'PATH': __import__('os').environ.get('PATH', '')}).stdout
@@ -115,7 +182,10 @@ def inventory(path, readelf):
                 required_symbols=sum(x['required'] for x in imports),
                 optional_symbols=sum(not x['required'] for x in imports),
                 svc_zero_candidates=candidates,
-                caveat='SVC matches may be data or unreachable code; absence does not exclude computed instructions or syscalls in dependencies. Import inventory is not an execution test.')
+                svc_text_candidates=text_candidates,
+                svc_text_section_status=('unavailable' if text_ranges is None else
+                                         'found' if text_ranges else 'absent'),
+                caveat='Executable PT_LOAD segments contain more than .text code. Both lists are static SVC #0 matches, not evidence of reachable syscalls. Absent section headers cannot establish a zero .text count. Import inventory is not an execution test.')
 
 
 
@@ -165,7 +235,8 @@ def main():
         report['provider_manifest_sha256'] = hashlib.sha256(args.providers.read_bytes()).hexdigest()
     args.output.write_text(json.dumps(report, indent=2) + '\n')
     print(f"{report['required_symbols']} required, {report['optional_symbols']} optional symbols; "
-          f"{len(report['svc_zero_candidates'])} SVC #0 candidates")
+          f"{len(report['svc_zero_candidates'])} executable-segment SVC #0 matches; "
+          f"{len(report['svc_text_candidates']) if report['svc_text_candidates'] is not None else 'unknown'} .text matches")
     if args.providers and report['missing_required']:
         print(f"Missing {report['missing_required_distinct_count']} distinct required ABI keys "
               f"across {report['missing_required_import_entries']} import entries:")
