@@ -229,6 +229,7 @@ static int file_fcntl(int fd, int command, ...)
 // Native write also owns partial progress and EINTR; never retry its result.
 typedef struct { const void *base; size_t length; } AndroidIoVector;
 _Static_assert(sizeof(AndroidIoVector) == 16, "Android ARM64 iovec size");
+_Static_assert(sizeof(ssize_t) == 8, "Android ARM64 signed write result");
 
 static ssize_t file_writev(int fd, const AndroidIoVector *vectors, int count)
 {
@@ -236,7 +237,7 @@ static ssize_t file_writev(int fd, const AndroidIoVector *vectors, int count)
     if (count && !vectors) { errno = EFAULT; return -1; }
     size_t total = 0;
     for (int i = 0; i < count; ++i) {
-        if (vectors[i].length > (size_t)SSIZE_MAX - total) {
+        if (vectors[i].length > (size_t)INT64_MAX - total) {
             errno = EINVAL;
             return -1;
         }
