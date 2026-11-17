@@ -100,7 +100,7 @@ static int native_mutex_type(int bionic_type)
     }
 }
 
-static int create_locked(void *address, BridgeKind kind, int mutex_type,
+static int create_locked(void *address, BridgeKind kind, int configuration,
                          BridgeEntry **result)
 {
     if (registry_count == BRIDGE_MAX_OBJECTS)
@@ -113,13 +113,22 @@ static int create_locked(void *address, BridgeKind kind, int mutex_type,
         pthread_mutexattr_t attributes;
         error = pthread_mutexattr_init(&attributes);
         if (!error) {
-            error = pthread_mutexattr_settype(&attributes, native_mutex_type(mutex_type));
+            error = pthread_mutexattr_settype(&attributes, native_mutex_type(configuration));
             if (!error)
                 error = pthread_mutex_init(&entry->native.mutex, &attributes);
             pthread_mutexattr_destroy(&attributes);
         }
     } else if (kind == BRIDGE_COND) {
-        error = pthread_cond_init(&entry->native.cond, NULL);
+        pthread_condattr_t attributes;
+        error = pthread_condattr_init(&attributes);
+        if (!error) {
+            // Bionic encodes the clock in bit 1, not the host clock ID.
+            // devkitPro libsysbase preserves this clock through timedwait.
+            error = pthread_condattr_setclock(&attributes,
+                        configuration ? CLOCK_MONOTONIC : CLOCK_REALTIME);
+            if (!error) error = pthread_cond_init(&entry->native.cond, &attributes);
+            pthread_condattr_destroy(&attributes);
+        }
     } else {
         error = pthread_mutex_init(&entry->native.rwlock.control, NULL);
         if (!error) {
@@ -155,11 +164,12 @@ static int acquire_locked(void *address, BridgeKind kind, BridgeEntry **result)
             if (error)
                 return error;
         } else {
-            // Android's static condition and rwlock initialisers are zero.
-            // Other patterns could encode process-shared/private state.
+            // Bionic also has a monotonic static cond initialiser (2).
+            // Never interpret its shared bit or live futex counter as a clock.
             uint32_t marker;
             memcpy(&marker, address, sizeof(marker));
-            if (marker != 0) return ENOTSUP;
+            if (kind == BRIDGE_COND && marker == 2) type = 1;
+            else if (marker != 0) return ENOTSUP;
         }
         int error = create_locked(address, kind, type, &entry);
         if (error)
@@ -281,13 +291,12 @@ static int android_mutex_destroy(void *address)
 static int android_cond_init(void *address, const void *attr)
 {
     if (!address) return EINVAL;
-    // The default Bionic cond clock is realtime. Additional attributes need
-    // an explicit translation before their calls can be exposed.
-    if (attr && *(const long *)attr != 0) return ENOTSUP;
+    long flags = attr ? *(const long *)attr : 0;
+    if (flags & ~2L) return ENOTSUP;
     pthread_mutex_lock(&registry_lock);
     BridgeEntry *entry = NULL;
     int error = find_locked(address, BRIDGE_COND) ? EBUSY :
-                create_locked(address, BRIDGE_COND, 0, &entry);
+                create_locked(address, BRIDGE_COND, (int)(flags >> 1), &entry);
     pthread_mutex_unlock(&registry_lock);
     return error;
 }
@@ -366,11 +375,10 @@ static int android_condattr_init(void *attr)
 static int android_condattr_setclock(void *attr, int clock)
 {
     if (!attr) return EINVAL;
-    if (*(long *)attr != 0) return ENOTSUP;
-    // Android uses 0 for realtime and 1 for monotonic. The latter cannot be
-    // promised by the current Horizon native condvar implementation.
-    if (clock == 0) { *(long *)attr = 0; return 0; }
-    return clock == 1 ? ENOTSUP : EINVAL;
+    if (*(long *)attr & ~2L) return ENOTSUP;
+    if (clock != 0 && clock != 1) return EINVAL;
+    *(long *)attr = (long)clock << 1;
+    return 0;
 }
 
 static int android_condattr_destroy(void *attr)

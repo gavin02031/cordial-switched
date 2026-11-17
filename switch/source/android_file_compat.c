@@ -224,6 +224,41 @@ static int file_fcntl(int fd, int command, ...)
     return fcntl(fd, F_SETFL, translated);
 }
 
+// The ARM64 iovec ABI is two 64-bit fields. Coalesce into one native write:
+// separate writes would split a datagram and lose PIPE_BUF/append atomicity.
+// Native write also owns partial progress and EINTR; never retry its result.
+typedef struct { const void *base; size_t length; } AndroidIoVector;
+_Static_assert(sizeof(AndroidIoVector) == 16, "Android ARM64 iovec size");
+
+static ssize_t file_writev(int fd, const AndroidIoVector *vectors, int count)
+{
+    if (count < 0 || count > 1024) { errno = EINVAL; return -1; }
+    if (count && !vectors) { errno = EFAULT; return -1; }
+    size_t total = 0;
+    for (int i = 0; i < count; ++i) {
+        if (vectors[i].length > (size_t)SSIZE_MAX - total) {
+            errno = EINVAL;
+            return -1;
+        }
+        if (vectors[i].length && !vectors[i].base) { errno = EFAULT; return -1; }
+        total += vectors[i].length;
+    }
+    unsigned char local[1024];
+    unsigned char *buffer = total <= sizeof(local) ? local : malloc(total);
+    if (!buffer) { errno = ENOMEM; return -1; }
+    size_t offset = 0;
+    for (int i = 0; i < count; ++i) {
+        if (vectors[i].length)
+            memcpy(buffer + offset, vectors[i].base, vectors[i].length);
+        offset += vectors[i].length;
+    }
+    ssize_t result = write(fd, buffer, total);
+    int saved_errno = errno;
+    if (buffer != local) free(buffer);
+    errno = saved_errno;
+    return result;
+}
+
 static int64_t file_lseek(int fd, int64_t offset, int whence)
 {
     int native;
@@ -325,6 +360,7 @@ bool android_file_compat_resolve(const char *name, const char *version,
     MAP("__open_2", file_open_2)
     MAP("fcntl", file_fcntl)
     MAP("lseek", file_lseek)
+    MAP("writev", file_writev)
 
 #if !defined(__SWITCH__) || defined(MORROW_HAS_POSITIONAL_IO)
     MAP("pread", file_pread)

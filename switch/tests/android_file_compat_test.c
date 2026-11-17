@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <limits.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <sys/resource.h>
@@ -24,8 +26,46 @@ static uint64_t resolve(const char *name)
     return address;
 }
 #define LOAD(name, result, args) result (*guest_##name) args = (result (*) args)(uintptr_t)resolve(#name)
+typedef struct { const void *base; size_t length; } TestVector;
+
+static void test_writev(void)
+{
+    LOAD(writev, ssize_t, (int, const TestVector *, int));
+    int sockets[2];
+    assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0);
+    TestVector vectors[] = {{"header", 6}, {NULL, 0}, {"body", 4}};
+    assert(guest_writev(sockets[0], vectors, 3) == 10);
+    char received[16] = {0};
+    assert(recv(sockets[1], received, sizeof(received), 0) == 10);
+    assert(!memcmp(received, "headerbody", 10));
+    assert(recv(sockets[1], received, sizeof(received), MSG_DONTWAIT) == -1);
+    assert(errno == EAGAIN || errno == EWOULDBLOCK);
+    assert(guest_writev(sockets[0], NULL, 1) == -1 && errno == EFAULT);
+    assert(guest_writev(sockets[0], vectors, -1) == -1 && errno == EINVAL);
+    assert(guest_writev(sockets[0], vectors, 1025) == -1 && errno == EINVAL);
+    TestVector bad[] = {{"x", (size_t)SSIZE_MAX}, {"y", 1}};
+    assert(guest_writev(sockets[0], bad, 2) == -1 && errno == EINVAL);
+    bad[0] = (TestVector){NULL, 1};
+    assert(guest_writev(sockets[0], bad, 1) == -1 && errno == EFAULT);
+    assert(guest_writev(-1, vectors, 3) == -1 && errno == EBADF);
+    assert(close(sockets[0]) == 0 && close(sockets[1]) == 0);
+    FILE *file = tmpfile();
+    assert(file);
+    unsigned char large[4096];
+    memset(large, 0x5a, sizeof(large));
+    TestVector large_vectors[] = {{large, 2048}, {large + 2048, 2048}};
+    assert(guest_writev(fileno(file), large_vectors, 2) == sizeof(large));
+    assert(guest_writev(fileno(file), NULL, 0) == 0);
+    assert(lseek(fileno(file), 0, SEEK_SET) == 0);
+    unsigned char copy[4096];
+    assert(read(fileno(file), copy, sizeof(copy)) == sizeof(copy));
+    assert(!memcmp(copy, large, sizeof(copy)));
+    assert(fclose(file) == 0);
+}
+
 int main(void)
 {
+    test_writev();
     LOAD(open, int, (const char *, int, ...));
     LOAD(__open_2, int, (const char *, int));
     LOAD(fcntl, int, (int, int, ...));

@@ -263,8 +263,9 @@ reader/writer-lock operations, four process-private counting semaphore
 operations, a condition-variable timed wait, and three condition-attribute
 operations. The wrappers track live readers, writers and blocked calls so
 destroy cannot free an object while threads are using it. Native absolute
-realtime deadlines are supported; Android monotonic condition clocks return
-`ENOTSUP` until that clock can be implemented faithfully. Process-shared
+realtime and monotonic deadlines are supported through native condition
+attributes, including Bionic’s static monotonic initialiser. Unknown and
+process-shared attribute bits remain rejected. Process-shared
 semaphores return `ENOSYS`, not pretend success. Host concurrency tests cover
 reader/writer exclusion, recursion, deadlines, semaphore overflow and active
 teardown. **INFERRED:** these 13 names appeared in `link-25.txt`, but neither
@@ -1328,3 +1329,23 @@ cannot be mistaken for a playable Roblox client.
 account login and joining playable games have been demonstrated. Current
 development builds remain **Cordial Switched**; 60 FPS gameplay and the v1.0
 timeline are not guaranteed.
+
+### Runtime compatibility follow-up
+
+The condition bridge now translates Android clock IDs and attribute bits into
+native condition attributes. Tests exercise future realtime and monotonic
+expiry, a worker signalling a timed waiter, static initialisation, and rejection
+of process-shared state. This corrects the earlier claim that Horizon could not
+support monotonic conditions: devkitPro's libsysbase pthread implementation
+stores the selected clock and uses it when deriving the native relative wait.
+
+The file bridge also answers the supplied engine's `writev@LIBC` import. It
+validates vector count, null buffers and total-length overflow, then combines
+the vectors into one native write so datagrams and append operations are not
+split into separate writes. Large requests need a temporary allocation and can
+fail with `ENOMEM`. The native write result preserves short writes and errors.
+Host tests check a single datagram, file contents and invalid requests.
+
+These are runtime adapter improvements, not evidence of engine startup.
+**INFERRED:** their behaviour on Switch remains to be measured; the proprietary
+engine has not executed and the required-import gate remains incomplete.

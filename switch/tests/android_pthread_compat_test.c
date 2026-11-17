@@ -211,10 +211,71 @@ int main(void)
     assert(bridge_destroy(&timed_mutex) == 0);
     long clock_attr = -1;
     assert(condattr_init(&clock_attr) == 0 && clock_attr == 0);
-    assert(condattr_clock(&clock_attr, 1) == ENOTSUP);
+    assert(condattr_clock(&clock_attr, 1) == 0 && clock_attr == 2);
     assert(condattr_clock(&clock_attr, 78) == EINVAL);
-    assert(condattr_clock(&clock_attr, 0) == 0);
+    assert(clock_attr == 2);
+    assert(condattr_clock(&clock_attr, 0) == 0 && clock_attr == 0);
     assert(condattr_destroy(&clock_attr) == 0);
+
+    // A future monotonic deadline interpreted as realtime expires at once.
+    // Exercise both the explicit attributes and Bionic's static marker.
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        BionicCond clock_cond = {{0}};
+        BionicMutex clock_mutex = {{0}};
+        clockid_t clock = mode == 2 ? CLOCK_REALTIME : CLOCK_MONOTONIC;
+        if (mode == 0) {
+            assert(condattr_init(&clock_attr) == 0);
+            assert(condattr_clock(&clock_attr, 1) == 0);
+            assert(cond_init(&clock_cond, &clock_attr) == 0);
+            // Changing the attr must not change an already-created object.
+            assert(condattr_clock(&clock_attr, 0) == 0);
+            assert(condattr_destroy(&clock_attr) == 0);
+        } else if (mode == 1) clock_cond.private_words[0] = 2;
+        struct timespec start, finish, deadline;
+        assert(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+        assert(clock_gettime(clock, &deadline) == 0);
+        deadline.tv_nsec += 30000000;
+        if (deadline.tv_nsec >= 1000000000) {
+            deadline.tv_sec++;
+            deadline.tv_nsec -= 1000000000;
+        }
+        assert(bridge_lock(&clock_mutex) == 0);
+        int result;
+        do {
+            result = cond_timedwait(&clock_cond, &clock_mutex, &deadline);
+        } while (result == 0); // POSIX permits spurious wakeups.
+        assert(result == ETIMEDOUT);
+        assert(clock_gettime(CLOCK_MONOTONIC, &finish) == 0);
+        int64_t elapsed = (finish.tv_sec - start.tv_sec) * INT64_C(1000000000)
+                          + finish.tv_nsec - start.tv_nsec;
+        assert(elapsed >= 20000000);
+        assert(bridge_unlock(&clock_mutex) == 0);
+        assert(cond_destroy(&clock_cond) == 0);
+        assert(bridge_destroy(&clock_mutex) == 0);
+    }
+    // A real signal must wake a timed monotonic waiter and reacquire its mutex.
+    assert(condattr_init(&clock_attr) == 0);
+    assert(condattr_clock(&clock_attr, 1) == 0);
+    assert(cond_init(&shared_cond, &clock_attr) == 0);
+    assert(condattr_destroy(&clock_attr) == 0);
+    assert(bridge_lock(&shared_mutex) == 0);
+    shared_ready = 0;
+    pthread_t monotonic_signaler;
+    assert(pthread_create(&monotonic_signaler, NULL, signal_worker, NULL) == 0);
+    struct timespec wake_deadline;
+    assert(clock_gettime(CLOCK_MONOTONIC, &wake_deadline) == 0);
+    wake_deadline.tv_sec += 5;
+    while (!shared_ready)
+        assert(cond_timedwait(&shared_cond, &shared_mutex, &wake_deadline) == 0);
+    assert(bridge_unlock(&shared_mutex) == 0);
+    assert(pthread_join(monotonic_signaler, NULL) == 0);
+    assert(cond_destroy(&shared_cond) == 0);
+    assert(bridge_destroy(&shared_mutex) == 0);
+    BionicCond shared_clock_cond = {{3}};
+    assert(bridge_signal(&shared_clock_cond) == ENOTSUP);
+    clock_attr = 3;
+    assert(cond_init(&shared_clock_cond, &clock_attr) == ENOTSUP);
+    assert(condattr_clock(&clock_attr, 1) == ENOTSUP && clock_attr == 3);
 
     assert(bridge_rw_rdlock(&shared_rwlock) == 0);
     assert(bridge_rw_rdlock(&shared_rwlock) == 0);
