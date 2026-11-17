@@ -244,7 +244,7 @@ static ssize_t file_writev(int fd, const AndroidIoVector *vectors, int count)
         if (vectors[i].length && !vectors[i].base) { errno = EFAULT; return -1; }
         total += vectors[i].length;
     }
-    unsigned char local[1024];
+    unsigned char local[1024] = {0};
     unsigned char *buffer = total <= sizeof(local) ? local : malloc(total);
     if (!buffer) { errno = ENOMEM; return -1; }
     size_t offset = 0;
