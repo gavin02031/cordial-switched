@@ -8,7 +8,7 @@ engine code or graphics calls executed. The first required missing name is fchow
 
 | Milestone | Required evidence | Current state |
 | --- | --- | --- |
-| A | Complete required-import resolution against the actual Horizon providers, including dependency/version identity | Blocked: 80 required sites in link-31 |
+| A | Complete required-import resolution against the actual Horizon providers, including dependency/version identity | Blocked: complete target-observed provider manifest unavailable; the 80-site link-31 count is historical, not a verified current symbol count |
 | B | Dependency initialization, DT_INIT, then DT_INIT_ARRAY complete in order | Blocked: 2,505 guest array entries; current code validates targets only |
 | C | JNI_OnLoad and observed Android startup finish | Not reached; Java application parameters/lifecycle incomplete |
 | D | A visible frame produced by guest engine calls through GLES | Not reached; launcher/triangle frames do not qualify |
@@ -54,9 +54,10 @@ segment-wide scan does not establish 130 syscall instructions. Conversely, a
 instruction. If section headers are missing, `svc_text_candidates` is `null`
 and the absence cannot be misreported as zero.
 
-The earlier **77 distinct missing imports** was an unverified comparison against
-an older target report, **not** the number of imports in this ELF. The private
-binary supplies the import side, but an independently verified **complete
+An earlier offline comparison reported **77 distinct missing symbols**, but its
+exact 77-name provider comparison was not retained, so we cannot independently
+reproduce that figure yet. It is **not** the total number of imports in this
+ELF. The private binary supplies the import side, but a **complete, verified
 Horizon provider manifest** is still needed to reproduce the exact outstanding
 Milestone A list. Do not ask for a separate Switch run per missing symbol or
 substitute provider names inferred from source. The Switch remains necessary
