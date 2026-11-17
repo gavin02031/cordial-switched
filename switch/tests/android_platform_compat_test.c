@@ -697,6 +697,17 @@ int main(void)
     assert(android_inet_ntop(AF_INET, parsed_ipv4, ip_text, sizeof(ip_text)) == ip_text);
     assert(strcmp(ip_text, "127.0.0.1") == 0);
 
+    uint64_t guarded_set[] = {17, 123, 99};
+    const char *set_names[] = {"sigfillset", "sigemptyset"};
+    for (unsigned i = 0; i < 2; ++i) {
+        assert(android_libc_compat_resolve(set_names[i], "LIBC", "libc.so", &address));
+        int (*set_fn)(void *) = (void *)(uintptr_t)address;
+        assert(set_fn(&guarded_set[1]) == 0);
+        assert(guarded_set[1] == (i == 0 ? UINT64_MAX : 0));
+        assert(guarded_set[0] == 17 && guarded_set[2] == 99);
+        assert(set_fn(NULL) == -1 && errno == EINVAL);
+        assert(!android_libc_compat_resolve(set_names[i], "LIBC_N", "libc.so", &address));
+    }
     assert(android_libc_compat_resolve("getpid", "LIBC", "libc.so", &address));
     pid_t (*android_getpid)(void) = (pid_t (*)(void))(uintptr_t)address;
     assert(android_getpid() == getpid());

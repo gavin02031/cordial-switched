@@ -431,6 +431,18 @@ static int android_clock_gettime(int android_clock, struct timespec *time_value)
     return clock_gettime(host_clock, time_value);
 }
 
+// Bionic ARM64 stores its entire signal set in eight bytes. Host sigset_t
+// may be larger, so never pass this guest object to a native signal routine.
+static int android_signal_set(void *set, int byte)
+{
+    if (!set) { errno = EINVAL; return -1; }
+    memset(set, byte, sizeof(uint64_t));
+    return 0;
+}
+
+static int android_sigemptyset(void *set) { return android_signal_set(set, 0); }
+static int android_sigfillset(void *set) { return android_signal_set(set, 0xff); }
+
 #if defined(__SWITCH__) || defined(__linux__)
 static int32_t android_gettid(void)
 {
@@ -592,6 +604,9 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(inet_pton)
     MAP_LIBC(inet_ntop)
     MAP_LIBC(getpid)
+    if (!strcmp(name, "sigemptyset")) *address = (uintptr_t)&android_sigemptyset;
+    else if (!strcmp(name, "sigfillset")) *address = (uintptr_t)&android_sigfillset;
+    else
 #if defined(__SWITCH__) || defined(__linux__)
     if (strcmp(name, "gettid") == 0)
         *address = (uint64_t)(uintptr_t)&android_gettid;
