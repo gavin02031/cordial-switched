@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <getopt.h>
+#include <pthread.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdatomic.h>
@@ -302,6 +303,34 @@ static int android_getpagesize(void)
 #else
     return (int)sysconf(_SC_PAGESIZE);
 #endif
+}
+
+// Only expose auxiliary entries backed by the guest runtime. Host ELF
+// addresses and CPU feature masks describe the launcher, not this image.
+static pthread_once_t aux_random_once = PTHREAD_ONCE_INIT;
+static unsigned char aux_random[16];
+static bool aux_random_ready;
+
+static void initialise_aux_random(void)
+{
+    aux_random_ready = android_getentropy(aux_random, sizeof(aux_random)) == 0;
+}
+
+static unsigned long android_getauxval(unsigned long key)
+{
+    if (key == 6) { // Linux AT_PAGESZ
+        int size = android_getpagesize();
+        return size > 0 ? (unsigned long)size : 0;
+    }
+    if (key == 25) { // Linux AT_RANDOM points to 16 bytes for the process lifetime.
+        if (pthread_once(&aux_random_once, initialise_aux_random) || !aux_random_ready) {
+            errno = EIO;
+            return 0;
+        }
+        return (unsigned long)(uintptr_t)aux_random;
+    }
+    errno = ENOENT;
+    return 0;
 }
 
 static int android_sched_yield(void)
@@ -622,6 +651,8 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         *address = (uint64_t)(uintptr_t)&android_clock_gettime;
     else if (strcmp(name, "memrchr") == 0)
         *address = (uint64_t)(uintptr_t)&android_memrchr;
+    else if (strcmp(name, "getauxval") == 0)
+        *address = (uint64_t)(uintptr_t)&android_getauxval;
     else if (strcmp(name, "getpagesize") == 0)
         *address = (uint64_t)(uintptr_t)&android_getpagesize;
     else if (strcmp(name, "arc4random_buf") == 0)

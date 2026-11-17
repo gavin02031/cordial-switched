@@ -375,6 +375,17 @@ int main(void)
     assert(android_memrchr(repeated, 'z', 4) == NULL);
     assert(android_libc_compat_resolve("getpagesize", "LIBC", "libc.so", &address));
     int (*android_pagesize)(void) = (int (*)(void))(uintptr_t)address;
+    assert(android_libc_compat_resolve("getauxval", "LIBC", "libc.so", &address));
+    unsigned long (*auxval)(unsigned long) = (void *)(uintptr_t)address;
+    assert(auxval(6) == (unsigned long)android_pagesize());
+    unsigned long random_addr = auxval(25);
+    assert(random_addr);
+    unsigned char snapshot[16];
+    memcpy(snapshot, (void *)(uintptr_t)random_addr, sizeof(snapshot));
+    assert(auxval(25) == random_addr);
+    assert(!memcmp(snapshot, (void *)(uintptr_t)random_addr, sizeof(snapshot)));
+    errno = 0;
+    assert(auxval(3) == 0 && errno == ENOENT); // No host program headers exposed.
     assert(android_pagesize() >= 4096);
     assert(android_libc_compat_resolve("sched_yield", "LIBC", "libc.so", &address));
     int (*android_yield)(void) = (int (*)(void))(uintptr_t)address;
