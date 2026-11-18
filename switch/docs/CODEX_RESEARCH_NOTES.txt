@@ -84,5 +84,28 @@ ACCEPTANCE: verified console evidence distinguishing executed Linux SVC
 from static data or unreachable instruction candidates.
 EVIDENCE: switch/docs/playability-milestones.md.
 
+
+2026-11-18 01:42 America/Chicago — [HIGH][OBSERVED SOURCE / RUNTIME IMPACT INFERRED]
+Provider-export output pair can be inconsistent after a failed write.
+EVIDENCE: switch/tools/export_horizon_providers.py, main():
+args.output.write_text(...) precedes args.evidence_output.write_text(...),
+with no staged write, rollback, or cross-file identity check. The exporter
+otherwise validates the resolver inventory before writing. Source at
+https://github.com/gavin02031/cordial-switched/blob/5c8ee3613782cbcff589d0159a2d217339f4cb52/switch/tools/export_horizon_providers.py
+BLOCKER: If the evidence write fails, a new provider manifest can remain
+beside an old evidence JSON (or no evidence). The offline ABI audit could
+then be interpreted as having stronger provenance than its files establish.
+PROPOSED FOR FLINT: Stage both outputs in their destination directories,
+fsync/close before replacing final paths, and include a canonical manifest
+SHA-256 in evidence for pair verification. Handle failure cleanup without
+claiming two-path replacement is globally atomic; require downstream audit
+or operator to verify the hash and build/report identity before treating the
+manifest as Milestone A evidence. Avoid uploading private report content.
+SUCCESS: Synthetic failure-injection test of second-output write leaves
+no apparently valid mismatched pair; tampered/stale manifest is rejected;
+normal exporter tests and Horizon CI remain green.
+UNKNOWNS: No observed export write failure or stale pair on Switch; this
+is a source-level integrity risk, not evidence of a current missing import.
+
 NEXT ENTRY:
 Use a new dated section only when a verified finding improves this queue.
