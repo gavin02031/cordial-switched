@@ -102,6 +102,12 @@ int main(void)
     assert(remove_fd(looper, c[0]) == 1);
     assert(poll_once(0, NULL, NULL, NULL) == -3);
 
+    // No registered fds + infinite timeout would block until ALooper_wake,
+    // which is not bound: the wait refuses instead of wedging forever.
+    assert(poll_once(-1, NULL, NULL, NULL) == -4);
+    // No registered fds + bounded timeout is a pure sleep, then timeout.
+    assert(poll_once(5, NULL, NULL, NULL) == -3);
+
     close(a[0]); close(a[1]); close(b[0]); close(b[1]);
     close(c[0]); close(c[1]);
     pthread_t thread;

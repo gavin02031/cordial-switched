@@ -9,6 +9,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "android_log_compat.h"
+
+#ifdef __SWITCH__
+#include <switch.h>
+#endif
+
 enum {
     ALOOPER_ALLOW_NON_CALLBACKS = 1,
     ALOOPER_EVENT_INPUT = 1,
@@ -176,6 +182,50 @@ static int android_events(short revents)
     return events;
 }
 
+// The one place the looper blocks. The guard below exists because two
+// silent wedges are possible here and neither may ship:
+//
+// 1. libnx poll() (nx/source/runtime/devices/socket.c:473) multiplexes
+//    ONLY registered BSD sockets: _socketGetFd fails for any other fd
+//    and the call returns -1, which would read here as an eternal
+//    ALOOPER_POLL_ERROR storm. Morrow currently produces no socket-backed
+//    guest fds (eventfd/timerfd/epoll are fail-closed refusals), so a
+//    Switch-side wait over registered fds is journaled and refused until
+//    a real Horizon wait primitive backs it (event-waiting-design.md).
+//
+// 2. ALooper_pollOnce(-1) with zero registered fds blocks until
+//    ALooper_wake, but no ALooper_wake import is bound, so wake can never
+//    arrive: an infinite timeout with nothing to wait on is a guaranteed
+//    permanent wedge on ANY platform. Refuse it, logged, on host too.
+static int morrow_looper_wait(struct pollfd *polls, size_t count,
+                              int timeout_millis)
+{
+    if (count == 0 && timeout_millis < 0) {
+        cordial_android_log_write(6, "looper",
+            "looper_wait refused reason=infinite_timeout_no_fds_no_wake");
+        errno = EINVAL;
+        return -1;
+    }
+#ifdef __SWITCH__
+    (void)polls; // No fd can be multiplexed on Horizon yet; see above.
+    if (count == 0) {
+        if (timeout_millis > 0)
+            svcSleepThread((uint64_t)timeout_millis * 1000000ULL);
+        return 0;
+    }
+    static bool logged_once;
+    if (!logged_once) {
+        logged_once = true;
+        cordial_android_log_write(6, "looper",
+            "looper_wait refused reason=no_horizon_multiplex fds_present=1");
+    }
+    errno = ENOSYS;
+    return -1;
+#else
+    return poll(polls, count, timeout_millis);
+#endif
+}
+
 static int looper_poll_once(int timeout_millis, int *out_fd,
                             int *out_events, void **out_data)
 {
@@ -195,7 +245,7 @@ static int looper_poll_once(int timeout_millis, int *out_fd,
         polls[i] = (struct pollfd){snapshots[i].fd,
                                     poll_request(snapshots[i].events), 0};
     }
-    const int ready = poll(polls, count, timeout_millis);
+    const int ready = morrow_looper_wait(polls, count, timeout_millis);
     if (ready == 0) return ALOOPER_POLL_TIMEOUT;
     if (ready < 0) return errno == EINTR ? ALOOPER_POLL_WAKE : ALOOPER_POLL_ERROR;
 
