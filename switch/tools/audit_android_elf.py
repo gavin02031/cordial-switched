@@ -309,7 +309,8 @@ def host_provider_coverage(imports):
     sources = sorted(source.glob('android_*_compat.c'))
     sources.extend(source / name for name in (
         'android_import_resolver.c', 'android_arm64_tcb_shadow.c',
-        'engine_tls_scratch.c', 'engine_module_registry.c'))
+        'android_virtual_fd.c', 'engine_tls_scratch.c',
+        'engine_module_registry.c'))
     if platform.machine() == 'aarch64':
         sources.append(source / 'android_bionic_setjmp.s')
     with tempfile.TemporaryDirectory() as tmp:
