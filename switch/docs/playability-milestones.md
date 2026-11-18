@@ -15,6 +15,15 @@ engine code or graphics calls executed. The first required missing name is fchow
 | E | Working engine authentication, with a supported Quick Login flow if available | Not implemented |
 | F / v1.0 | Join a game and demonstrate playable input, rendering and continued execution | Not reached |
 
+The 0.99.4 console preflight reported **629 total import lookups**, **562
+resolved** and **67 missing** (two weak references and 65 required relocation
+sites). Its strict pass stopped at `geteuid@LIBC`, with two weak `dyninit`
+boundary symbols left unresolved. This is a historical **target-observed**
+result, not a prediction of the current build. The same report indicated that
+the `dyninit` section had not been verified, no initializer ran and no guest
+engine or graphics code executed. Treat a later diagnostic as a new measurement;
+do not convert the 65 relocation sites into a distinct-symbol count.
+
 ## Offline audit
 
 Keep the user-supplied ARM64 library outside Git and public Actions artifacts.
@@ -142,6 +151,31 @@ allows linking. FAT/exFAT ownership policy needs explicit descriptor and request
 validation. Unsupported process creation must report failure; memory mapping,
 threading, readiness and clocks need functional implementations. Neither a
 successful import audit nor a fail-returning function proves an engine can boot.
+
+### Explicit process-model decisions
+
+The process compatibility provider resolves the versioned `LIBC` imports below
+without claiming Horizon implements Linux process features. These are failure
+policies, **not functional replacements**; guest code requesting them may still
+refuse to initialise. The host-side staging build uses actual host UID/parent
+IDs; Horizon returns `ENOSYS` for those queries instead of inventing a sandbox
+identity that disagrees with file ownership and permissions.
+
+| Bionic imports | Horizon policy | Reason |
+| --- | --- | --- |
+| `getuid`, `geteuid`, `getppid` | Error sentinel with `ENOSYS` | No verified Android guest user or parent process |
+| `fork` | `-1`, `ENOSYS` | No guest child-process model |
+| `execv`, `execve` | `-1`, `ENOSYS` | No guest process-image replacement |
+| `waitpid` | `-1`, `ENOSYS` | No guest process to reap |
+| `system` | `0` only for `NULL`; otherwise `-1`, `ENOSYS` | No command interpreter |
+| `ptrace` | `-1`, `ENOSYS` | No guest tracing permission or target process |
+| `__register_atfork` | Return error number `ENOSYS` | Cannot promise DSO-scoped fork callbacks |
+
+The separate `getpid` and `gettid` providers are unchanged. Unit tests ensure
+no actual child is created or command executed, reject wrong symbol versions,
+and verify desktop identity forwarding. An actual Horizon return has not been
+measured. The relocator can now resolve these names, but resolving a name is
+not evidence that its caller can continue after a genuine `ENOSYS` result.
 
 The Horizon target has a **synthetic-only constructor run controller**, not
 a live guest constructor runner. Its callback-gated ordering requires durable

@@ -1385,3 +1385,20 @@ whether a worker observed the whole 16 KiB guard unmapped and whether joining
 released its reservation. The report also records the preview version and,
 for Git builds, its source revision. See the [playability milestones](docs/playability-milestones.md)
 for the engine import audit and the evidence still needed for gameplay.
+
+### Explicit process policy in preview 0.99.6
+
+The v0.99.4 console diagnostic recorded 65 required missing relocation sites,
+with `geteuid@LIBC` first in the strict pass. This preview adds a separately
+tested provider for ten process-related import names. On Horizon, user/parent
+identity queries return `ENOSYS` rather than inventing a real Android app UID;
+fork, process replacement, waiting, tracing and command execution also fail
+explicitly. A `system(NULL)` query correctly reports no command interpreter.
+The versioned `__register_atfork` call reports a registration error rather than
+losing callbacks after pretending success. Host builds forward identity queries
+to their genuine operating system.
+
+This makes the names eligible for relocation, **not** the missing process
+semantics. Host tests cover policy and the staged `geteuid` import; the full
+current Horizon import inventory and engine execution still need a new verified
+runtime observation. The 0.99.6 preview is not a playable Roblox release.

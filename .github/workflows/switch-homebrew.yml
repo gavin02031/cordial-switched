@@ -87,6 +87,7 @@ jobs:
             switch/source/android_egl_gles_compat.c \
             switch/source/android_dl_compat.c \
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
+            switch/source/android_process_compat.c \
             switch/source/android_wchar_compat.c \
             switch/source/android_socket_compat.c \
             switch/source/android_file_compat.c switch/source/android_mapping_compat.c \
@@ -217,6 +218,13 @@ jobs:
             switch/source/android_fortify_compat.c \
             -lm -o /tmp/cordial-android-platform-test
           /tmp/cordial-android-platform-test
+      - name: Test explicit Bionic process policy and unsupported operations
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_process_compat_test.c \
+            switch/source/android_process_compat.c \
+            -o /tmp/morrow-process-compat-test
+          /tmp/morrow-process-compat-test
       - name: Test guest anonymous data mappings and page permissions
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source switch/tests/android_mapping_compat_test.c switch/source/android_mapping_compat.c -pthread -o /tmp/morrow-mapping-test

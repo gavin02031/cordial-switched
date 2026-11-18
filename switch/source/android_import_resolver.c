@@ -15,6 +15,7 @@
 #include "android_math_compat.h"
 #include "android_jump_compat.h"
 #include "android_libc_compat.h"
+#include "android_process_compat.h"
 #include "android_wchar_compat.h"
 #include "android_socket_compat.h"
 #include "android_file_compat.h"
@@ -50,6 +51,7 @@ bool android_import_resolve(const char *name, const char *version,
            android_math_compat_resolve(name, version, library, address) ||
            android_jump_compat_resolve(name, version, library, address) ||
            android_libc_compat_resolve(name, version, library, address) ||
+           android_process_compat_resolve(name, version, library, address) ||
            android_wchar_compat_resolve(name, version, library, address) ||
            android_socket_compat_resolve(name, version, library, address) ||
            android_file_compat_resolve(name, version, library, address) ||

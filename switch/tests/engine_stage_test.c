@@ -962,6 +962,19 @@ int main(void)
     assert(strstr(cxa_trace, "supported_imports=1"));
     assert(strstr(cxa_trace, "engine_executed=no"));
 
+    // The 0.99.4 console audit's first required missing relocation was
+    // geteuid@LIBC. Import resolution now exposes an explicit process-policy
+    // function, which reports ENOSYS on Horizon instead of inventing a UID.
+    version_fixture(bytes);
+    memset(bytes + 0x301, 0, 14);
+    memcpy(bytes + 0x301, "geteuid", sizeof("geteuid"));
+    EngineBootReport process_boot;
+    char process_trace[4096];
+    boot_fixture(bytes, sizeof(bytes), &process_boot, process_trace, sizeof(process_trace));
+    assert(process_boot.stage_status == ENGINE_STAGE_PREPARED);
+    assert(strstr(process_trace, "supported_imports=1"));
+    assert(strstr(process_trace, "engine_executed=no"));
+
     // ALooper imports have no LIBC version: the Android NDK owns their ABI,
     // and the full staging audit binds the real poll/callback adapter.
     symbol_fixture(bytes, 1025, false);
