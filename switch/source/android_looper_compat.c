@@ -9,7 +9,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "android_eventfd_compat.h"
 #include "android_log_compat.h"
+
+#include <time.h>
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -206,8 +209,62 @@ static int morrow_looper_wait(struct pollfd *polls, size_t count,
         errno = EINVAL;
         return -1;
     }
+    bool any_virtual = false, any_host = false;
+    for (size_t i = 0; i < count; i++) {
+        if (polls[i].fd < 0) continue; // poll ignores negative fds
+        if (android_eventfd_is_virtual(polls[i].fd)) any_virtual = true;
+        else any_host = true;
+    }
+    if (any_virtual && any_host) {
+        // Multiplexing virtual and host descriptors in one wait is not
+        // implemented; refuse loudly rather than half-wait.
+        static bool logged_mix;
+        if (!logged_mix) {
+            logged_mix = true;
+            cordial_android_log_write(6, "looper",
+                "looper_wait refused reason=mixed_virtual_and_host_fds");
+        }
+        errno = ENOSYS;
+        return -1;
+    }
+    if (any_virtual) {
+        // Morrow-virtual descriptors: readiness comes from the objects,
+        // identical on host and Horizon; blocking uses the shared change
+        // generation. EPOLLIN/EPOLLOUT values match POLLIN/POLLOUT, but
+        // map explicitly so the coincidence is not load-bearing.
+        struct timespec start;
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        uint64_t since = android_virtual_generation();
+        for (;;) {
+            int ready = 0;
+            for (size_t i = 0; i < count; i++) {
+                polls[i].revents = 0;
+                if (polls[i].fd < 0) continue;
+                uint32_t live = 0;
+                if (!android_eventfd_poll_readiness(polls[i].fd, &live))
+                    continue;
+                short revents = 0;
+                if (live & 0x001) revents |= POLLIN;
+                if (live & 0x004) revents |= POLLOUT;
+                polls[i].revents = revents & (polls[i].events |
+                                              POLLERR | POLLHUP);
+                if (polls[i].revents) ready++;
+            }
+            if (ready > 0 || timeout_millis == 0) return ready;
+            int remaining = timeout_millis;
+            if (timeout_millis > 0) {
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                const long elapsed_ms =
+                    (now.tv_sec - start.tv_sec) * 1000L +
+                    (now.tv_nsec - start.tv_nsec) / 1000000L;
+                remaining = timeout_millis - (int)elapsed_ms;
+                if (remaining <= 0) return 0;
+            }
+            since = android_virtual_wait_change(since, remaining);
+        }
+    }
 #ifdef __SWITCH__
-    (void)polls; // No fd can be multiplexed on Horizon yet; see above.
     if (count == 0) {
         if (timeout_millis > 0)
             svcSleepThread((uint64_t)timeout_millis * 1000000ULL);

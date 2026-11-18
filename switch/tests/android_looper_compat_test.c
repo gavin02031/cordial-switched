@@ -6,6 +6,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "android_eventfd_compat.h"
 #include "android_looper_compat.h"
 
 typedef void *(*Prepare)(int);
@@ -107,6 +108,29 @@ int main(void)
     assert(poll_once(-1, NULL, NULL, NULL) == -4);
     // No registered fds + bounded timeout is a pure sleep, then timeout.
     assert(poll_once(5, NULL, NULL, NULL) == -3);
+
+    // Morrow-virtual fds (eventfd) work through the readiness path on
+    // every platform; host poll would only POLLNVAL them.
+    int vfd = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    assert(vfd >= 0);
+    assert(add_fd(looper, vfd, 88, 1, NULL, &callbacks) == 1);
+    assert(poll_once(0, NULL, NULL, NULL) == -3); // nothing written yet
+    uint64_t one = 1;
+    assert(android_eventfd_write(vfd, &one, 8) == 8);
+    int v_fd = -1, v_events = -1;
+    void *v_data = NULL;
+    assert(poll_once(25, &v_fd, &v_events, &v_data) == 88);
+    assert(v_fd == vfd && (v_events & 1) && v_data == &callbacks);
+    // Drained: back to timeout.
+    assert(android_eventfd_read(vfd, &one, 8) == 8);
+    assert(poll_once(0, NULL, NULL, NULL) == -3);
+    // Mixing virtual and host fds in one looper refuses, journaled.
+    assert(pipe(a) == 0);
+    assert(add_fd(looper, a[0], 90, 1, on_fd, &callbacks) == 1);
+    assert(poll_once(0, NULL, NULL, NULL) == -4);
+    assert(remove_fd(looper, a[0]) == 1);
+    assert(remove_fd(looper, vfd) == 1);
+    assert(android_eventfd_close(vfd) == 0);
 
     close(a[0]); close(a[1]); close(b[0]); close(b[1]);
     close(c[0]); close(c[1]);

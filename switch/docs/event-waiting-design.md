@@ -4,9 +4,12 @@ Status: constraints verified against source (2026-11-18). eventfd is a
 working Morrow-virtual object and epoll_create/create1/ctl/wait/close now
 work over those virtual objects (android_epoll_compat): same code on host
 and Horizon, readiness recomputed live at every wake, blocking waits on a
-shared change generation instead of spinning. timerfd remains a
-fail-closed refusal, and ALooper refuses the two wedge shapes this
-document identifies instead of spinning or sleeping forever.
+shared change generation instead of spinning. ALooper waits over
+Morrow-virtual fds through the same readiness path on every platform;
+host-fd sets still use host poll on host builds and stay refused on
+Horizon, and a mixed set refuses rather than half-waits. timerfd remains
+a fail-closed refusal, and the zero-fd infinite-timeout guard stands
+(this ELF imports no ALooper_wake).
 
 Documented epoll subset boundaries (all refusals are deliberate):
 watches accept only Morrow-virtual descriptors (others fail EPERM, the
