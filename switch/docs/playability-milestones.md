@@ -385,17 +385,21 @@ execution claim:
   whatever Horizon SVC shares that number, with guest arguments - the
   mapping probe failure on v0.99.4 may already be one of these firing.
 - 6 sites (0x5a7aa34-0x5a7d060) derive x8 at runtime through
-  EOR/LSR/SXTW chains fed by stack slots - the classic shape of
-  obfuscated syscall stubs used by anti-tamper code (INFERRED; no
-  confirmation which component emits them). Their syscall numbers are
-  unknowable statically by construction.
+  EOR/LSR/SXTW chains fed by stack slots, so their syscall numbers are
+  unknowable statically. The pattern is consistent with obfuscated
+  syscall stubs of the kind protection toolchains emit, but computed
+  numbers alone do not establish what component emits them or why
+  (INFERRED, unconfirmed).
 - 3 sites share that cluster's address range but match neither decoder.
 
 Handling decision stands: no guest instruction patching or hooking
-(repo rules), and patching anti-tamper code would trip integrity checks
-anyway. The honest instrument is what we built: if reachable code hits
-these sites on a console run, the resulting Horizon SVC misfire raises
-an exception the handler journals, and the refusal log shows which
-import surface led there. The 117 additional SVC #0 byte patterns the
-scanner finds in executable segments outside .text are literal-pool
-data, not instructions, and remain excluded from the count.
+(repo rules). Whether any of these sites is reachable from the JNI
+startup path is unproven, and nothing here establishes what caused the
+v0.99.4 mapping-probe failure - a raw SVC misfire is one hypothesis
+among several. Evidence must come from a console run: if reachable code
+hits such a site and the resulting fault reaches the handler, the
+exception journal records it, though the handler's coverage of faults
+from dynamically mapped code is known to be best-effort. The 117
+additional SVC #0 byte patterns the scanner finds in executable
+segments outside .text are literal-pool data, not instructions, and
+remain excluded from the count.
