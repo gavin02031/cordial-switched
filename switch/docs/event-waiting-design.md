@@ -23,15 +23,20 @@ Known partial corners, by policy refused rather than faked:
 - timerfd intervals are honored at nanosecond resolution with no
   minimum-period floor.
 - EPOLLEXCLUSIVE is refused with EINVAL on both ADD and MOD (MOD is the
-  kernel's own rule; on ADD the exclusive-wakeup distribution is not
-  implemented, so it is refused rather than silently broadcast).
-Validation follows fs/eventpoll.c (Linux v6.12), checked line by line:
-no generic event-mask validation (unknown bits such as EPOLLRDHUP are
-accepted, stored, and never fire for these object kinds), EPERM for
-targets without a poll method, any negative epoll_wait timeout waits
-forever, EPOLLONESHOT disarms on report and MOD re-arms, and closing a
-watched descriptor drops its watches at close time
-(eventpoll_release_file) so a later DEL fails ENOENT.
+  kernel's own rule; on ADD the kernel accepts it - verified by
+  differential syscall test on Linux 6.1 - but the exclusive-wakeup
+  distribution is not implemented, so it is refused rather than
+  silently broadcast).
+Validation follows fs/eventpoll.c (Linux v6.12), checked line by line,
+with every error-code claim confirmed by differential syscall tests on
+host Linux 6.1: no generic event-mask validation (unknown bits such as
+EPOLLRDHUP are accepted, stored, and never fire for these object
+kinds), EPERM for open-but-unpollable targets, EBADF for any ctl op on
+a closed descriptor number (fd validation precedes the watch lookup, so
+teardown-then-DEL is EBADF, not ENOENT), any negative epoll_wait
+timeout waits forever, EPOLLONESHOT disarms on report and MOD re-arms,
+and closing a watched descriptor drops its watches at close time
+(eventpoll_release_file).
 All of the above is host-tested only; no console run has observed any
 of it yet, and host timing windows say nothing about console timing.
 

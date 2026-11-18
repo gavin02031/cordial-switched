@@ -16,19 +16,23 @@
 //     (EPOLLPRI, EPOLLRDHUP, ...) are accepted, stored, and simply never
 //     fire for our object kinds, so they are accepted here too;
 //   - EPOLLEXCLUSIVE is refused with EINVAL on both ADD and MOD: MOD is
-//     exactly the kernel's rule, and on ADD the exclusive-wakeup
-//     distribution is not implemented, so it is refused explicitly
-//     rather than accepted and silently broadcast;
-//   - targets must be Morrow-virtual descriptors; a host fd or anything
-//     else fails EPERM, as Linux does for fds without a poll method -
-//     never silently level-poll a socket or file;
+//     exactly the kernel's rule, and on ADD the kernel accepts it but
+//     the exclusive-wakeup distribution is not implemented, so it is
+//     refused explicitly rather than accepted and silently broadcast
+//     (differential-tested against Linux 6.1);
+//   - targets must be Morrow-virtual descriptors; a dead virtual number
+//     (in-range but closed) fails EBADF exactly as Linux fd validation
+//     does, and a foreign number fails EPERM, as Linux does for open
+//     files without a poll method - never silently level-poll a socket
+//     or file;
 //   - edge-triggered watches report only on a not-ready -> ready
 //     transition of the watched set, per Linux;
 //   - readiness is recomputed from the live objects on every wake, so a
 //     descriptor drained by another thread is never reported from stale
 //     state; closing a watched descriptor drops its watches at close
 //     time (Linux file-description teardown via eventpoll_release_file),
-//     after which DEL fails ENOENT.
+//     after which any ctl on the dead number fails EBADF, as the
+//     kernel's fd validation does (differential-tested).
 
 #define EPOLLIN_V     0x001u
 #define EPOLLOUT_V    0x004u
@@ -158,6 +162,21 @@ int android_epoll_ctl(int epfd, int operation, int fd,
         return -1;
     }
     if (operation == 2) { // DEL: the event argument is ignored (Linux >= 2.6.9)
+        // Kernel ordering, differential-tested on Linux 6.1: a closed
+        // descriptor number fails EBADF before any watch lookup; an
+        // open-but-unpollable file fails EPERM; only a live, watchable
+        // target reaches the registry and can yield ENOENT.
+        if (android_virtual_is_virtual(fd)) {
+            if (!android_virtual_readiness_edges(fd, NULL, NULL, NULL)) {
+                pthread_mutex_unlock(&instances_lock);
+                errno = EBADF;
+                return -1;
+            }
+        } else {
+            pthread_mutex_unlock(&instances_lock);
+            errno = EPERM;
+            return -1;
+        }
         for (int i = 0; i < instance->watch_count; i++) {
             if (instance->watches[i].fd == fd) {
                 instance->watch_count--;
@@ -171,13 +190,18 @@ int android_epoll_ctl(int epfd, int operation, int fd,
         errno = ENOENT;
         return -1;
     }
-    // ADD and MOD both require a watchable target. Only Morrow-virtual
-    // descriptors qualify; refusing others keeps silent wrong readiness
-    // off the console.
-    if (!android_virtual_is_virtual(fd) ||
-        !android_virtual_readiness_edges(fd, NULL, NULL, NULL)) {
+    // ADD and MOD both require a watchable target. A dead virtual
+    // number is EBADF (kernel fd validation); a foreign number is EPERM
+    // (kernel's open-but-unpollable rule). Refusing foreign numbers
+    // keeps silent wrong readiness off the console.
+    if (!android_virtual_is_virtual(fd)) {
         pthread_mutex_unlock(&instances_lock);
         errno = EPERM;
+        return -1;
+    }
+    if (!android_virtual_readiness_edges(fd, NULL, NULL, NULL)) {
+        pthread_mutex_unlock(&instances_lock);
+        errno = EBADF;
         return -1;
     }
     int found = -1;

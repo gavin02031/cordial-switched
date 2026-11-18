@@ -225,11 +225,18 @@ int main(void)
         assert(android_epoll_wait(epfd3, &wait_events[0].events,
                                   (uint64_t *)&wait_events[0].data, 4,
                                   0) == 0); // closed object reports nothing
-        // Linux drops the watch at close (eventpoll_release_file), so a
-        // later DEL fails ENOENT rather than succeeding.
+        // Kernel fd validation runs before the watch lookup, so every
+        // ctl op on the dead number fails EBADF (differential-tested on
+        // Linux 6.1: DEL/MOD/ADD after close all give EBADF).
         errno = 0;
         assert(android_epoll_ctl(epfd3, 2, old_fd, 0, 0) == -1 &&
-               errno == ENOENT);
+               errno == EBADF);
+        errno = 0;
+        assert(android_epoll_ctl(epfd3, 3, old_fd, EPOLLIN_T, 0) == -1 &&
+               errno == EBADF);
+        errno = 0;
+        assert(android_epoll_ctl(epfd3, 1, old_fd, EPOLLIN_T, 0) == -1 &&
+               errno == EBADF);
         assert(android_epoll_close(epfd3) == 0);
         assert(android_eventfd_close(new_fd) == 0);
     }
