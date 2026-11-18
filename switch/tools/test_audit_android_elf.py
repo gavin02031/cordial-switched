@@ -67,6 +67,32 @@ class AuditTests(unittest.TestCase):
         # No instruction-sequence identification is a runtime reachability claim.
         self.assertNotIn('executed', entries[0])
 
+    def test_svc_context_classifies_direct_derived_and_unknown(self):
+        data = bytearray(512)
+        data[:6] = b'\x7fELF\x02\x01'
+        struct.pack_into('<H', data, 18, 183)
+        struct.pack_into('<Q', data, 32, 64)
+        struct.pack_into('<HH', data, 54, 56, 1)
+        struct.pack_into('<IIQQQQQQ', data, 64, 1, 5, 128, 4096, 0, 48, 48, 4096)
+        words = (
+            0xd2800008 | (98 << 5), 0xf2800008, 0xd4000001,  # MOVZ+MOVK x8 chain; SVC
+            0x4a090108, 0x93407d08, 0xd4000001,              # EOR w8,w8,w9; SXTW x8,w8; SVC
+            0x14000000, 0xd4000001,                          # branch before SVC: other path's x8
+            0xd4000001,                                      # nothing nearby
+        )
+        struct.pack_into('<9I', data, 128, *words)
+        entries = svc_candidates(data)
+        self.assertEqual(len(entries), 4)
+        contexts = [item['svc_context'] for item in entries]
+        self.assertEqual(contexts[0]['classification'], 'direct_number')
+        self.assertEqual(contexts[0]['number'], 98)
+        self.assertEqual(contexts[0]['name'], 'futex')
+        self.assertEqual(contexts[1], {'classification': 'derived_at_runtime'})
+        self.assertEqual(contexts[2], {'classification': 'unknown'})
+        self.assertEqual(contexts[3], {'classification': 'unknown'})
+        # Classification is static shape, never a reachability claim.
+        self.assertNotIn('executed', entries[0])
+
     def test_text_candidates_exclude_other_executable_segment_bytes(self):
         data = bytearray(512)
         data[:6] = b'\x7fELF\x02\x01'

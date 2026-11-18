@@ -19,6 +19,83 @@ from pathlib import Path
 _LINUX_SYSCALL_HINTS = {98: 'futex', 172: 'getpid', 178: 'gettid'}
 
 
+def _decode_x8_chain(data, instruction_offset, window=8):
+    """Walk back up to `window` instructions decoding a MOVZ/MOVK immediate
+    chain into x8/w8. Returns the derived syscall number, or None when x8 is
+    not statically derivable in the window. Stops at control flow, since
+    scanning across a branch would attribute another path's x8."""
+    value = 0
+    known_mask = 0  # bits pinned by MOVKs later than the MOVZ being sought
+    for back in range(1, window + 1):
+        if instruction_offset - 4 * back < 0:
+            break
+        word = struct.unpack_from('<I', data, instruction_offset - 4 * back)[0]
+        # Stop at (in)direct branches and returns; x8 beyond is another path's.
+        if (word & 0x7c000000) == 0x14000000 or (word & 0xfffffc1f) in (0xd61f0000, 0xd65f0000):
+            break
+        if (word & 31) != 8:
+            continue
+        # Something addresses x8/w8. Only a MOVZ/MOVK immediate chain is
+        # statically decodable; any other write redefines x8, so whatever
+        # came earlier no longer describes the SVC's syscall number. A store
+        # with x8 as source also lands here, which merely costs precision.
+        shift = ((word >> 21) & 3) * 16
+        imm = ((word >> 5) & 0xffff) << shift
+        if (word & 0xffe0001f) in (0xd2800008, 0x52800008):  # MOVZ x8/w8, #imm
+            # MOVZ zeroes the register, then later MOVKs overwrote their
+            # halfwords; combine for the full immediate.
+            return (value & known_mask) | imm
+        if (word & 0xffe0001f) == 0xf2800008:  # MOVK x8
+            known_mask |= 0xffff << shift
+            value = (value & ~(0xffff << shift)) | imm
+            continue
+        break
+    return None
+
+
+def _x8_computed_near(data, instruction_offset, window=4):
+    """True when an instruction within `window` before the SVC writes x8/w8
+    with a data-processing operation (EOR/LSR/SXTW family) rather than an
+    immediate - the shape of runtime-derived syscall numbers, which static
+    analysis cannot resolve to a value."""
+    for back in range(1, window + 1):
+        if instruction_offset - 4 * back < 0:
+            break
+        word = struct.unpack_from('<I', data, instruction_offset - 4 * back)[0]
+        # Same control-flow boundary as the immediate-chain walk: an EOR on
+        # another path says nothing about this SVC.
+        if (word & 0x7c000000) == 0x14000000 or (word & 0xfffffc1f) in (0xd61f0000, 0xd65f0000):
+            break
+        rd = word & 31
+        if rd != 8:
+            continue
+        if (word & 0x1f000000) == 0x0a000000 or (word & 0x1f000000) == 0x4a000000:  # EOR (shifted/reg)
+            return True
+        if (word & 0x7f200000) == 0x1ac02000 or (word & 0x7f200000) == 0x1ac02400:  # LSRV/ASRV
+            return True
+        if (word & 0xff20fc00) == 0x93407c00:  # SXTW
+            return True
+    return False
+
+
+def svc_context(data, instruction_offset):
+    """Classify one SVC #0 site by how x8 is produced nearby.
+    direct_number: statically derivable immediate chain (value included).
+    derived_at_runtime: x8 written by data-processing ops just before the
+    SVC - a runtime-computed syscall number, unresolvable statically.
+    unknown: neither shape found in the scan window."""
+    number = _decode_x8_chain(data, instruction_offset)
+    if number is not None:
+        context = {'classification': 'direct_number', 'number': number}
+        name = _LINUX_SYSCALL_HINTS.get(number)
+        if name:
+            context['name'] = name
+        return context
+    if _x8_computed_near(data, instruction_offset):
+        return {'classification': 'derived_at_runtime'}
+    return {'classification': 'unknown'}
+
+
 def adjacent_syscall_hint(data, instruction_offset):
     if instruction_offset < 4:
         return None
@@ -59,6 +136,9 @@ def svc_candidates(data):
         if hint and any(kind == 1 and flags & 1 and start + 4 <= offset < start + size
                         for kind, flags, start, size in executable_segments):
             entry['syscall_hint'] = hint
+        if any(kind == 1 and flags & 1 and start + 4 <= offset < start + size
+               for kind, flags, start, size in executable_segments):
+            entry['svc_context'] = svc_context(data, offset)
         candidates.append(entry)
     return candidates
 

@@ -372,3 +372,30 @@ what order, without a poll loop flooding the log. Import aliases that share
 a handler (epoll_create/epoll_create1, the sched priority bounds) now log
 their own import names. This turns the next console run into a reachability
 map for the event-loop question instead of a guess.
+
+### Raw syscall sites, mapped (2026-11-18)
+
+The audit tool now classifies every SVC #0 site by how its syscall register
+(x8) is produced, so the risk register no longer treats all 16 .text
+candidates as one unknown. Static decoding only - never a reachability or
+execution claim:
+
+- 7 sites (0x267c9b8-0x267d0f0) materialize x8 from an immediate chain:
+  getpid x3, gettid x2, futex x2. If reached on Horizon, each executes
+  whatever Horizon SVC shares that number, with guest arguments - the
+  mapping probe failure on v0.99.4 may already be one of these firing.
+- 6 sites (0x5a7aa34-0x5a7d060) derive x8 at runtime through
+  EOR/LSR/SXTW chains fed by stack slots - the classic shape of
+  obfuscated syscall stubs used by anti-tamper code (INFERRED; no
+  confirmation which component emits them). Their syscall numbers are
+  unknowable statically by construction.
+- 3 sites share that cluster's address range but match neither decoder.
+
+Handling decision stands: no guest instruction patching or hooking
+(repo rules), and patching anti-tamper code would trip integrity checks
+anyway. The honest instrument is what we built: if reachable code hits
+these sites on a console run, the resulting Horizon SVC misfire raises
+an exception the handler journals, and the refusal log shows which
+import surface led there. The 117 additional SVC #0 byte patterns the
+scanner finds in executable segments outside .text are literal-pool
+data, not instructions, and remain excluded from the count.
