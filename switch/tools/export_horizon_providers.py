@@ -7,6 +7,7 @@ not source-token matches or guessed host function names.
 import argparse
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -121,6 +122,54 @@ def export_from_report(report):
     return manifest, evidence
 
 
+def _stage_write(path, payload):
+    """Write payload to a sibling temp file, fsync, and return its path."""
+    tmp = path.with_name(path.name + '.tmp')
+    with open(tmp, 'wb') as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return tmp
+
+
+def write_pair(manifest, evidence, output, evidence_output):
+    """Write the manifest/evidence pair with staged, fsynced replacements.
+
+    The evidence carries the manifest's SHA-256 so a downstream check can
+    reject a mismatched pair. Two renames are never globally atomic: the
+    manifest is replaced LAST, so the only possible mid-failure state is a
+    new evidence file beside an old manifest, which the hash rejects. If
+    that second rename fails, the new evidence is removed so no apparently
+    valid mismatched pair remains; the pre-existing pair is lost either way,
+    which a missing file signals more honestly than a mismatch.
+    """
+    manifest_bytes = (json.dumps(manifest, indent=2) + '\n').encode('utf-8')
+    evidence = dict(evidence)
+    evidence['manifest_sha256'] = hashlib.sha256(manifest_bytes).hexdigest()
+    evidence_bytes = (json.dumps(evidence, indent=2) + '\n').encode('utf-8')
+    manifest_tmp = _stage_write(output, manifest_bytes)
+    try:
+        evidence_tmp = _stage_write(evidence_output, evidence_bytes)
+        os.replace(evidence_tmp, evidence_output)
+    except BaseException:
+        manifest_tmp.unlink(missing_ok=True)
+        raise
+    try:
+        os.replace(manifest_tmp, output)
+    except BaseException:
+        manifest_tmp.unlink(missing_ok=True)
+        evidence_output.unlink(missing_ok=True)
+        raise
+
+
+def verify_pair(output, evidence_output):
+    """True only when the evidence names the exact manifest bytes present."""
+    manifest_bytes = output.read_bytes()
+    evidence = json.loads(evidence_output.read_text())
+    recorded = evidence.get('manifest_sha256')
+    return bool(recorded) and recorded == hashlib.sha256(manifest_bytes).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('link_report', type=Path)
@@ -130,8 +179,7 @@ def main():
     raw = args.link_report.read_bytes()
     manifest, evidence = export_from_report(raw.decode('utf-8'))
     evidence['link_report_sha256'] = hashlib.sha256(raw).hexdigest()
-    args.output.write_text(json.dumps(manifest, indent=2) + '\n')
-    args.evidence_output.write_text(json.dumps(evidence, indent=2) + '\n')
+    write_pair(manifest, evidence, args.output, args.evidence_output)
     print(f"Observed {len(manifest)} distinct Horizon provider ABI keys "
           f"across {evidence['resolved_import_entries']} resolved lookups")
 

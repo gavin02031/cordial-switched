@@ -146,3 +146,60 @@ class HorizonProviderExportTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class HorizonProviderPairWriteTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        from pathlib import Path
+        self.root = Path(self.dir.name)
+        self.manifest_path = self.root / 'manifest.json'
+        self.evidence_path = self.root / 'evidence.json'
+        self.manifest, self.evidence = export_from_report(BASE_REPORT)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_pair_write_stages_and_hashes(self):
+        import json
+        from export_horizon_providers import write_pair, verify_pair
+        write_pair(self.manifest, self.evidence,
+                   self.manifest_path, self.evidence_path)
+        self.assertTrue(verify_pair(self.manifest_path, self.evidence_path))
+        evidence = json.loads(self.evidence_path.read_text())
+        self.assertIn('manifest_sha256', evidence)
+        self.assertFalse((self.root / 'manifest.json.tmp').exists())
+        self.assertFalse((self.root / 'evidence.json.tmp').exists())
+
+    def test_verify_rejects_tampered_manifest(self):
+        from export_horizon_providers import write_pair, verify_pair
+        write_pair(self.manifest, self.evidence,
+                   self.manifest_path, self.evidence_path)
+        self.manifest_path.write_text(
+            self.manifest_path.read_text().replace('pread', 'pwrite'))
+        self.assertFalse(verify_pair(self.manifest_path, self.evidence_path))
+
+    def test_failed_second_rename_leaves_no_mismatched_pair(self):
+        import os
+        from unittest import mock
+        from export_horizon_providers import write_pair
+        real_replace = os.replace
+        calls = []
+
+        def flaky_replace(src, dst):
+            calls.append(dst)
+            if len(calls) == 2:
+                raise OSError('injected second-rename failure')
+            return real_replace(src, dst)
+
+        with mock.patch('export_horizon_providers.os.replace', flaky_replace):
+            with self.assertRaises(OSError):
+                write_pair(self.manifest, self.evidence,
+                           self.manifest_path, self.evidence_path)
+        # The new manifest never landed and the new evidence was removed:
+        # no apparently valid mismatched pair remains.
+        self.assertFalse(self.manifest_path.exists())
+        self.assertFalse(self.evidence_path.exists())
+        self.assertFalse((self.root / 'manifest.json.tmp').exists())
+        self.assertFalse((self.root / 'evidence.json.tmp').exists())
