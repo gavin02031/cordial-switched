@@ -240,6 +240,33 @@ static void test_fail_closed_misc(void)
     assert(tcsetattr_fn(0, 0, NULL) == -1 && errno == ENOSYS);
 }
 
+static void test_properties_and_locale(void)
+{
+    int (*property_get)(const char *, char *) =
+        (void *)(uintptr_t)resolve("__system_property_get");
+    size_t (*mb_cur_max)(void) =
+        (void *)(uintptr_t)resolve("__ctype_get_mb_cur_max");
+    char value[64];
+    memset(value, 'x', sizeof(value));
+    int before = captured_count;
+    // Bionic's not-found answer: empty value, zero return, no errno.
+    assert(property_get("ro.build.version.sdk", value) == 0);
+    assert(value[0] == '\0');
+    assert(captured_count == before + 1);
+    assert(captured_priority == 4);
+    assert(strcmp(captured_tag, "properties") == 0);
+    assert(strstr(captured_message, "ro.build.version.sdk"));
+    // A repeated name is served without another log line.
+    assert(property_get("ro.build.version.sdk", value) == 0);
+    assert(captured_count == before + 1);
+    assert(property_get("ro.product.model", value) == 0);
+    assert(captured_count == before + 2);
+    assert(property_get(NULL, value) == 0);
+    assert(property_get("ro.serialno", NULL) == 0);
+    // Bionic's C.UTF-8 default: four-byte multibyte maximum.
+    assert(mb_cur_max() == 4);
+}
+
 int main(void)
 {
     android_log_compat_set_sink(capture_sink, NULL);
@@ -250,8 +277,10 @@ int main(void)
     test_fail_closed_pthread_policy();
     test_fail_closed_descriptors();
     test_fail_closed_misc();
+    test_properties_and_locale();
     const char *names[] = {
-        "android_set_abort_message", "openlog", "syslog", "closelog",
+        "android_set_abort_message", "__system_property_get",
+        "__ctype_get_mb_cur_max", "openlog", "syslog", "closelog",
         "sigaction", "signal", "raise", "pthread_sigmask", "sigaltstack",
         "sched_get_priority_max", "sched_get_priority_min", "sched_getparam",
         "sched_getscheduler", "sched_setscheduler", "sched_getcpu",

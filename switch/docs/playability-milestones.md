@@ -322,3 +322,22 @@ is the 91 host-disabled EGL/GLES2 names, `setjmp`/`longjmp` (target ARM64
 bridge), and five genuinely outstanding required imports:
 `__ctype_get_mb_cur_max`, `__system_property_get`, `mallinfo`, `sysinfo` and
 `uname`. None of the registry or walk has run on a console.
+
+### System properties and locale width (2026-11-18)
+
+`__system_property_get` now resolves with bionic's exact not-found answer -
+empty value, zero return, per libc/bionic/system_properties.cpp - and every
+distinct queried name is logged once to the diagnostic sink. No property
+values are fabricated: one console run now records precisely which
+properties the engine reads, and that evidence, not a guess, will define the
+presented-property table. `__ctype_get_mb_cur_max` returns 4, bionic's
+C.UTF-8 default (libc/bionic/locale.cpp), which is also the UTF-8 contract
+the wchar adapter already implements.
+
+Host audit: 480 of 576 required imports resolve. Genuinely outstanding are
+`mallinfo` (by-value return cannot fail closed, and the guest statically
+links its own allocator, so any answer would describe the wrong heap),
+`sysinfo` and `uname` (both need a documented presented-environment
+decision; `sysinfo` can source real Horizon memory totals, `uname` needs an
+honest identity the engine's gates accept). None of this has run on a
+console.

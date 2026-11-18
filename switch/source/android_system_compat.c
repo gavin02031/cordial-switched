@@ -23,6 +23,49 @@ static char abort_message[512];
 static char syslog_identity[64];
 static bool syslog_open;
 
+// Bounded set of system-property names the guest has asked about, so one
+// console run records exactly which properties the engine reads. Values are
+// never fabricated: every query gets bionic's not-found answer until a
+// documented presented-property table exists, and this log is the evidence
+// for what belongs in it.
+enum { PROPERTY_LOG_MAX = 64, PROPERTY_NAME_BYTES = 96 };
+static char property_names_seen[PROPERTY_LOG_MAX][PROPERTY_NAME_BYTES];
+static unsigned property_names_count;
+
+static void note_property_name(const char *name)
+{
+    for (unsigned i = 0; i < property_names_count; i++) {
+        if (!strcmp(property_names_seen[i], name)) return;
+    }
+    if (property_names_count >= PROPERTY_LOG_MAX) return;
+    snprintf(property_names_seen[property_names_count],
+             PROPERTY_NAME_BYTES, "%s", name);
+    property_names_count++;
+    char message[128];
+    snprintf(message, sizeof(message), "system_property_read name=%s", name);
+    cordial_android_log_write(4, "properties", message);
+}
+
+// Bionic's __system_property_get answers a missing property with an empty
+// value and a zero return (libc/bionic/system_properties.cpp). Until the
+// presented environment's properties are documented, every name is missing.
+static int guest_system_property_get(const char *name, char *value)
+{
+    if (!name || !value) return 0;
+    note_property_name(name);
+    value[0] = '\0';
+    return 0;
+}
+
+// Bionic's current locale is C.UTF-8 unless a program replaces it, and its
+// multibyte maximum is 4 (libc/bionic/locale.cpp). That is also exactly the
+// UTF-8 contract android_wchar_compat implements, so 4 is the true answer
+// for the environment Morrow presents. Revisit if setlocale ever exists.
+static size_t guest_ctype_get_mb_cur_max(void)
+{
+    return 4;
+}
+
 void android_set_abort_message(const char *message)
 {
     if (!message) {
@@ -384,6 +427,8 @@ bool android_system_compat_resolve(const char *name, const char *version,
 #define MAP_GUEST(symbol, target) \
     if (!strcmp(name, symbol)) *address = (uint64_t)(uintptr_t)&target; else
     MAP_GUEST("android_set_abort_message", android_set_abort_message)
+    MAP_GUEST("__system_property_get", guest_system_property_get)
+    MAP_GUEST("__ctype_get_mb_cur_max", guest_ctype_get_mb_cur_max)
     MAP_GUEST("openlog", guest_openlog)
     MAP_GUEST("syslog", guest_syslog)
     MAP_GUEST("closelog", guest_closelog)
