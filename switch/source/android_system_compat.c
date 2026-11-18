@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "android_log_compat.h"
+#include "android_epoll_compat.h"
 #include "android_eventfd_compat.h"
 #include "android_property_compat.h"
 
@@ -439,32 +440,53 @@ static int guest_timerfd_settime(int fd, int flags, const void *next, void *old)
 // entry point the guest actually called, not a shared helper's name.
 static int guest_epoll_create(int size)
 {
-    (void)size;
-    return refuse_logged("epoll_create");
+    if (size <= 0) { errno = EINVAL; return -1; } // Linux rejects size <= 0
+    return android_epoll_create();
 }
 
 static int guest_epoll_create1(int flags)
 {
-    (void)flags;
-    return refuse_logged("epoll_create1");
+    // EPOLL_CLOEXEC is bionic's O_CLOEXEC; accepted as a no-op (no exec on
+    // Horizon), anything else is rejected exactly as Linux does.
+    if (flags & ~0x80000) { errno = EINVAL; return -1; }
+    return android_epoll_create();
 }
+
+// Bionic aarch64 struct epoll_event: u32 events at 0, 8-byte data at 8,
+// 16 bytes total, unpacked (bits/epoll_event.h - EPOLL_PACKED is x86_64
+// only). Verified against aosp-mirror platform_bionic, 2026-11-18.
+typedef struct {
+    uint32_t events;
+    uint32_t padding;
+    uint64_t data;
+} GuestEpollEvent;
+_Static_assert(sizeof(GuestEpollEvent) == 16, "bionic aarch64 epoll_event");
 
 static int guest_epoll_ctl(int epfd, int operation, int fd, void *event)
 {
-    (void)epfd;
-    (void)operation;
-    (void)fd;
-    (void)event;
-    return refuse_logged(__func__);
+    if (operation != 2 && !event) { errno = EFAULT; return -1; }
+    const GuestEpollEvent *guest = event;
+    return android_epoll_ctl(epfd, operation, fd,
+                             guest ? guest->events : 0,
+                             guest ? guest->data : 0);
 }
 
 static int guest_epoll_wait(int epfd, void *events, int count, int timeout)
 {
-    (void)epfd;
-    (void)events;
-    (void)count;
-    (void)timeout;
-    return refuse_logged(__func__);
+    if (count > 0 && !events) { errno = EFAULT; return -1; }
+    GuestEpollEvent *guest = events;
+    uint32_t ready_events[64];
+    uint64_t ready_data[64];
+    const int bounded = count > 64 ? 64 : count;
+    if (count > 64) { errno = EINVAL; return -1; } // Morrow cap, documented
+    const int ready = android_epoll_wait(epfd, ready_events, ready_data,
+                                         bounded, timeout);
+    for (int i = 0; i < ready; i++) {
+        guest[i].events = ready_events[i];
+        guest[i].padding = 0;
+        guest[i].data = ready_data[i];
+    }
+    return ready;
 }
 
 static int guest_pipe(int *fds)

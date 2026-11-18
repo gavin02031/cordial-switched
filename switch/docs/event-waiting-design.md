@@ -1,11 +1,19 @@
 # Event waiting on Horizon: grounded constraints and design direction
 
-Status: constraints verified against source (2026-11-18). eventfd is
-now a working Morrow-virtual object (android_eventfd_compat): same code
-on host and Horizon, routed through guest read/write/close. timerfd and
-epoll_* remain fail-closed refusals, and ALooper refuses the two wedge
-shapes this document identifies instead of spinning or sleeping
-forever.
+Status: constraints verified against source (2026-11-18). eventfd is a
+working Morrow-virtual object and epoll_create/create1/ctl/wait/close now
+work over those virtual objects (android_epoll_compat): same code on host
+and Horizon, readiness recomputed live at every wake, blocking waits on a
+shared change generation instead of spinning. timerfd remains a
+fail-closed refusal, and ALooper refuses the two wedge shapes this
+document identifies instead of spinning or sleeping forever.
+
+Documented epoll subset boundaries (all refusals are deliberate):
+watches accept only Morrow-virtual descriptors (others fail EPERM, the
+Linux answer for fds with no poll method); the accepted event mask is
+EPOLLIN/EPOLLOUT/EPOLLERR/EPOLLHUP/EPOLLONESHOT plus EPOLLET, which is
+accepted but reported level-triggered - edge latching is NOT
+implemented; epoll_wait caps maxevents at 64.
 
 ## Verified constraints
 

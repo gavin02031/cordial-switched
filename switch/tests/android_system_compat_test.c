@@ -174,25 +174,26 @@ static void test_fail_closed_descriptors(void)
     int event_fd = eventfd_fn(0, 0);
     assert(event_fd >= 0);
     errno = 0;
-    assert(timerfd_create_fn(1, 0) == -1 && errno == ENOSYS);
-    errno = 0;
-    assert(timerfd_settime_fn(0, 0, NULL, NULL) == -1 && errno == ENOSYS);
-    errno = 0;
-    assert(epoll_create_fn(1) == -1 && errno == ENOSYS);
-    errno = 0;
     int log_before = captured_count;
-    assert(epoll_create1_fn(0) == -1 && errno == ENOSYS);
+    assert(timerfd_create_fn(1, 0) == -1 && errno == ENOSYS);
     // The first refusal of a facility logs its name once.
     assert(captured_count == log_before + 1);
     assert(strstr(captured_message, "unsupported"));
-    assert(strstr(captured_message, "epoll_create1"));
-    assert(epoll_create1_fn(0) == -1);
+    assert(strstr(captured_message, "timerfd_create"));
+    assert(timerfd_create_fn(1, 0) == -1);
     // Retries stay silent so a poll loop cannot flood the journal.
     assert(captured_count == log_before + 1);
     errno = 0;
-    assert(epoll_ctl_fn(0, 0, 0, NULL) == -1 && errno == ENOSYS);
+    assert(timerfd_settime_fn(0, 0, NULL, NULL) == -1 && errno == ENOSYS);
     errno = 0;
-    assert(epoll_wait_fn(0, NULL, 0, 0) == -1 && errno == ENOSYS);
+    // epoll is a working Morrow-virtual object set now, not a refusal.
+    assert(epoll_create_fn(1) >= 0);
+    assert(epoll_create1_fn(0) >= 0);
+    errno = 0;
+    // Bad epoll fds fail EBADF/EFAULT, not ENOSYS.
+    assert(epoll_ctl_fn(0, 1, 0, NULL) == -1 && errno != ENOSYS);
+    errno = 0;
+    assert(epoll_wait_fn(0, NULL, 1, 0) == -1 && errno != ENOSYS);
     errno = 0;
     assert(pipe_fn(NULL) == -1 && errno == ENOSYS);
     errno = 0;

@@ -19,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "android_epoll_compat.h"
 #include "android_eventfd_compat.h"
 #include <sys/time.h>
 #include <wchar.h>
@@ -689,6 +690,10 @@ static ssize_t guest_read(int fd, void *buffer, size_t count)
 {
     if (android_eventfd_is_virtual(fd))
         return android_eventfd_read(fd, buffer, count);
+    if (android_epoll_is_virtual(fd)) {
+        errno = EINVAL; // Linux: read() on an epoll fd
+        return -1;
+    }
     return read(fd, buffer, count);
 }
 
@@ -696,6 +701,10 @@ static ssize_t guest_write(int fd, const void *buffer, size_t count)
 {
     if (android_eventfd_is_virtual(fd))
         return android_eventfd_write(fd, buffer, count);
+    if (android_epoll_is_virtual(fd)) {
+        errno = EINVAL;
+        return -1;
+    }
     return write(fd, buffer, count);
 }
 
@@ -703,6 +712,8 @@ static int guest_close(int fd)
 {
     if (android_eventfd_is_virtual(fd))
         return android_eventfd_close(fd);
+    if (android_epoll_is_virtual(fd))
+        return android_epoll_close(fd);
     return close(fd);
 }
 

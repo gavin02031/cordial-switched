@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 
 // Semantics follow the Linux eventfd(2) contract exactly, because bionic
 // exposes it unchanged and the guest's code was written against it:
@@ -35,6 +36,54 @@ static VirtualEventFd objects[EVENTFD_MAX_OBJECTS];
 static pthread_mutex_t table_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool table_initialized;
 
+// Shared change notification for every Morrow-virtual descriptor. Waiters
+// (epoll_wait today) sleep here instead of spinning.
+static pthread_mutex_t change_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t change_signal = PTHREAD_COND_INITIALIZER;
+static uint64_t change_generation;
+
+void android_virtual_note_change(void)
+{
+    pthread_mutex_lock(&change_lock);
+    change_generation++;
+    pthread_cond_broadcast(&change_signal);
+    pthread_mutex_unlock(&change_lock);
+}
+
+uint64_t android_virtual_generation(void)
+{
+    pthread_mutex_lock(&change_lock);
+    const uint64_t generation = change_generation;
+    pthread_mutex_unlock(&change_lock);
+    return generation;
+}
+
+uint64_t android_virtual_wait_change(uint64_t since, int timeout_millis)
+{
+    pthread_mutex_lock(&change_lock);
+    if (timeout_millis < 0) {
+        while (change_generation <= since)
+            pthread_cond_wait(&change_signal, &change_lock);
+    } else {
+        struct timespec deadline;
+        clock_gettime(CLOCK_REALTIME, &deadline);
+        deadline.tv_sec += timeout_millis / 1000;
+        deadline.tv_nsec += (timeout_millis % 1000) * 1000000L;
+        if (deadline.tv_nsec >= 1000000000L) {
+            deadline.tv_sec++;
+            deadline.tv_nsec -= 1000000000L;
+        }
+        while (change_generation <= since) {
+            if (pthread_cond_timedwait(&change_signal, &change_lock,
+                                       &deadline) == ETIMEDOUT)
+                break;
+        }
+    }
+    const uint64_t generation = change_generation;
+    pthread_mutex_unlock(&change_lock);
+    return generation;
+}
+
 static void table_init(void)
 {
     pthread_mutex_lock(&table_lock);
@@ -55,6 +104,19 @@ static VirtualEventFd *object_for(int fd)
     if (slot < 0 || slot >= EVENTFD_MAX_OBJECTS) return NULL;
     VirtualEventFd *object = &objects[slot];
     return object->in_use ? object : NULL;
+}
+
+bool android_eventfd_poll_readiness(int fd, uint32_t *ready_events)
+{
+    VirtualEventFd *object = object_for(fd);
+    if (!object) return false;
+    pthread_mutex_lock(&object->lock);
+    uint32_t ready = 0;
+    if (object->counter > 0) ready |= 0x001;             // EPOLLIN
+    if (object->counter < EVENTFD_COUNTER_LIMIT) ready |= 0x004; // EPOLLOUT
+    pthread_mutex_unlock(&object->lock);
+    if (ready_events) *ready_events = ready;
+    return true;
 }
 
 int android_eventfd_create(unsigned initial, int flags)
@@ -83,6 +145,7 @@ int android_eventfd_create(unsigned initial, int flags)
     object->counter = initial;
     pthread_mutex_unlock(&object->lock);
     pthread_mutex_unlock(&table_lock);
+    android_virtual_note_change();
     // EFD_CLOEXEC is accepted and intentionally a no-op: the guest cannot
     // exec on Horizon, so there is no exec boundary to close across.
     return EVENTFD_FD_BASE + slot;
@@ -123,6 +186,7 @@ ssize_t android_eventfd_read(int fd, void *buffer, size_t count)
     }
     pthread_cond_signal(&object->writable);
     pthread_mutex_unlock(&object->lock);
+    android_virtual_note_change();
     memcpy(buffer, &value, 8);
     return 8;
 }
@@ -152,6 +216,7 @@ ssize_t android_eventfd_write(int fd, const void *buffer, size_t count)
     object->counter += value;
     pthread_cond_signal(&object->readable);
     pthread_mutex_unlock(&object->lock);
+    android_virtual_note_change();
     return 8;
 }
 
@@ -167,5 +232,6 @@ int android_eventfd_close(int fd)
     pthread_cond_broadcast(&object->readable);
     pthread_cond_broadcast(&object->writable);
     pthread_mutex_unlock(&object->lock);
+    android_virtual_note_change();
     return 0;
 }
