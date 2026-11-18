@@ -1,9 +1,10 @@
 # Event waiting on Horizon: grounded constraints and design direction
 
-Status: constraints verified against source (2026-11-18); the wait
-primitive itself is NOT built yet. The guest's eventfd, timerfd, epoll_*
-imports remain fail-closed refusals, and ALooper now refuses the two
-wedge shapes this document identifies instead of spinning or sleeping
+Status: constraints verified against source (2026-11-18). eventfd is
+now a working Morrow-virtual object (android_eventfd_compat): same code
+on host and Horizon, routed through guest read/write/close. timerfd and
+epoll_* remain fail-closed refusals, and ALooper refuses the two wedge
+shapes this document identifies instead of spinning or sleeping
 forever.
 
 ## Verified constraints
@@ -43,7 +44,10 @@ Horizon. The design that fits the verified constraints:
   readiness predicate and (for blocking waits) a Horizon waitable:
   svcWaitSynchronization can wait on kernel handles (events, timers),
   which covers eventfd (manual-reset event) and timerfd (one-shot or
-  periodic timer) honestly.
+  periodic timer) honestly. The eventfd object landed in-process
+  (pthread conditions over libgloss, which sits on Horizon condvars);
+  lifting it onto a kernel handle is needed only when epoll must wait
+  on it, and is a refinement of the same object, not a redesign.
 - epoll_ctl/epoll_wait then multiplex over those handles with a single
   svcWaitSynchronization call, plus a self-wake handle so epoll_ctl from
   another thread can interrupt a wait in progress (the role epoll's

@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "android_log_compat.h"
+#include "android_eventfd_compat.h"
 #include "android_property_compat.h"
 
 #ifdef __SWITCH__
@@ -413,9 +414,9 @@ static int guest_accept4(int fd, void *address, void *length, int flags)
 
 static int guest_eventfd(unsigned initial, int flags)
 {
-    (void)initial;
-    (void)flags;
-    return refuse_logged(__func__);
+    // Real semantics, Morrow-virtual object: works identically on host and
+    // Horizon, and read/write/close reach it through the libc routing.
+    return android_eventfd_create(initial, flags);
 }
 
 static int guest_timerfd_create(int clock, int flags)

@@ -170,7 +170,9 @@ static void test_fail_closed_descriptors(void)
     errno = 0;
     assert(accept4_fn(0, NULL, NULL, 0) == -1 && errno == ENOSYS);
     errno = 0;
-    assert(eventfd_fn(0, 0) == -1 && errno == ENOSYS);
+    // eventfd is a working Morrow-virtual object now, not a refusal.
+    int event_fd = eventfd_fn(0, 0);
+    assert(event_fd >= 0);
     errno = 0;
     assert(timerfd_create_fn(1, 0) == -1 && errno == ENOSYS);
     errno = 0;

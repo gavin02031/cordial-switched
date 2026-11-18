@@ -110,7 +110,7 @@ jobs:
             switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
             switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
             switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c \
-            switch/source/engine_tls_scratch.c -lm -pthread \
+            switch/source/engine_tls_scratch.c switch/source/android_eventfd_compat.c -lm -pthread \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
       - name: Test strict Android liblog providers
@@ -239,6 +239,7 @@ jobs:
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_file_compat.c \
             switch/source/android_fortify_compat.c \
+            switch/source/android_eventfd_compat.c -pthread \
             -lm -o /tmp/cordial-android-platform-test
           /tmp/cordial-android-platform-test
       - name: Test explicit Bionic process policy and unsupported operations
@@ -255,8 +256,17 @@ jobs:
             switch/source/android_system_compat.c \
             switch/source/android_log_compat.c \
             switch/source/android_property_compat.c \
+            switch/source/android_eventfd_compat.c -pthread \
             -o /tmp/morrow-system-compat-test
           /tmp/morrow-system-compat-test
+      - name: Test Morrow-virtual eventfd semantics and fd routing
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_eventfd_compat_test.c \
+            switch/source/android_eventfd_compat.c \
+            switch/source/android_libc_compat.c -pthread -lm \
+            -o /tmp/morrow-eventfd-test
+          /tmp/morrow-eventfd-test
       - name: Test presented-property table contract
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

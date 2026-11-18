@@ -18,6 +18,8 @@
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "android_eventfd_compat.h"
 #include <sys/time.h>
 #include <wchar.h>
 #include <arpa/inet.h>
@@ -680,6 +682,30 @@ extern char **environ;
 _Static_assert(sizeof(struct option) == 32, "Android LP64 getopt option size");
 _Static_assert(offsetof(struct option, flag) == 16, "Android getopt flag offset");
 
+// Morrow-virtual descriptor routing: guest fds that are not host
+// descriptors (today: eventfd objects) must be intercepted before they
+// reach newlib. Ordinary host fds fall through unchanged.
+static ssize_t guest_read(int fd, void *buffer, size_t count)
+{
+    if (android_eventfd_is_virtual(fd))
+        return android_eventfd_read(fd, buffer, count);
+    return read(fd, buffer, count);
+}
+
+static ssize_t guest_write(int fd, const void *buffer, size_t count)
+{
+    if (android_eventfd_is_virtual(fd))
+        return android_eventfd_write(fd, buffer, count);
+    return write(fd, buffer, count);
+}
+
+static int guest_close(int fd)
+{
+    if (android_eventfd_is_virtual(fd))
+        return android_eventfd_close(fd);
+    return close(fd);
+}
+
 bool android_libc_compat_resolve(const char *name, const char *version,
                                  const char *library, uint64_t *address)
 {
@@ -725,7 +751,9 @@ bool android_libc_compat_resolve(const char *name, const char *version,
 #undef DATA
     // C routines with an equivalent AArch64 calling convention only. Ordinary
     // file descriptors and path strings can use newlib directly; a missing
-    // Android filesystem path still fails normally with ENOENT. Do not extend
+    // Android filesystem path still fails normally with ENOENT. read, write
+    // and close are the exception: they are bound to the routing wrappers
+    // above so Morrow-virtual descriptors never reach newlib. Do not extend
     // this to stat, directory entries, flags or opaque objects without a
     // verified guest/host ABI translation.
 #define MAP_LIBC(symbol) \
@@ -800,9 +828,13 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(readlink)
     MAP_LIBC(mkdir)
     MAP_LIBC(realpath)
-    MAP_LIBC(close)
-    MAP_LIBC(read)
-    MAP_LIBC(write)
+    // read/write/close keep the identical guest/host ABI, but must route
+    // through the Morrow-virtual descriptor table first: an fd handed out
+    // by eventfd() is not a host descriptor, and passing it to newlib
+    // would corrupt the host's fd bookkeeping (EBADF at best).
+    if (!strcmp(name, "close")) *address = (uint64_t)(uintptr_t)&guest_close; else
+    if (!strcmp(name, "read")) *address = (uint64_t)(uintptr_t)&guest_read; else
+    if (!strcmp(name, "write")) *address = (uint64_t)(uintptr_t)&guest_write; else
     MAP_LIBC(fsync)
     MAP_LIBC(strerror)
     MAP_LIBC(clock)
