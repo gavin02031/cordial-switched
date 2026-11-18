@@ -21,9 +21,11 @@ the repo root (the guest ELF is proprietary; pass its path, never commit):
 Expected on a 64-bit Linux host (verified 2026-11-18, host-measured):
 relocation scan complete; 588783 packed, 536 symbol and 0 RELR relocations
 applied; 0 unsupported or TLS relocations; 94 required missing relocations
-over exactly the 93 target-registered names (91 EGL/GLES2 + setjmp/longjmp,
-one bound at two sites) plus the 2 optional dyninit symbols; no other
-missing name. Any other outcome is a pre-console finding: an unexpected
+over exactly the 93 target-registered names (91 EGL/GLES2 + setjmp/longjmp)
+plus the 2 optional dyninit symbols; no other missing name. The 94-vs-93
+delta is longjmp, referenced at two sites (one .rela.plt JUMP_SLOT plus one
+APS2 packed-table entry) - established by relocation tracing, not inferred
+from counts. Any other outcome is a pre-console finding: an unexpected
 missing name means a resolver regression, a nonzero unsupported count means
 a relocation-type gap, and both appear before the console ever boots.
 
