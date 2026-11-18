@@ -134,5 +134,30 @@ durable journal permit entry. Verify on Switch after Milestone A.
 UNKNOWNS: No hardware execution of the new constructor path observed;
 this is a source-level control-flow gap, not proof of a crash.
 
+2026-11-18 03:31 America/Chicago — [HIGH][OBSERVED CI FAILURE / FIX INFERRED]
+New virtual-epoll integration breaks a standalone eventfd test link.
+EVIDENCE: branch head 1ccf18ce6b9277f21e740d18a4e057a77679086d
+("Implement epoll over Morrow-virtual descriptors"); Horizon preview
+https://github.com/gavin02031/cordial-switched/actions/runs/44275831354
+build, arm64-jump, JNI provider and JNI crossbuild jobs succeeded, but
+elf-probe-tests failed. In the android_eventfd_compat_test build,
+switch/source/android_libc_compat.c guest_read, guest_write and guest_close
+reference android_epoll_is_virtual and android_epoll_close, while that test's
+link line includes android_eventfd_compat.c and android_libc_compat.c but
+not android_epoll_compat.c. The linker reports undefined references and
+exits 1. The separate epoll test itself passed.
+BLOCKER: The new libc-to-epoll dependency is absent from at least one
+standalone test link, so the preview workflow is red despite a successful
+NRO build. This is not a Roblox runtime failure.
+PROPOSED FOR FLINT: Update the eventfd test target's link inputs to
+include the epoll implementation and any actual transitive dependencies;
+audit other standalone targets linking android_libc_compat.c for the same
+new requirement. Prefer one explicit shared source-list definition to
+prevent target drift, without weakening -Werror or removing the test.
+SUCCESS: eventfd and epoll host tests both link and pass in CI; all five
+Horizon preview jobs green on the new commit, including the NRO build.
+UNKNOWNS: No runtime Switch test of virtual epoll was observed; supported
+virtual-fd subset and EPOLLET semantics remain documented limitations.
+
 NEXT ENTRY:
 Use a new dated section only when a verified finding improves this queue.
