@@ -8,13 +8,26 @@
 #include <string.h>
 #include <time.h>
 
-// Semantics follow the Linux eventfd(2) contract exactly, because bionic
+// Semantics follow the Linux eventfd(2) contract, because bionic
 // exposes it unchanged and the guest's code was written against it:
 //   - the counter saturates at 2^64 - 2; a write that would exceed it
 //     fails EAGAIN (nonblocking) or blocks;
 //   - a read on a zero counter fails EAGAIN (nonblocking) or blocks;
 //   - EFD_SEMAPHORE reads drain exactly 1; plain reads drain the counter;
-//   - read/write buffers must be 8 bytes; the value 2^64 - 1 is invalid.
+//   - read/write buffers smaller than 8 bytes fail EINVAL and the value
+//     2^64 - 1 is invalid; buffers LARGER than 8 bytes are accepted with
+//     their first 8 bytes used: kernels through 6.1 allow this
+//     (differential-tested on 6.1.189) and the != 8 tightening only
+//     appeared later, so the historical, man-page behavior wins;
+//   - readiness: EPOLLIN when the counter is nonzero, EPOLLOUT while a
+//     write of 1 cannot overflow (counter <= 2^64 - 2), matching
+//     eventfd_poll; the kernel's count == 2^64 - 1 EPOLLERR state is
+//     unreachable from userspace writes, so it is never reported here.
+// One deliberate divergence, by design: Linux leaves a thread blocked
+// in read/write asleep when another thread closes the fd number (the
+// blocked syscall holds its own file reference), potentially forever;
+// Morrow wakes such waiters with EBADF instead, so a close can never
+// wedge a guest thread on a counter that can never move again.
 // Blocking waits use pthread conditions, which libgloss/libsysbase
 // implements over Horizon condvars (devkitPro/newlib libgloss
 // libsysbase/pthread.c), so the same code runs on host and Switch.

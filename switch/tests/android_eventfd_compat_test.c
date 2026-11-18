@@ -66,6 +66,24 @@ int main(void)
     errno = 0;
     assert(android_eventfd_write(fd, &value, 8) == -1 && errno == EINVAL);
 
+    // Buffers larger than 8 bytes are accepted with their first 8 bytes
+    // used: historical kernel and man-page behavior (observed on 6.1;
+    // the != 8 tightening arrived later).
+    char big[16];
+    value = 3;
+    memcpy(big, &value, 8);
+    memset(big + 8, 0xA5, 8);
+    assert(android_eventfd_write(fd, big, 16) == 8);
+    memset(big, 0, sizeof(big));
+    assert(android_eventfd_read(fd, big, 16) == 8);
+    value = 0;
+    memcpy(&value, big, 8);
+    assert(value == 3);
+    errno = 0;
+    assert(android_eventfd_write(fd, big, 4) == -1 && errno == EINVAL);
+    errno = 0;
+    assert(android_eventfd_read(fd, big, 4) == -1 && errno == EINVAL);
+
     // Plain mode drains the whole counter.
     value = 5;
     assert(android_eventfd_write(fd, &value, 8) == 8);

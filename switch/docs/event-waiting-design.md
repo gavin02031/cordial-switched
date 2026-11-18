@@ -17,11 +17,25 @@ implementation; pipe/socketpair/accept4 stay fail-closed.
 Known partial corners, by policy refused rather than faked:
 - TFD_TIMER_CANCEL_ON_SET is not implemented; settime rejects it with
   EINVAL instead of accepting and ignoring it.
-- timerfd EPOLLET follows the Linux edge source (unread count going
-  zero to positive), not one event per firing; extra firings while a
-  count is unread do not re-report.
-- timerfd intervals are honored at nanosecond resolution with no
-  minimum-period floor.
+
+timerfd semantics verified against the Linux reference: EPOLLET follows
+the real edge source (unread count going zero to positive), not one
+event per firing; intervals are honored at nanosecond resolution with
+no minimum-period floor.
+
+eventfd semantics reviewed against fs/eventfd.c (v6.12) with
+differential syscall tests on host Linux 6.1.189: saturation at
+2^64 - 2 with EAGAIN/block, EFD_SEMAPHORE single-decrement reads,
+buffers below 8 bytes EINVAL, value 2^64 - 1 EINVAL, EPOLLOUT while a
+write of 1 cannot overflow. Buffers larger than 8 bytes are accepted
+with their first 8 bytes used - the historical behavior kernels through
+6.1 implement (the != 8 tightening arrived later), so Morrow keeps it.
+The kernel's count == 2^64 - 1 EPOLLERR state is unreachable from
+userspace writes and is never reported. One deliberate divergence:
+Linux leaves a thread blocked in read/write asleep when another thread
+closes the fd number (the blocked syscall holds its own file
+reference); Morrow wakes such waiters with EBADF so a close can never
+wedge a guest thread on a counter that can never move again.
 - EPOLLEXCLUSIVE is refused with EINVAL on both ADD and MOD (MOD is the
   kernel's own rule; on ADD the kernel accepts it - verified by
   differential syscall test on Linux 6.1 - but the exclusive-wakeup
