@@ -17,11 +17,9 @@
 // implements over Horizon condvars (devkitPro/newlib libgloss
 // libsysbase/pthread.c), so the same code runs on host and Switch.
 
-enum {
-    EVENTFD_MAX_OBJECTS = 64,
-    EVENTFD_FD_BASE = 0x3FFD0000,
-    EVENTFD_COUNTER_LIMIT = 0xFFFFFFFFFFFFFFFEULL,
-};
+#define EVENTFD_MAX_OBJECTS 64
+#define EVENTFD_FD_BASE 0x3FFD0000
+#define EVENTFD_COUNTER_LIMIT UINT64_C(0xFFFFFFFFFFFFFFFE)
 
 typedef struct {
     bool in_use;
