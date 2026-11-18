@@ -291,6 +291,21 @@ static bool abort_stage(EngineStage *stage, EngineStageStatus status, const char
     return false;
 }
 
+// A failure AFTER a completed relocation scan keeps the applied counters:
+// they are the diagnostic evidence the audit exists to produce (the console
+// full_audit report prints them). The scratch image is still released, so a
+// failed stage is never mistaken for a usable one.
+static bool fail_stage_after_scan(EngineStage *stage, EngineStageStatus status,
+                                  const char *message)
+{
+    free(stage->image);
+    stage->image = NULL;
+    stage->image_size = 0;
+    stage->status = status;
+    snprintf(stage->detail, sizeof(stage->detail), "%s", message);
+    return false;
+}
+
 void engine_stage_release(EngineStage *stage)
 {
     if (!stage)
@@ -914,13 +929,13 @@ static bool engine_stage_stream_internal(FILE *file, EngineStage *stage,
                  "%u unsupported relocations (%u TLS, %u TLSDESC); %u missing imports.",
                  stage->unsupported_relocations_seen, stage->tls_relocations_seen,
                  stage->tlsdesc_relocations_seen, missing_count);
-        return abort_stage(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION, detail);
+        return fail_stage_after_scan(stage, ENGINE_STAGE_UNSUPPORTED_RELOCATION, detail);
     }
     if (missing_count) {
         char detail[120];
         snprintf(detail, sizeof(detail), "%u unresolved imports; scratch audit only.",
                  missing_count);
-        return abort_stage(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, detail);
+        return fail_stage_after_scan(stage, ENGINE_STAGE_UNRESOLVED_SYMBOL, detail);
     }
     stage->status = ENGINE_STAGE_PREPARED;
     stage->intended_runtime_base = runtime_base;

@@ -3,6 +3,30 @@
 What the next run on Gavin's Switch Lite answers, where the evidence lands,
 and how to read it. Nothing here has executed on hardware yet.
 
+## Pre-console gate (host, already passing)
+
+`switch/tools/host_full_audit.c` runs the real guest ELF through the same
+`engine_stage_stream_audit_at` relocation machinery and the same
+`android_import_resolve` chain the console's full_audit uses - nothing is
+executed; the scratch image stays NX and is discarded. Build and run from
+the repo root (the guest ELF is proprietary; pass its path, never commit):
+
+    PROVIDERS=$(grep -v '^#' switch/source/PROVIDER_SOURCES.txt | sed 's|^|switch/source/|')
+    cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+      switch/tools/host_full_audit.c switch/source/engine_stage.c \
+      switch/source/engine_boot_log.c switch/source/elf_probe.c \
+      $PROVIDERS -lm -pthread -o /tmp/morrow-host-full-audit
+    /tmp/morrow-host-full-audit /path/to/libroblox.so
+
+Expected on a 64-bit Linux host (verified 2026-11-18, host-measured):
+relocation scan complete; 588783 packed, 536 symbol and 0 RELR relocations
+applied; 0 unsupported or TLS relocations; 94 required missing relocations
+over exactly the 93 target-registered names (91 EGL/GLES2 + setjmp/longjmp,
+one bound at two sites) plus the 2 optional dyninit symbols; no other
+missing name. Any other outcome is a pre-console finding: an unexpected
+missing name means a resolver regression, a nonzero unsupported count means
+a relocation-type gap, and both appear before the console ever boots.
+
 ## What to install
 
 The CI "Horizon preview" workflow's `cordial-switched-switch-preview`

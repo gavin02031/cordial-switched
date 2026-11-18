@@ -706,6 +706,23 @@ int main(void)
         assert(!strcmp(stage.first_required_version, "unversioned"));
         assert(!strcmp(stage.first_required_library, "unspecified"));
     }
+    // Audit mode completes the scan before reporting the failure, so the
+    // applied counters survive as diagnostic evidence (the console
+    // full_audit report prints them); the scratch image is still released.
+    symbol_fixture(bytes, 1026, true);
+    add_dynamic(bytes + 0x180, 4, 2, 48); // DT_PLTRELSZ: two entries
+    put64(bytes + 0x240 + 24, 0x1380);    // second entry (file offset): r_offset
+    put64(bytes + 0x240 + 32, 1027);      // R_AARCH64_RELATIVE, symbol 0
+    put64(bytes + 0x240 + 40, 0);         // addend
+    bytes[0x2dc] = 0x12;                  // required import, never resolved
+    assert(!audit_fixture_at(bytes, &stage, future_base, fake_resolver, NULL));
+    assert(stage.status == ENGINE_STAGE_UNRESOLVED_SYMBOL);
+    assert(stage.relocation_scan_complete);
+    assert(stage.required_missing_relocations == 1);
+    assert(stage.rela_applied == 1);
+    assert(stage.symbol_applied == 0);
+    assert(!stage.image);
+    engine_stage_release(&stage);
     // Version metadata is validated before weak fallback as for any import.
     version_fixture(bytes);
     bytes[0x2dc] = 0x22;

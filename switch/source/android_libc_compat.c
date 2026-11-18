@@ -739,6 +739,10 @@ typedef struct {
            usmblks, fsmblks, uordblks, fordblks, keepcost;
 } MorrowBionicMallinfo;
 
+// The guest reads this struct raw; the layout must stay ten 8-byte fields.
+_Static_assert(sizeof(MorrowBionicMallinfo) == 80,
+               "bionic struct mallinfo is ten size_t fields");
+
 static size_t mallinfo_field(long long value)
 {
     // glibc's deprecated mallinfo reports int fields that can wrap negative
