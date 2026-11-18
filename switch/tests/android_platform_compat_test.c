@@ -387,6 +387,13 @@ int main(void)
     errno = 0;
     assert(auxval(3) == 0 && errno == ENOENT); // No host program headers exposed.
     assert(android_pagesize() >= 4096);
+    assert(android_libc_compat_resolve("sysconf", "LIBC", "libc.so", &address));
+    long (*query_system)(int) = (void *)(uintptr_t)address;
+    assert(query_system(0x27) == android_pagesize() && query_system(0x28) == android_pagesize());
+    assert(query_system(0x60) > 0 && query_system(0x61) > 0);
+    long total = query_system(0x62), available = query_system(0x63);
+    assert(total > 0 && available >= 0 && available <= total);
+    assert(query_system(-1) == -1 && errno == EINVAL);
     assert(android_libc_compat_resolve("sched_yield", "LIBC", "libc.so", &address));
     int (*android_yield)(void) = (int (*)(void))(uintptr_t)address;
     assert(android_yield() == 0);

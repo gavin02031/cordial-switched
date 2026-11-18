@@ -176,3 +176,10 @@ numbered link report. The probe uses Morrow-owned memory only. An allocation
 or permission failure is evidence of a target limitation. Host CI tests use
 Linux mappings and observe actual protection faults in child processes.
 Neither those results nor a successful cross-build demonstrates a Roblox frame.
+
+The guest sysconf adapter translates Android's page-size aliases and CPU and
+memory queries. On Horizon it uses the core mask and memory budget available
+to the current process. Unknown queries return EINVAL. A host staging scan of
+the private image identified above resolved 424 distinct imports and missed
+158, including two weak imports. The host disables target-only graphics
+providers. Use the console inventory for milestone A.

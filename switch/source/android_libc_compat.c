@@ -305,6 +305,40 @@ static int android_getpagesize(void)
 #endif
 }
 
+// Query numbers come from Bionic bits/sysconf.h. Newlib and glibc
+// assign different numbers, including to the two page-size aliases.
+static long android_sysconf(int query)
+{
+    enum {
+        PageSize = 0x27, PageSizeAlias = 0x28, ConfiguredCpus = 0x60,
+        OnlineCpus = 0x61, TotalPages = 0x62, AvailablePages = 0x63,
+    };
+    if (query == PageSize || query == PageSizeAlias) return android_getpagesize();
+#ifdef __SWITCH__
+    u64 total, used, mask;
+    if (query == ConfiguredCpus || query == OnlineCpus) {
+        if (R_SUCCEEDED(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)) && mask)
+            return __builtin_popcountll(mask);
+    } else if (query == TotalPages || query == AvailablePages) {
+        if (R_SUCCEEDED(svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0))) {
+            if (query == TotalPages) return (long)(total / android_getpagesize());
+            if (R_SUCCEEDED(svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0)))
+                return (long)((used < total ? total - used : 0) / android_getpagesize());
+        }
+    } else { errno = EINVAL; return -1; }
+    errno = EIO;
+#else
+    switch (query) {
+        case ConfiguredCpus: return sysconf(_SC_NPROCESSORS_CONF);
+        case OnlineCpus: return sysconf(_SC_NPROCESSORS_ONLN);
+        case TotalPages: return sysconf(_SC_PHYS_PAGES);
+        case AvailablePages: return sysconf(_SC_AVPHYS_PAGES);
+        default: errno = EINVAL;
+    }
+#endif
+    return -1;
+}
+
 // Only expose auxiliary entries backed by the guest runtime. Host ELF
 // addresses and CPU feature masks describe the launcher, not this image.
 static pthread_once_t aux_random_once = PTHREAD_ONCE_INIT;
@@ -653,6 +687,8 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         *address = (uint64_t)(uintptr_t)&android_memrchr;
     else if (strcmp(name, "getauxval") == 0)
         *address = (uint64_t)(uintptr_t)&android_getauxval;
+    else if (strcmp(name, "sysconf") == 0)
+        *address = (uint64_t)(uintptr_t)&android_sysconf;
     else if (strcmp(name, "getpagesize") == 0)
         *address = (uint64_t)(uintptr_t)&android_getpagesize;
     else if (strcmp(name, "arc4random_buf") == 0)
