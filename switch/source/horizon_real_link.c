@@ -509,11 +509,13 @@ typedef struct {
 } ConstructorRunContext;
 
 // Gate proof for the constructor runner: the RX mapping is pinned for the
-// process lifetime and the guest main-thread TLS world exists.
+// process lifetime. TLS is no part of the gate: the caller installs the
+// bridge only when the ELF carries a PT_TLS template, and an ELF without
+// TLS has no thread-pointer state to bridge before its constructors run.
 static bool constructor_run_gate(void *context)
 {
     (void)context;
-    return engine_mapping_pinned && engine_main_tls_ready;
+    return engine_mapping_pinned;
 }
 
 static bool constructor_begin(size_t index, uintptr_t target, void *context)
@@ -1330,22 +1332,33 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                  engine_main_tls_ready ? "yes" : "no");
                         uint64_t saved_tpidr = 0;
                         bool bridge_installed = false;
-                        if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
-                                                      "constructors",
-                                                      result->log_path)) {
+                        bool constructors_attempted = false;
+                        bool constructor_marker_cleared = false;
+                        EngineConstructorRunState run_state = {0};
+                        if (!constructors.call_count) {
+                            log_line(log, "constructor_plan_empty=yes");
+                        } else if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
+                                                             "constructors",
+                                                             result->log_path)) {
                             log_line(log, "blocker=crash_journal_not_durable");
-                        } else if (!engine_main_tls_ready) {
-                            log_line(log,
-                                     "constructor_run_blocker=guest_tls_not_ready");
-                            engine_run_journal_finish(ENGINE_REPORT_DIR);
                         } else {
-                            saved_tpidr = engine_guest_tpidr_install(
-                                android_arm64_tcb_shadow_pointer(
-                                    &engine_main_tls.tcb));
-                            bridge_installed = true;
-                            log_line(log, "guest_tpidr_bridge=installed");
+                            constructors_attempted = true;
+                            if (engine_main_tls_ready) {
+                                saved_tpidr = engine_guest_tpidr_install(
+                                    android_arm64_tcb_shadow_pointer(
+                                        &engine_main_tls.tcb));
+                                bridge_installed = true;
+                                log_line(log, "guest_tpidr_bridge=installed");
+                            } else {
+                                // libroblox.so ships no PT_TLS and reads no
+                                // thread-pointer register in its audited
+                                // static code, so constructors run without a
+                                // bridge. Dynamically reached code paths keep
+                                // this a console-validation obligation.
+                                log_line(log,
+                                         "guest_tpidr_bridge=not_needed_no_tls_template");
+                            }
                             ConstructorRunContext ctx = { log };
-                            EngineConstructorRunState run_state = {0};
                             const bool constructors_done =
                                 engine_constructor_run_once(
                                     &constructors, &run_state,
@@ -1356,10 +1369,11 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                      constructors_done ? "yes" : "no");
                             log_line(log, "constructor_run_next_index=%zu",
                                      run_state.next_index);
-                            if (engine_run_journal_finish(ENGINE_REPORT_DIR))
-                                log_line(log,
-                                         "constructor_crash_marker_cleared=yes");
-                            else
+                            constructor_marker_cleared =
+                                engine_run_journal_finish(ENGINE_REPORT_DIR);
+                            log_line(log, "constructor_crash_marker_cleared=%s",
+                                     constructor_marker_cleared ? "yes" : "no");
+                            if (!constructor_marker_cleared)
                                 log_line(log,
                                          "blocker=constructor_crash_marker_stuck");
                             // Even a journal-failed partial run executed
@@ -1367,10 +1381,24 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             constructors_ran =
                                 constructors_done || run_state.next_index != 0;
                         }
+                        // JNI_OnLoad stays closed unless the entry-readiness
+                        // rule proves initialization completed durably; a
+                        // partial run is diagnostics, not readiness.
+                        const bool constructors_ok =
+                            engine_constructor_run_entry_ready(
+                                &constructors, &run_state,
+                                constructors_attempted,
+                                constructor_marker_cleared);
+                        log_line(log, "constructors_ok_for_jni_onload=%s",
+                                 constructors_ok ? "yes" : "no");
                         int32_t version = 0;
                         bool onload_called = false;
                         bool onload_reported = false;
-                        if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
+                        if (!constructors_ok) {
+                            log_line(log, "blocker=constructors_incomplete");
+                            detail(result,
+                                   "Engine blocked: constructors did not complete durably.");
+                        } else if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
                                                       "jni_onload", result->log_path)) {
                             log_line(log, "blocker=crash_journal_not_durable");
                             detail(result, "Engine blocked: cannot save crash marker.");

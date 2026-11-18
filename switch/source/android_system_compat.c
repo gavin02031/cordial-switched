@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "android_log_compat.h"
+#include "android_property_compat.h"
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -32,15 +33,15 @@ static char syslog_identity[64];
 static bool syslog_open;
 
 // Bounded set of system-property names the guest has asked about, so one
-// console run records exactly which properties the engine reads. Values are
-// never fabricated: every query gets bionic's not-found answer until a
-// documented presented-property table exists, and this log is the evidence
-// for what belongs in it.
+// console run records exactly which properties the engine reads. Presented
+// answers live only in the documented table (android_property_compat);
+// anything the table does not cover gets bionic's not-found answer, and this
+// log is the evidence for what belongs in the table.
 enum { PROPERTY_LOG_MAX = 64, PROPERTY_NAME_BYTES = 96 };
 static char property_names_seen[PROPERTY_LOG_MAX][PROPERTY_NAME_BYTES];
 static unsigned property_names_count;
 
-static void note_property_name(const char *name)
+static void note_property_name(const char *name, bool presented)
 {
     for (unsigned i = 0; i < property_names_count; i++) {
         if (!strcmp(property_names_seen[i], name)) return;
@@ -49,20 +50,34 @@ static void note_property_name(const char *name)
     snprintf(property_names_seen[property_names_count],
              PROPERTY_NAME_BYTES, "%s", name);
     property_names_count++;
-    char message[128];
-    snprintf(message, sizeof(message), "system_property_read name=%s", name);
+    char message[160];
+    snprintf(message, sizeof(message), "system_property_read name=%s result=%s",
+             name, presented ? "presented" : "empty");
     cordial_android_log_write(4, "properties", message);
 }
 
 // Bionic's __system_property_get answers a missing property with an empty
-// value and a zero return (libc/bionic/system_properties.cpp). Until the
-// presented environment's properties are documented, every name is missing.
+// value and a zero return (libc/bionic/system_properties.cpp). Names the
+// presented-property table covers get their documented presented value;
+// every other name is missing.
 static int guest_system_property_get(const char *name, char *value)
 {
     if (!name || !value) return 0;
-    note_property_name(name);
-    value[0] = '\0';
-    return 0;
+    const AndroidPresentedProperty *entry = android_property_find(
+        android_presented_properties, android_presented_properties_count, name);
+    note_property_name(name, entry != NULL);
+    if (!entry || !entry->value) {
+        value[0] = '\0';
+        return 0;
+    }
+    // Bionic copies at most PROP_VALUE_MAX (92) bytes including the NUL and
+    // returns the value's length. The table contract keeps entries inside
+    // that bound; a longer entry is reported truncated rather than silent.
+    size_t length = strlen(entry->value);
+    if (length > 91) length = 91;
+    memcpy(value, entry->value, length);
+    value[length] = '\0';
+    return (int)length;
 }
 
 // Bionic's current locale is C.UTF-8 unless a program replaces it, and its

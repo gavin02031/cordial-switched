@@ -32,3 +32,16 @@ bool engine_constructor_run_once(const EngineConstructorPlan *plan,
     state->completed = true;
     return true;
 }
+
+bool engine_constructor_run_entry_ready(const EngineConstructorPlan *plan,
+                                        const EngineConstructorRunState *state,
+                                        bool attempted, bool marker_cleared)
+{
+    if (!plan)
+        return false;
+    if (plan->status == ENGINE_CONSTRUCTORS_NO_ENTRIES || !plan->call_count)
+        return true;
+    if (!attempted || !state)
+        return false;
+    return state->completed && marker_cleared;
+}

@@ -113,5 +113,28 @@ int main(void)
     assert(ctx.calls == 0);
 
     puts("engine_constructor_run_test: gating, ordering and once-only journals passed");
+
+    // Entry readiness: JNI_OnLoad may only run when initialization is
+    // durably complete. Every negative case below must stay closed.
+    EngineConstructorPlan ready_plan = {0};
+    ready_plan.status = ENGINE_CONSTRUCTORS_VALIDATED;
+    ready_plan.call_count = 1;
+    uintptr_t target = 0x1004;
+    ready_plan.targets = &target;
+    EngineConstructorRunState ready_state = {0};
+    assert(!engine_constructor_run_entry_ready(NULL, &ready_state, true, true));
+    // A plan with no entries is trivially ready, attempted or not.
+    EngineConstructorPlan empty_plan = {0};
+    empty_plan.status = ENGINE_CONSTRUCTORS_NO_ENTRIES;
+    assert(engine_constructor_run_entry_ready(&empty_plan, NULL, false, false));
+    // A non-empty plan is closed until a completed run with a cleared marker.
+    assert(!engine_constructor_run_entry_ready(&ready_plan, &ready_state, false, false));
+    ready_state.started = true;
+    ready_state.next_index = 1; // ran, but did not complete every entry
+    assert(!engine_constructor_run_entry_ready(&ready_plan, &ready_state, true, true));
+    ready_state.completed = true;
+    assert(!engine_constructor_run_entry_ready(&ready_plan, &ready_state, true, false));
+    assert(engine_constructor_run_entry_ready(&ready_plan, &ready_state, true, true));
+    puts("engine_constructor_run_test: entry-readiness truth table passed");
     return 0;
 }

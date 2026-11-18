@@ -508,3 +508,30 @@ thread's stack, so it is logged as explicitly labeled diagnostics and
 never returned as pthread attributes. Unknown tokens return EINVAL. The
 host test backend answers through the native libc and validates bridge
 model behavior only - target bounds remain a console-validation item.
+
+### Constructor gating corrected: fail closed into JNI_OnLoad (2026-11-18)
+
+Two control-flow fixes to the milestone-B wiring, prompted by a
+control-flow review (the gap is real; the fix here is designed from the
+repo's own gates, not from the review's text):
+
+1. The constructor run was gated on the guest TLS world existing, so an
+   ELF without PT_TLS - including libroblox.so - would have SKIPPED its
+   constructors entirely and still entered JNI_OnLoad. The gate is now
+   mapping-pinned only; the TPIDR bridge is installed only when a TLS
+   template exists (log: guest_tpidr_bridge=not_needed_no_tls_template
+   otherwise). Static evidence says this ELF reads no thread-pointer
+   register; dynamic paths keep the obligation.
+2. JNI_OnLoad now stays closed unless the new entry-readiness rule
+   (engine_constructor_run_entry_ready) proves the whole constructor
+   plan completed and its crash marker cleared durably. An empty plan is
+   trivially ready. A partial run is reported via
+   constructor_run_next_index and constructor_plan_executed, never
+   promoted to readiness. Host tests cover the readiness truth table;
+   the end-to-end wiring is target-only and console-validated.
+
+Also this push: the presented-property table groundwork
+(switch/docs/presented-properties.md, android_property_compat.c/h). The
+table ships EMPTY; the provider consults it first and logs
+result=presented/empty so the first console run's query log drops in as
+data with no redesign.

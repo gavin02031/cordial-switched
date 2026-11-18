@@ -283,6 +283,7 @@ static int bridge_getattr_np(uint64_t token, void *attr)
     }
     pthread_mutex_unlock(&registry_lock);
     if (!entry) return EINVAL;
+    (void)native; // Only the host-model backend below consults the handle.
     // ANDROID_ATTR_DETACHED == 1; auto-registered threads report flags 0,
     // matching Bionic's answer for the process main thread.
     const uint32_t flags = (!auto_registered && !joinable) ? 1u : 0u;
