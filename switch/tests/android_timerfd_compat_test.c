@@ -74,6 +74,7 @@ int main(void)
 
     // Bad specs rejected exactly as Linux does.
     AndroidItimerspec spec = {0, 0, 0, 30LL * 1000000LL}; // 30 ms one-shot
+    // TFD_TIMER_CANCEL_ON_SET (0x2) is explicitly unsupported: EINVAL.
     errno = 0;
     assert(settime_fn(fd, 2, &spec, NULL) == -1 && errno == EINVAL);
     spec.value_nsec = 1000000000LL;
@@ -102,7 +103,52 @@ int main(void)
     value = 0;
     assert(android_timerfd_read(fd, &value, 8) == 8 && value >= 3);
 
+    // Disarm with an undelivered count: Linux keeps it readable.
+    spec.value_sec = 0;
+    spec.value_nsec = 20LL * 1000000LL;
+    spec.interval_sec = 0;
+    spec.interval_nsec = 0;
+    assert(settime_fn(fd, 0, &spec, NULL) == 0);
+    sleep_ms(45); // expires, unread
+    memset(&spec, 0, sizeof(spec));
+    assert(settime_fn(fd, 0, &spec, NULL) == 0); // disarm
+    value = 0;
+    assert(android_timerfd_read(fd, &value, 8) == 8 && value == 1);
+    errno = 0;
+    assert(android_timerfd_read(fd, &value, 8) == -1 && errno == EAGAIN);
+
+    // Sub-millisecond intervals are honored exactly; there is no floor.
+    // A 500us period expiring for 10ms yields about 19 expirations;
+    // a 1ms floor would yield about 9. Demand clearly more than that.
+    spec.value_sec = 0;
+    spec.value_nsec = 1000000LL;  // first expiry at 1ms
+    spec.interval_sec = 0;
+    spec.interval_nsec = 500000LL; // 500us period
+    assert(settime_fn(fd, 0, &spec, NULL) == 0);
+    sleep_ms(10);
+    value = 0;
+    assert(android_timerfd_read(fd, &value, 8) == 8 && value >= 14);
+    memset(&spec, 0, sizeof(spec));
+    assert(settime_fn(fd, 0, &spec, NULL) == 0); // disarm
+
+    // ABSTIME in the past expires immediately, as Linux does (this is
+    // also the path a forward realtime-clock jump takes).
+    struct timespec past;
+    clock_gettime(CLOCK_MONOTONIC, &past);
+    spec.interval_sec = 0;
+    spec.interval_nsec = 0;
+    spec.value_sec = (int64_t)past.tv_sec - 1;
+    spec.value_nsec = past.tv_nsec;
+    assert(settime_fn(fd, ANDROID_TFD_TIMER_ABSTIME, &spec, NULL) == 0);
+    value = 0;
+    assert(android_timerfd_read(fd, &value, 8) == 8 && value == 1);
+
     // Disarm: pending delivered count survives, future ones stop.
+    spec.value_sec = 0;
+    spec.value_nsec = 20LL * 1000000LL;
+    spec.interval_nsec = 20LL * 1000000LL;
+    memset(&old, 0, sizeof(old));
+    assert(settime_fn(fd, 0, &spec, &old) == 0);
     memset(&spec, 0, sizeof(spec));
     assert(settime_fn(fd, 0, &spec, NULL) == 0);
     errno = 0;
@@ -137,18 +183,23 @@ int main(void)
     assert(ep_waited >= 35 && ep_waited < 3000);
     assert((out_events[0] & 0x001) && out_data[0] == 0x5A);
 
-    // EPOLLET on a timerfd: one report per firing, not per wait.
+    // EPOLLET on a timerfd, per Linux: the edge is the unread count
+    // going 0 -> positive. Extra firings while a count is still unread
+    // are NOT new edges; only a drain followed by a fresh expiry is.
     uint64_t drained = 0;
     assert(android_timerfd_read(tfd, &drained, 8) == 8);
     assert(android_epoll_ctl(epfd, 3, tfd, 0x001 | (1u << 31), 0x5B) == 0);
     spec.value_sec = 0;
-    spec.value_nsec = 25LL * 1000000LL;
-    spec.interval_nsec = 25LL * 1000000LL; // periodic for a second edge
+    spec.value_nsec = 20LL * 1000000LL;
+    spec.interval_nsec = 20LL * 1000000LL; // periodic
     assert(android_timerfd_settime(tfd, 0, &spec, NULL) == 0);
-    sleep_ms(35);
+    sleep_ms(30); // first expiry: one edge
     assert(android_epoll_wait(epfd, out_events, out_data, 2, 0) == 1);
+    sleep_ms(65); // about 3 more periods fire while the count is unread
     assert(android_epoll_wait(epfd, out_events, out_data, 2, 0) == 0);
-    sleep_ms(30); // another period fires: a fresh edge
+    drained = 0;
+    assert(android_timerfd_read(tfd, &drained, 8) == 8 && drained >= 3);
+    sleep_ms(30); // next period after the drain: a fresh edge
     assert(android_epoll_wait(epfd, out_events, out_data, 2, 0) == 1);
     assert(android_epoll_close(epfd) == 0);
     assert(routed_close(tfd) == 0);

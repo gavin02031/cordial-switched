@@ -9,15 +9,37 @@
 #include "android_eventfd_compat.h"
 
 // Linux timerfd semantics, lazily evaluated: the object records the arm
-// time and interval; reads and readiness queries fold elapsed periods
-// into the expiration counter when they run. Nothing ticks in the
-// background, so a blocked read or epoll wait simply needs a deadline -
-// which the shared change wait supplies (android_timerfd_next_expiry_ms
-// caps the wait slice so the waiter wakes at expiry without a signal).
+// time and interval in nanoseconds; reads and readiness queries fold
+// elapsed periods into the expiration counter when they run. Nothing
+// ticks in the background, so a blocked read or epoll wait simply needs
+// a deadline - which the shared change wait supplies
+// (android_timerfd_next_expiry_ms caps the wait slice so the waiter
+// wakes at expiry without a signal).
+//
+// Semantic contract, checked against the Linux timerfd man pages and
+// kernel behavior (fs/timerfd.c):
+// - Intervals are honored at nanosecond resolution. There is no
+//   minimum-period floor; a 500us interval expiries twice per
+//   millisecond exactly as Linux does.
+// - A disarm (value 0) stops future expirations but keeps the
+//   undelivered count readable, as Linux does.
+// - A one-shot timer disarms after expiring; the count stays readable.
+// - CLOCK_REALTIME objects settle against the current realtime clock,
+//   so a forward clock jump folds the skipped span (immediate expiry)
+//   and a backward jump delays, matching Linux hrtimer behavior for
+//   timers without TFD_TIMER_CANCEL_ON_SET. CANCEL_ON_SET itself is
+//   not implemented and settime refuses it with EINVAL rather than
+//   accepting and ignoring it.
+// - The EPOLLET edge source is the count of readiness transitions
+//   (unread expirations going from zero to positive), NOT the total
+//   number of firings: on Linux, extra expirations while a count is
+//   still unread do not create new edge-triggered events.
 
 #define TIMERFD_MAX_OBJECTS 32
 #define TIMERFD_FD_BASE 0x3FFE8000 // Clear of eventfd and epoll ranges.
 #define TIMERFD_FD_GENERATIONS 1024
+#define NS_PER_SEC 1000000000LL
+#define NS_PER_MS 1000000LL
 
 typedef struct {
     bool in_use;
@@ -25,10 +47,10 @@ typedef struct {
     int clockid;
     int current_fd;
     bool armed;
-    int64_t next_expiry_ms;  // Absolute, on the object's clock.
-    int64_t interval_ms;
-    uint64_t expirations;    // Undelivered count (reads reset this).
-    uint64_t total_expirations; // Monotone while armed; the ET edge source.
+    int64_t next_expiry_ns; // Absolute, on the object's clock.
+    int64_t interval_ns;
+    uint64_t expirations;   // Undelivered count (reads reset this).
+    uint64_t readiness_edges; // Bumps only when expirations goes 0 -> >0.
     pthread_mutex_t lock;
     pthread_cond_t changed;
 } VirtualTimerFd;
@@ -60,33 +82,42 @@ static VirtualTimerFd *object_for(int fd)
     return (object->in_use && object->current_fd == fd) ? object : NULL;
 }
 
-static int64_t clock_now_ms(int clockid)
+static int64_t clock_now_ns(int clockid)
 {
     struct timespec now;
     if (clock_gettime(clockid == 0 ? CLOCK_REALTIME : CLOCK_MONOTONIC,
                       &now) != 0)
         return 0;
-    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+    return (int64_t)now.tv_sec * NS_PER_SEC + now.tv_nsec;
+}
+
+// sec/nsec pair to nanoseconds, saturating: Linux accepts very large
+// second counts; anything past the int64 ns range is effectively
+// "never" (about 292 years), so clamp instead of overflowing.
+static int64_t spec_to_ns(int64_t sec, int64_t nsec)
+{
+    if (sec > (INT64_MAX - nsec) / NS_PER_SEC) return INT64_MAX;
+    return sec * NS_PER_SEC + nsec;
 }
 
 // Caller holds the object lock. Folds elapsed periods into expirations.
 static void settle(VirtualTimerFd *object)
 {
     if (!object->armed) return;
-    const int64_t now = clock_now_ms(object->clockid);
-    if (now < object->next_expiry_ms) return;
-    if (object->interval_ms > 0) {
-        const uint64_t periods =
-            (uint64_t)((now - object->next_expiry_ms) /
-                       object->interval_ms) + 1;
-        object->expirations += periods;
-        object->total_expirations += periods;
-        object->next_expiry_ms += (int64_t)periods * object->interval_ms;
+    const int64_t now = clock_now_ns(object->clockid);
+    if (now < object->next_expiry_ns) return;
+    uint64_t periods;
+    if (object->interval_ns > 0) {
+        periods = (uint64_t)((now - object->next_expiry_ns) /
+                             object->interval_ns) + 1;
+        object->next_expiry_ns += (int64_t)periods * object->interval_ns;
     } else {
-        object->expirations++;
-        object->total_expirations++;
+        periods = 1;
         object->armed = false; // One-shot: delivered, disarmed.
     }
+    if (object->expirations == 0)
+        object->readiness_edges++; // The EPOLLET transition.
+    object->expirations += periods;
 }
 
 int android_timerfd_create(int clockid, int flags)
@@ -114,9 +145,9 @@ int android_timerfd_create(int clockid, int flags)
     object->nonblock = (flags & ANDROID_TFD_NONBLOCK) != 0;
     object->clockid = clockid;
     object->armed = false;
-    object->interval_ms = 0;
+    object->interval_ns = 0;
     object->expirations = 0;
-    object->total_expirations = 0;
+    object->readiness_edges = 0;
     int generation = 0;
     if (object->current_fd)
         generation = (object->current_fd - TIMERFD_FD_BASE) /
@@ -146,7 +177,7 @@ bool android_timerfd_is_virtual(int fd)
 
 static bool valid_spec(int64_t sec, int64_t nsec)
 {
-    return sec >= 0 && nsec >= 0 && nsec < 1000000000LL;
+    return sec >= 0 && nsec >= 0 && nsec < NS_PER_SEC;
 }
 
 int android_timerfd_settime(int fd, int flags,
@@ -155,7 +186,10 @@ int android_timerfd_settime(int fd, int flags,
 {
     VirtualTimerFd *object = object_for(fd);
     if (!object) { errno = EBADF; return -1; }
-    if (!next || (flags & ~ANDROID_TFD_TIMER_ABSTIME) ||
+    // TFD_TIMER_CANCEL_ON_SET (0x2) is explicitly unsupported: refusing
+    // with EINVAL is honest, accepting and ignoring would not be.
+    if (!next ||
+        (flags & ~(ANDROID_TFD_TIMER_ABSTIME)) ||
         !valid_spec(next->value_sec, next->value_nsec) ||
         !valid_spec(next->interval_sec, next->interval_nsec)) {
         errno = EINVAL;
@@ -164,29 +198,25 @@ int android_timerfd_settime(int fd, int flags,
     pthread_mutex_lock(&object->lock);
     settle(object);
     if (old) {
-        const int64_t now = clock_now_ms(object->clockid);
+        const int64_t now = clock_now_ns(object->clockid);
         int64_t remaining = 0;
-        if (object->armed && object->next_expiry_ms > now)
-            remaining = object->next_expiry_ms - now;
-        old->value_sec = remaining / 1000;
-        old->value_nsec = (remaining % 1000) * 1000000LL;
-        old->interval_sec = object->interval_ms / 1000;
-        old->interval_nsec = (object->interval_ms % 1000) * 1000000LL;
+        if (object->armed && object->next_expiry_ns > now)
+            remaining = object->next_expiry_ns - now;
+        old->value_sec = remaining / NS_PER_SEC;
+        old->value_nsec = remaining % NS_PER_SEC;
+        old->interval_sec = object->interval_ns / NS_PER_SEC;
+        old->interval_nsec = object->interval_ns % NS_PER_SEC;
     }
-    const int64_t value_ms = next->value_sec * 1000 +
-                             next->value_nsec / 1000000;
-    if (value_ms == 0) {
+    const int64_t value_ns = spec_to_ns(next->value_sec, next->value_nsec);
+    if (value_ns == 0) {
         object->armed = false; // Disarm; delivered expirations survive.
-        object->interval_ms = 0;
+        object->interval_ns = 0;
     } else {
-        object->interval_ms = next->interval_sec * 1000 +
-                              next->interval_nsec / 1000000;
-        if (object->interval_ms == 0 &&
-            (next->interval_sec || next->interval_nsec))
-            object->interval_ms = 1; // Sub-millisecond period floors at 1.
-        object->next_expiry_ms = (flags & ANDROID_TFD_TIMER_ABSTIME)
-            ? value_ms
-            : clock_now_ms(object->clockid) + value_ms;
+        object->interval_ns = spec_to_ns(next->interval_sec,
+                                         next->interval_nsec);
+        object->next_expiry_ns = (flags & ANDROID_TFD_TIMER_ABSTIME)
+            ? value_ns
+            : clock_now_ns(object->clockid) + value_ns;
         object->armed = true;
     }
     pthread_cond_broadcast(&object->changed);
@@ -204,17 +234,15 @@ ssize_t android_timerfd_read(int fd, void *buffer, size_t count)
     for (;;) {
         settle(object);
         if (object->expirations > 0) break;
-        if (object->nonblock || !object->armed) {
-            // Linux: a disarmed timer's read blocks; with nonblock it is
-            // EAGAIN. A blocking read on a disarmed timer has no wake
-            // source other than a re-arm, so wait on the change signal.
-            if (object->nonblock) {
-                pthread_mutex_unlock(&object->lock);
-                errno = EAGAIN;
-                return -1;
-            }
+        if (object->nonblock) {
+            pthread_mutex_unlock(&object->lock);
+            errno = EAGAIN;
+            return -1;
         }
         if (!object->armed) {
+            // Linux: a disarmed timer's read blocks; the only wake
+            // source is a re-arm (or close), so wait on the change
+            // signal with no deadline.
             pthread_cond_wait(&object->changed, &object->lock);
             if (!object->in_use) {
                 pthread_mutex_unlock(&object->lock);
@@ -225,16 +253,16 @@ ssize_t android_timerfd_read(int fd, void *buffer, size_t count)
         }
         // Blocking until expiry: sleep out the remaining span; a re-arm
         // or close signals changed and re-evaluates.
-        const int64_t now = clock_now_ms(object->clockid);
-        int64_t wait_ms = object->next_expiry_ms - now;
-        if (wait_ms < 1) wait_ms = 1;
+        const int64_t now = clock_now_ns(object->clockid);
+        int64_t wait_ns = object->next_expiry_ns - now;
+        if (wait_ns < 1) wait_ns = 1;
         struct timespec deadline;
         clock_gettime(CLOCK_REALTIME, &deadline);
-        deadline.tv_sec += wait_ms / 1000;
-        deadline.tv_nsec += (wait_ms % 1000) * 1000000L;
-        if (deadline.tv_nsec >= 1000000000L) {
+        deadline.tv_sec += wait_ns / NS_PER_SEC;
+        deadline.tv_nsec += wait_ns % NS_PER_SEC;
+        if (deadline.tv_nsec >= NS_PER_SEC) {
             deadline.tv_sec++;
-            deadline.tv_nsec -= 1000000000L;
+            deadline.tv_nsec -= NS_PER_SEC;
         }
         pthread_cond_timedwait(&object->changed, &object->lock, &deadline);
         if (!object->in_use) {
@@ -275,9 +303,9 @@ bool android_timerfd_readiness_edges(int fd, uint32_t *ready_events,
     settle(object);
     uint32_t ready = 0;
     if (object->expirations > 0) ready |= 0x001; // EPOLLIN
-    // read_edges is the monotone expiration total; reads reset only the
-    // undelivered count.
-    if (read_edges) *read_edges = object->total_expirations;
+    // read_edges counts 0 -> positive transitions of the unread count:
+    // extra firings while a count is still unread are not new edges.
+    if (read_edges) *read_edges = object->readiness_edges;
     if (write_edges) *write_edges = 0;
     if (ready_events) *ready_events = ready;
     pthread_mutex_unlock(&object->lock);
@@ -290,10 +318,13 @@ int64_t android_timerfd_next_expiry_ms(int fd)
     if (!object) return -1;
     pthread_mutex_lock(&object->lock);
     int64_t result = -1;
-    if (object->armed && object->expirations == 0) {
-        const int64_t now = clock_now_ms(object->clockid);
-        result = object->next_expiry_ms - now;
-        if (result < 0) result = 0;
+    if (object->armed) {
+        const int64_t now = clock_now_ns(object->clockid);
+        int64_t remaining = object->next_expiry_ns - now;
+        if (remaining < 0) remaining = 0;
+        // Round up so the waiter never wakes early; up to one
+        // millisecond late, which matches epoll's own ms granularity.
+        result = (remaining + NS_PER_MS - 1) / NS_PER_MS;
     }
     pthread_mutex_unlock(&object->lock);
     return result;

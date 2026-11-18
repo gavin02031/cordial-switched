@@ -11,8 +11,19 @@ waits over Morrow-virtual fds through the same readiness path on every
 platform; host-fd sets still use host poll on host builds and stay
 refused on Horizon, and a mixed set refuses rather than half-waits.
 The zero-fd infinite-timeout guard stands (this ELF imports no
-ALooper_wake). No event-waiting import the audited ELF needs remains a
-refusal; pipe/socketpair/accept4 stay fail-closed.
+ALooper_wake). Every event-waiting import the audited ELF needs has an
+implementation; pipe/socketpair/accept4 stay fail-closed.
+
+Known partial corners, by policy refused rather than faked:
+- TFD_TIMER_CANCEL_ON_SET is not implemented; settime rejects it with
+  EINVAL instead of accepting and ignoring it.
+- timerfd EPOLLET follows the Linux edge source (unread count going
+  zero to positive), not one event per firing; extra firings while a
+  count is unread do not re-report.
+- timerfd intervals are honored at nanosecond resolution with no
+  minimum-period floor.
+All of the above is host-tested only; no console run has observed any
+of it yet, and host timing windows say nothing about console timing.
 
 Documented epoll subset boundaries (all refusals are deliberate):
 watches accept only Morrow-virtual descriptors (others fail EPERM, the

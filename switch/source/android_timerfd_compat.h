@@ -32,11 +32,14 @@ ssize_t android_timerfd_read(int fd, void *buffer, size_t count);
 int android_timerfd_close(int fd);
 
 // epoll support, same contract as the eventfd edges interface:
-// read_edges is the total expiration count (monotonic while armed).
+// read_edges counts transitions of the unread expiration count from
+// zero to positive (the Linux EPOLLET edge source for timerfd), not
+// the raw number of firings.
 bool android_timerfd_readiness_edges(int fd, uint32_t *ready_events,
                                      uint64_t *read_edges,
                                      uint64_t *write_edges);
-// Milliseconds until the next expiry, 0 if due now, -1 if nothing armed.
+// Milliseconds until the next expiry, rounded up so a waiter never
+// wakes early; 0 if due now, -1 if nothing armed.
 int64_t android_timerfd_next_expiry_ms(int fd);
 
 #endif
