@@ -107,5 +107,32 @@ normal exporter tests and Horizon CI remain green.
 UNKNOWNS: No observed export write failure or stale pair on Switch; this
 is a source-level integrity risk, not evidence of a current missing import.
 
+
+2026-11-18 02:26 America/Chicago — [CRITICAL][OBSERVED SOURCE / HARDWARE IMPACT UNVERIFIED]
+JNI_OnLoad is reachable after failed or incomplete constructor execution.
+EVIDENCE: Flint's constructor integration commits f2edd6f975a65ffb2926ad1e0acade184abcc1e8 and ca5c87a5bba778a27748fc9383534714c678ae61; source:
+https://github.com/gavin02031/cordial-switched/blob/undefined/switch/source/horizon_real_link.c
+In horizon_real_link_run(), the result of engine_constructor_run_once()
+is stored in constructors_done and logged, but the subsequent
+engine_run_journal_begin("jni_onload") and engine_execution_call_jni_onload()
+are not conditioned on constructors_done. Even when guest_main_tls_ready=no,
+constructor journaling fails, a constructor callback fails, or clearing its
+crash marker fails, control can still enter JNI_OnLoad. The boolean
+constructors_ran is also true after a partial run (next_index != 0),
+so it cannot prove completed initialization.
+BLOCKER: Milestone B's complete DT_INIT/DT_INIT_ARRAY sequence and durable
+constructor journal are not enforced before Milestone C.
+PROPOSED FOR FLINT: Fail closed around the entire JNI_OnLoad journal/call
+path unless constructors_done, constructor crash marker cleared durably,
+and guest TLS/bridge state are all true. Track started/completed/durable
+states separately; preserve partial-run diagnostics without promoting
+them to readiness. Refuse further engine entry after a partial run.
+SUCCESS: Synthetic negative tests for failed begin/completed callbacks,
+missing TLS, partial index, and failed marker clear all assert zero
+JNI_OnLoad invocations; only full successful constructor completion and
+durable journal permit entry. Verify on Switch after Milestone A.
+UNKNOWNS: No hardware execution of the new constructor path observed;
+this is a source-level control-flow gap, not proof of a crash.
+
 NEXT ENTRY:
 Use a new dated section only when a verified finding improves this queue.
