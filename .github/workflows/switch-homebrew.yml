@@ -100,6 +100,7 @@ jobs:
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_process_compat.c \
             switch/source/android_system_compat.c \
+            switch/source/android_property_compat.c \
             switch/source/engine_module_registry.c \
             switch/source/android_wchar_compat.c \
             switch/source/android_socket_compat.c \
