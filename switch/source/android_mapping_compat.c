@@ -17,6 +17,8 @@
 enum { PAGE_BYTES = 4096, PRIVATE_ANONYMOUS = 0x22 };
 #define FAILED_ADDRESS ((void *)(intptr_t)-1)
 #ifdef __SWITCH__
+static uint32_t last_kernel_result;
+
 typedef struct {
     unsigned char *storage;
     size_t pieces;
@@ -60,11 +62,20 @@ static int protect_pages(void *base, size_t size, int protection)
 {
 #ifdef __SWITCH__
     u32 perm = protection == 3 ? Perm_Rw : protection == 1 ? Perm_R : Perm_None;
-    return R_SUCCEEDED(svcSetMemoryPermission(base, size, perm)) ? 0 : reject(EACCES);
+    Result rc = svcSetMemoryPermission(base, size, perm);
+    last_kernel_result = rc;
+    return R_SUCCEEDED(rc) ? 0 : reject(EACCES);
 #else
     return mprotect(base, size, protection);
 #endif
 }
+
+#ifdef __SWITCH__
+uint32_t android_mapping_compat_last_kernel_result(void)
+{
+    return last_kernel_result;
+}
+#endif
 
 static int release_pages(Region *region, size_t offset, size_t size)
 {

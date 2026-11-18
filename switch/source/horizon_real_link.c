@@ -464,16 +464,34 @@ static void probe_guest_data_mapping(FILE *log)
     p[4095] = 73;
     MemoryInfo info;
     u32 page_info;
-    bool read_only = protect_fn(p, 4096, 1) == 0 &&
-        R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p)) &&
-        info.perm == Perm_R;
+    // Record each transition's raw kernel answer and queried state. The
+    // v0.99.4 console run saw every protection check fail but could not say
+    // whether svcSetMemoryPermission refused or the query disagreed.
+    int protect_rc = protect_fn(p, 4096, 1);
+    bool queried = R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p));
+    log_line(log, "guest_mapping_protect_read_only=%d errno=%d kernel=0x%08x query=%d perm=0x%x type=0x%x attr=0x%x",
+             protect_rc, protect_rc ? errno : 0,
+             (unsigned)android_mapping_compat_last_kernel_result(),
+             queried, queried ? info.perm : 0, queried ? info.type : 0,
+             queried ? info.attr : 0);
+    bool read_only = !protect_rc && queried && info.perm == Perm_R;
     bool preserved = read_only && p[4095] == 73;
-    bool inaccessible = protect_fn(p, 4096, 0) == 0 &&
-        R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p)) &&
-        info.perm == Perm_None;
-    bool writable = protect_fn(p, 4096, 3) == 0 &&
-        R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p)) &&
-        info.perm == Perm_Rw;
+    protect_rc = protect_fn(p, 4096, 0);
+    queried = R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p));
+    log_line(log, "guest_mapping_protect_none=%d errno=%d kernel=0x%08x query=%d perm=0x%x type=0x%x attr=0x%x",
+             protect_rc, protect_rc ? errno : 0,
+             (unsigned)android_mapping_compat_last_kernel_result(),
+             queried, queried ? info.perm : 0, queried ? info.type : 0,
+             queried ? info.attr : 0);
+    bool inaccessible = !protect_rc && queried && info.perm == Perm_None;
+    protect_rc = protect_fn(p, 4096, 3);
+    queried = R_SUCCEEDED(svcQueryMemory(&info, &page_info, (u64)(uintptr_t)p));
+    log_line(log, "guest_mapping_protect_rw=%d errno=%d kernel=0x%08x query=%d perm=0x%x type=0x%x attr=0x%x",
+             protect_rc, protect_rc ? errno : 0,
+             (unsigned)android_mapping_compat_last_kernel_result(),
+             queried, queried ? info.perm : 0, queried ? info.type : 0,
+             queried ? info.attr : 0);
+    bool writable = !protect_rc && queried && info.perm == Perm_Rw;
     bool released = unmap_fn(p, 4096) == 0;
     log_line(log, "guest_mapping_probe_zero=%d read_only=%d data=%d none=%d rw=%d released=%d",
              contents, read_only, preserved, inaccessible, writable, released);

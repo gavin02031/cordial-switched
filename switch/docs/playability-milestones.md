@@ -244,3 +244,57 @@ lock with mapping and survive until successful stack unmapping. In the L3
 report, `guest_stack_guard_join=0 unmapped_16k=1 released=1` requires a
 worker to inspect its stack and the kernel memory map and then join. That
 result has not yet been observed on a console.
+
+### System provider batch and measured import coverage (2026-11-18)
+
+A new `android_system_compat` provider resolves 44 more of the engine's
+versioned `LIBC` imports. Two groups, same rule as the process adapter:
+resolving a name is not evidence its caller survives the answer.
+
+The genuinely functional entries are `android_set_abort_message`, which
+captures the engine libc's final message into a bounded buffer and the
+diagnostic log, and `openlog`/`syslog`/`closelog`, which format the guest's
+syslog traffic and forward it to the same sink as its liblog output. Bionic
+routes syslog to logd; Morrow has no logd, and nothing is acknowledged that
+was not delivered to the sink.
+
+The rest fail closed with `ENOSYS` (or the interface's own error shape:
+`signal` returns `SIG_ERR`, `if_nametoindex` returns 0, `posix_fallocate` and
+the `pthread_*` policy calls return the error number). Covered: the signal
+installation family (`sigaction`, `signal`, `raise`, `pthread_sigmask`,
+`sigaltstack`), scheduling policy (`sched_*`, `getpriority`, `setpriority`,
+the `pthread_*sched*` calls and `pthread_setname_np`), descriptor facilities
+with no Horizon backing yet (`epoll_*`, `eventfd`, `timerfd_*`, `pipe`,
+`socketpair`, `accept4`, `ioctl`, `syscall`, `prctl`), and miscellaneous
+POSIX surface (`mlock`, `statvfs`, `utime`, `utimes`, `gethostname`,
+`if_nametoindex`, `if_indextoname`, `tcgetattr`, `tcsetattr`,
+`posix_fallocate`). Fail-closed providers never dereference their arguments,
+so no untranslated guest structure is read. Several of these will need real
+implementations before the engine's event loop can run - `epoll_*`,
+`eventfd` and `timerfd_*` back Android's Looper - but a caller that installs
+a crash handler or queries scheduler policy now fails at the call instead of
+blocking the relocation audit.
+
+Re-running the offline audit on the verified private image (SHA-256
+`2ce7db6d…e40c43`) against host-built providers measures the batch directly:
+582 visible imports, 481 supported, 99 required missing, 2 optional missing.
+Of the 99, 91 are the EGL/GLES2 names the host build disables (target
+providers link Switch Mesa) and two are `setjmp`/`longjmp`, which the ARM64
+jump bridge provides and the host build deliberately refuses. That leaves
+six genuinely outstanding required imports: `__ctype_get_mb_cur_max`,
+`__system_property_get`, `dl_iterate_phdr`, `mallinfo`, `sysinfo` and
+`uname`. Each is deferred rather than fail-closed for a stated reason:
+`mallinfo` returns a struct by value and cannot report failure, and the
+guest statically links its own allocator (`malloc`/`calloc`/`free` are not
+imported), so any host answer describes the wrong allocator; `uname`,
+`sysinfo`, `__ctype_get_mb_cur_max` and `__system_property_get` need a
+documented presented-environment decision, not invented values;
+`dl_iterate_phdr` has no error return and wants a real walk over the
+loader's own module records.
+
+The L3 mapping probe now logs each protection transition's raw
+`svcSetMemoryPermission` result and the queried `MemoryInfo` (perm, type,
+attr) alongside the existing summary keys, so the next console run can
+distinguish a refused permission change from a successful one the query
+disagrees with - the ambiguity in the v0.99.4 `read_only=0 none=0 rw=0`
+report. These are host-measured results; none of it has run on a console.
