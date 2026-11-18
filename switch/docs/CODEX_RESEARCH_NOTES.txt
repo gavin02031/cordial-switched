@@ -161,3 +161,29 @@ virtual-fd subset and EPOLLET semantics remain documented limitations.
 
 NEXT ENTRY:
 Use a new dated section only when a verified finding improves this queue.
+
+2026-11-18 04:02 America/Chicago — [HIGH][OBSERVED CI FAILURE / FIX INFERRED]
+Host provider coverage fails to link after virtual-fd readiness was factored out.
+EVIDENCE: feature head 89a99c9fabf5e5ab28151506b11ca8f95838ea08; Horizon preview
+https://github.com/gavin02031/cordial-switched/actions/runs/44280985026
+has successful NRO build, arm64-jump and JNI jobs but failed elf-probe-tests.
+Job 134721304282: test_host_provider_reports_exact_versions_and_weak_misses
+raises CalledProcessError in switch/tools/audit_android_elf.py,
+host_provider_coverage() at the cc -shared -Wl,-z,defs invocation.
+Undefined android_virtual_is_virtual, android_virtual_readiness_edges and
+android_virtual_next_expiry_ms are called by android_epoll_compat.c and
+android_looper_compat.c. Their implementations live in
+switch/source/android_virtual_fd.c, which does not match the current
+source.glob('android_*_compat.c') selection and is not explicitly appended.
+BLOCKER: The host provider shared-library test cannot link, so import
+coverage regression tests are blocked; this does not demonstrate a missing
+Horizon ABI symbol or engine runtime failure.
+PROPOSED FOR FLINT: Add android_virtual_fd.c to the explicit host-provider
+source list in host_provider_coverage(), preserving -Wl,-z,defs. Audit the
+other standalone link commands for the same dependency and prefer a common
+source manifest where practical. Keep real virtual-fd semantics tests.
+SUCCESS: The host-provider test links with no undefined references, all
+Python ELF tests pass, and all five Horizon preview jobs succeed on the
+new commit. NRO build alone is insufficient.
+UNKNOWNS: No fresh target-observed complete import inventory or guest
+execution proof. The separate upstream workflow is not a Horizon test.
