@@ -267,6 +267,33 @@ static void test_properties_and_locale(void)
     assert(mb_cur_max() == 4);
 }
 
+static void test_sysinfo_and_uname(void)
+{
+    int (*sysinfo_fn)(void *) = (void *)(uintptr_t)resolve("sysinfo");
+    int (*uname_fn)(void *) = (void *)(uintptr_t)resolve("uname");
+    char info[112];
+    memset(info, 0, sizeof(info));
+    assert(sysinfo_fn(info) == 0);
+    // The 112-byte kernel layout is asserted in the provider; here the
+    // host figures must look like a live machine's.
+    unsigned long long totalram, freeram;
+    memcpy(&totalram, info + 32, 8);
+    memcpy(&freeram, info + 40, 8);
+    assert(totalram > 0);
+    assert(freeram <= totalram);
+    unsigned mem_unit;
+    memcpy(&mem_unit, info + 104, 4);
+    assert(mem_unit == 1);
+    errno = 0;
+    assert(sysinfo_fn(NULL) == -1 && errno == EFAULT);
+    char uts[390];
+    memset(uts, 0, sizeof(uts));
+    assert(uname_fn(uts) == 0);
+    assert(uts[0] != '\0');       // sysname answered
+    assert(uts[260] != '\0');     // machine answered
+    assert(uname_fn(NULL) == -1 && errno == EFAULT);
+}
+
 int main(void)
 {
     android_log_compat_set_sink(capture_sink, NULL);
@@ -278,9 +305,11 @@ int main(void)
     test_fail_closed_descriptors();
     test_fail_closed_misc();
     test_properties_and_locale();
+    test_sysinfo_and_uname();
     const char *names[] = {
         "android_set_abort_message", "__system_property_get",
-        "__ctype_get_mb_cur_max", "openlog", "syslog", "closelog",
+        "__ctype_get_mb_cur_max", "sysinfo", "uname", "openlog",
+        "syslog", "closelog",
         "sigaction", "signal", "raise", "pthread_sigmask", "sigaltstack",
         "sched_get_priority_max", "sched_get_priority_min", "sched_getparam",
         "sched_getscheduler", "sched_setscheduler", "sched_getcpu",
@@ -301,7 +330,6 @@ int main(void)
     }
     uint64_t address = 0;
     assert(!android_system_compat_resolve("mallinfo", "LIBC", "libc.so", &address));
-    assert(!android_system_compat_resolve("uname", "LIBC", "libc.so", &address));
     assert(!address);
     return 0;
 }

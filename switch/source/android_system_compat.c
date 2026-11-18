@@ -2,11 +2,19 @@
 
 #include <errno.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "android_log_compat.h"
+
+#ifdef __SWITCH__
+#include <switch.h>
+#else
+#include <sys/sysinfo.h>
+#include <sys/utsname.h>
+#endif
 
 // System-side libc entry points that have no honest Horizon implementation
 // yet. Two kinds live here. A small number really work: the guest's syslog
@@ -64,6 +72,103 @@ static int guest_system_property_get(const char *name, char *value)
 static size_t guest_ctype_get_mb_cur_max(void)
 {
     return 4;
+}
+
+// The Linux kernel's struct sysinfo, which bionic exposes unchanged. Every
+// field offset is asserted because the guest reads this memory raw.
+typedef struct {
+    int64_t uptime;
+    uint64_t loads[3];
+    uint64_t totalram;
+    uint64_t freeram;
+    uint64_t sharedram;
+    uint64_t bufferram;
+    uint64_t totalswap;
+    uint64_t freeswap;
+    uint16_t procs;
+    uint16_t pad;
+    uint64_t totalhigh;
+    uint64_t freehigh;
+    uint32_t mem_unit;
+} GuestSysinfo;
+_Static_assert(sizeof(GuestSysinfo) == 112, "kernel sysinfo LP64 size");
+_Static_assert(offsetof(GuestSysinfo, totalram) == 32, "sysinfo totalram");
+_Static_assert(offsetof(GuestSysinfo, procs) == 80, "sysinfo procs");
+_Static_assert(offsetof(GuestSysinfo, mem_unit) == 104, "sysinfo mem_unit");
+
+static int guest_sysinfo(void *out)
+{
+    if (!out) { errno = EFAULT; return -1; }
+    GuestSysinfo info;
+    memset(&info, 0, sizeof(info));
+#ifdef __SWITCH__
+    // Real Horizon figures: boot tick uptime and this process's Horizon
+    // memory-pool budget. svcGetInfo answers for the current process's
+    // pool, so totalram/freeram here mean "bytes this process may still
+    // map" - the figure guest allocation pressure actually depends on -
+    // and NOT the console's physical RAM, which Horizon does not report
+    // to applications and which sysinfo cannot honestly reproduce.
+    info.uptime = (int64_t)(armGetSystemTick() / armGetSystemTickFreq());
+    uint64_t total = 0, used = 0;
+    if (R_FAILED(svcGetInfo(&total, InfoType_TotalMemorySize,
+                            CUR_PROCESS_HANDLE, 0)) ||
+        R_FAILED(svcGetInfo(&used, InfoType_UsedMemorySize,
+                            CUR_PROCESS_HANDLE, 0)) || used > total) {
+        errno = EIO;
+        return -1;
+    }
+    info.totalram = total;
+    info.freeram = total - used;
+    info.procs = 1; // One process exists on Horizon: this one.
+    // Remaining fields, per field: totalswap/freeswap are zero because it
+    // is true - the process pool has no swap backing. loads, sharedram,
+    // bufferram, totalhigh and freehigh have no Horizon metric at all;
+    // their zeros are placeholders by presented-environment decision, not
+    // measurements, and must never be read as "no shared memory" or "the
+    // system is idle".
+#else
+    struct sysinfo host;
+    if (sysinfo(&host)) return -1;
+    info.uptime = (int64_t)host.uptime;
+    info.totalram = (uint64_t)host.totalram * host.mem_unit;
+    info.freeram = (uint64_t)host.freeram * host.mem_unit;
+    info.procs = host.procs;
+#endif
+    info.mem_unit = 1;
+    memcpy(out, &info, sizeof(info));
+    return 0;
+}
+
+enum { UTSNAME_FIELD_BYTES = 65 };
+
+// Bionic's struct utsname is six 65-byte fields: sysname, nodename, release,
+// version, machine, domainname. The answers name the real environment -
+// Horizon on AArch64 - not a pretend Linux kernel. release carries the
+// console's actual Horizon version where one can be read.
+static int guest_uname(void *out)
+{
+    if (!out) { errno = EFAULT; return -1; }
+    char (*field)[UTSNAME_FIELD_BYTES] = out;
+    memset(out, 0, 6 * UTSNAME_FIELD_BYTES);
+#ifdef __SWITCH__
+    snprintf(field[0], UTSNAME_FIELD_BYTES, "Horizon");
+    snprintf(field[1], UTSNAME_FIELD_BYTES, "switch");
+    u32 version = hosversionGet();
+    snprintf(field[2], UTSNAME_FIELD_BYTES, "%u.%u.%u",
+             (unsigned)((version >> 16) & 0xff),
+             (unsigned)((version >> 8) & 0xff), (unsigned)(version & 0xff));
+    snprintf(field[3], UTSNAME_FIELD_BYTES, "morrow");
+    snprintf(field[4], UTSNAME_FIELD_BYTES, "aarch64");
+#else
+    struct utsname host;
+    if (uname(&host)) return -1;
+    snprintf(field[0], UTSNAME_FIELD_BYTES, "%s", host.sysname);
+    snprintf(field[1], UTSNAME_FIELD_BYTES, "%s", host.nodename);
+    snprintf(field[2], UTSNAME_FIELD_BYTES, "%s", host.release);
+    snprintf(field[3], UTSNAME_FIELD_BYTES, "%s", host.version);
+    snprintf(field[4], UTSNAME_FIELD_BYTES, "%s", host.machine);
+#endif
+    return 0;
 }
 
 void android_set_abort_message(const char *message)
@@ -429,6 +534,8 @@ bool android_system_compat_resolve(const char *name, const char *version,
     MAP_GUEST("android_set_abort_message", android_set_abort_message)
     MAP_GUEST("__system_property_get", guest_system_property_get)
     MAP_GUEST("__ctype_get_mb_cur_max", guest_ctype_get_mb_cur_max)
+    MAP_GUEST("sysinfo", guest_sysinfo)
+    MAP_GUEST("uname", guest_uname)
     MAP_GUEST("openlog", guest_openlog)
     MAP_GUEST("syslog", guest_syslog)
     MAP_GUEST("closelog", guest_closelog)

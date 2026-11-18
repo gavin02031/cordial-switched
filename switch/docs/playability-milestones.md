@@ -341,3 +341,24 @@ links its own allocator, so any answer would describe the wrong heap),
 decision; `sysinfo` can source real Horizon memory totals, `uname` needs an
 honest identity the engine's gates accept). None of this has run on a
 console.
+
+### System information, answered truthfully (2026-11-18)
+
+`sysinfo` and `uname` now resolve with real answers about the environment the
+guest actually runs in. On Switch, sysinfo's uptime comes from the boot tick.
+totalram/freeram report this process's Horizon memory-pool budget - the bytes
+the guest can still map, which is the figure its allocation pressure depends
+on - not the console's physical RAM, which Horizon does not report to
+applications. The swap fields are zero because that is true (the pool has no
+swap backing); the load, shared, buffer and highmem fields have no Horizon
+metric at all, so their zeros are documented placeholders, not measurements.
+uname names the real system - "Horizon" on "aarch64" - with the console's
+actual OS version in release, never a pretend Linux kernel. On the host both
+pass through to the OS. The guest's structure layouts (112-byte sysinfo, six
+65-byte utsname fields) are pinned by compile-time offset asserts, since the
+guest reads that memory raw.
+
+Host audit: 482 of 576 required imports resolve. `mallinfo` is the last
+genuinely outstanding required import, deferred because its by-value return
+cannot fail closed and any host answer would describe the wrong allocator.
+None of this has run on a console.
