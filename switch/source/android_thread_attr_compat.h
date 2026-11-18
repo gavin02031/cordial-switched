@@ -14,4 +14,7 @@ bool android_thread_attr_compat_resolve(const char *name, const char *version,
 // ever passed directly to the host pthread implementation.
 int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *native);
 
+int android_thread_attr_compat_for_create(const void *address, pthread_attr_t *native,
+                                          size_t *guard);
+
 #endif

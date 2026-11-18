@@ -401,6 +401,47 @@ static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
     engine_tls_scratch_release(&template_image);
 }
 
+#ifdef MORROW_HAS_STACK_GUARDS
+extern size_t morrowStackGuardSize(void *stack);
+
+static void *guard_probe_worker(void *unused)
+{
+    (void)unused;
+    Thread *thread = threadGetSelf();
+    if (!thread) return NULL;
+    uintptr_t base = (uintptr_t)thread->stack_mirror;
+    uintptr_t local = (uintptr_t)&thread;
+    size_t guard = morrowStackGuardSize(thread->stack_mirror);
+    if (guard != 16384 || guard > base || local < base || local - base >= thread->stack_sz)
+        return NULL;
+    MemoryInfo info;
+    u32 page;
+    if (R_FAILED(svcQueryMemory(&info, &page, base - guard)) ||
+        info.type != MemType_Unmapped || info.addr > base - guard ||
+        info.size < base - info.addr)
+        return NULL;
+    return thread->stack_mirror;
+}
+
+static void probe_guest_thread_guard(FILE *log)
+{
+    uint64_t c, j, thread;
+    if (!android_import_resolve("pthread_create", "LIBC", "libc.so", &c) ||
+        !android_import_resolve("pthread_join", "LIBC", "libc.so", &j)) {
+        log_line(log, "guest_stack_guard_probe=missing_pthreads");
+        return;
+    }
+    int (*create)(uint64_t *, const void *, void *(*)(void *), void *) = (void *)(uintptr_t)c;
+    int (*join)(uint64_t, void **) = (void *)(uintptr_t)j;
+    int error = create(&thread, NULL, guard_probe_worker, NULL);
+    if (error) { log_line(log, "guest_stack_guard_create_error=%d", error); return; }
+    void *stack = NULL;
+    error = join(thread, &stack);
+    log_line(log, "guest_stack_guard_join=%d unmapped_16k=%d released=%d", error,
+             !error && stack, !error && stack && morrowStackGuardSize(stack) == 0);
+}
+#endif
+
 // Inspect MMU permissions without deliberately faulting the console.
 static void probe_guest_data_mapping(FILE *log)
 {
@@ -454,7 +495,12 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     }
     log_line(log, "# Morrow native engine entry readiness attempt");
     log_line(log, "morrow_build_version=%s", MORROW_BUILD_VERSION);
-    if (action == 0) probe_guest_data_mapping(log);
+    if (action == 0) {
+        probe_guest_data_mapping(log);
+#ifdef MORROW_HAS_STACK_GUARDS
+        probe_guest_thread_guard(log);
+#endif
+    }
     log_line(log, "# JNI_OnLoad is opt-in and blocked unless strict mapping and runtime gates pass.");
     log_line(log, "engine_execution_action=%s",
              action == 1 ? "jni_onload" : action == 2 ? "game_activity" :

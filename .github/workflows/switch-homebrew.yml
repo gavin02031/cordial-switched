@@ -264,6 +264,12 @@ jobs:
             switch/tests/android_thread_attr_compat_test.c switch/source/android_thread_attr_compat.c -pthread \
             -o /tmp/morrow-horizon-attr-policy
           /tmp/morrow-horizon-attr-policy
+          cc -std=c11 -O2 -Wall -Wextra -Werror -D__SWITCH__ -DMORROW_HAS_STACK_GUARDS -Iswitch/source \
+            switch/tests/android_thread_attr_compat_test.c switch/source/android_thread_attr_compat.c -pthread \
+            -o /tmp/morrow-horizon-guard-policy
+          /tmp/morrow-horizon-guard-policy
+          cc -std=c11 -Wall -Wextra -Werror switch/tests/horizon_stack_guard_test.c -o /tmp/morrow-guard-model
+          /tmp/morrow-guard-model
       - name: Test bounded Android thread lifecycle bridge
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

@@ -96,8 +96,14 @@ static int bridge_create(uint64_t *token, const void *attr,
     pthread_attr_t native_attr;
     pthread_attr_t *translated = NULL;
     bool joinable = true;
+    size_t guard = 0;
+#ifdef MORROW_HAS_STACK_GUARDS
+    // The extended allocator can honour Bionic defaults for a NULL attr too.
+    {
+#else
     if (attr) {
-        result = android_thread_attr_compat_to_native(attr, &native_attr);
+#endif
+        result = android_thread_attr_compat_for_create(attr, &native_attr, &guard);
         if (result)
             return result;
         translated = &native_attr;
@@ -111,25 +117,29 @@ static int bridge_create(uint64_t *token, const void *attr,
     }
     pthread_mutex_lock(&registry_lock);
     ThreadEntry *entry = reserve_entry();
-    if (entry) {
-        entry->start = start;
-        entry->argument = argument;
-        entry->joinable = joinable;
-    }
-    pthread_mutex_unlock(&registry_lock);
     if (!entry) {
+        pthread_mutex_unlock(&registry_lock);
         if (translated) pthread_attr_destroy(translated);
         return EAGAIN;
     }
+    entry->start = start;
+    entry->argument = argument;
+    entry->joinable = joinable;
+#ifdef MORROW_HAS_STACK_GUARDS
+    extern size_t morrowSetThreadGuard(size_t);
+    size_t previous = morrowSetThreadGuard(guard);
+#endif
+    // A worker can detach itself immediately. Publish its native identity
+    // under the same lock used by detach and join before either can read it.
     result = pthread_create(&entry->native, translated, native_start, entry);
+#ifdef MORROW_HAS_STACK_GUARDS
+    morrowSetThreadGuard(previous);
+#endif
+    if (result) entry->occupied = false;
+    else *token = (uint64_t)(uintptr_t)entry;
+    pthread_mutex_unlock(&registry_lock);
     if (translated) pthread_attr_destroy(translated);
-    if (result) {
-        pthread_mutex_lock(&registry_lock);
-        entry->occupied = false;
-        pthread_mutex_unlock(&registry_lock);
-        return result;
-    }
-    *token = (uint64_t)(uintptr_t)entry;
+    if (result) return result;
     return 0;
 }
 

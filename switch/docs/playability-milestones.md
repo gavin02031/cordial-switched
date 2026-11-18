@@ -202,3 +202,11 @@ calls write into caller-owned storage. The calendar tests cover the New Year
 boundary west of UTC, the valid timestamp -1, and formatting a guest-supplied
 timezone containing a percent sign. Extended nonstandard format modifiers
 still depend on the native formatter.
+
+The preview's pinned libnx stack allocator reserves an unmapped prefix for
+Android joinable workers. With default attributes this is 16 KiB, below a
+992 KiB requested stack. Guard reservations share libnx's virtual-memory
+lock with mapping and survive until successful stack unmapping. In the L3
+report, `guest_stack_guard_join=0 unmapped_16k=1 released=1` requires a
+worker to inspect its stack and the kernel memory map and then join. That
+result has not yet been observed on a console.

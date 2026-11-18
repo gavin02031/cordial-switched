@@ -23,7 +23,7 @@ LDFLAGS     := -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notd
 LIBS        := `sdl2-config --libs` `$(PREFIX)pkg-config --libs SDL2_ttf` -lGLESv2 -lEGL -lglapi -ldrm_nouveau -lnx -lm
 LIBDIRS     := $(MORROW_LIBNX) $(PORTLIBS) $(LIBNX)
 ifneq ($(strip $(MORROW_LIBNX)),)
-CFLAGS += -DMORROW_HAS_POSITIONAL_IO
+CFLAGS += -DMORROW_HAS_POSITIONAL_IO -DMORROW_HAS_STACK_GUARDS
 endif
 
 # The proven graphics preview remains unchanged by default. The JNI-enabled

@@ -95,6 +95,18 @@ int main(void)
     pthread_attr_t native;
 #ifdef __SWITCH__
     assert(android_thread_attr_compat_to_native(&frame.value, &native) == ENOTSUP);
+#ifdef MORROW_HAS_STACK_GUARDS
+    size_t reserved_guard = 0;
+    assert(android_thread_attr_compat_for_create(NULL, &native, &reserved_guard) == 0);
+    assert(reserved_guard == 16384);
+    assert(pthread_attr_destroy(&native) == 0);
+    assert(setguard(&frame.value, 4097) == 0);
+    assert(android_thread_attr_compat_for_create(&frame.value, &native, &reserved_guard) == 0);
+    assert(reserved_guard == 8192);
+    assert(pthread_attr_destroy(&native) == 0);
+    assert(setguard(&frame.value, SIZE_MAX) == 0);
+    assert(android_thread_attr_compat_for_create(&frame.value, &native, &reserved_guard) == EINVAL);
+#endif
     assert(setguard(&frame.value, 0) == 0);
     assert(setstack(&frame.value, 16385) == 0);
     assert(android_thread_attr_compat_to_native(&frame.value, &native) == 0);

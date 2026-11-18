@@ -117,9 +117,16 @@ static int android_attr_getstack(const void *address, void **stack_base,
     return 0;
 }
 
-int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *native)
+int android_thread_attr_compat_for_create(const void *address, pthread_attr_t *native,
+                                          size_t *guard)
 {
-    if (!address || !native)
+    AndroidPthreadAttr defaults;
+    if (!address) {
+        android_attr_init(&defaults);
+        address = &defaults;
+    }
+    if (guard) *guard = 0;
+    if (!native)
         return EINVAL;
     const AndroidPthreadAttr *attr = address;
     // Bionic's user-owned stacks and non-default schedulers require further
@@ -134,9 +141,18 @@ int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *na
 #ifdef __SWITCH__
     // libsysbase ignores detached state in thread_create and rejects even a
     // zero-sized guard through setguardsize. Do not promise either feature.
-    if (attr->guard_size || (attr->flags & ANDROID_ATTR_DETACHED))
+    if (attr->guard_size) {
+#ifdef MORROW_HAS_STACK_GUARDS
+        if (!guard) return ENOTSUP;
+        if (attr->guard_size > PTRDIFF_MAX - 4095) return EINVAL;
+        *guard = (attr->guard_size + 4095) & ~(size_t)4095;
+#else
         return ENOTSUP;
-    if (attr->stack_size > SIZE_MAX - 4095) return EINVAL;
+#endif
+    }
+    if (attr->flags & ANDROID_ATTR_DETACHED)
+        return ENOTSUP;
+    if (attr->stack_size > PTRDIFF_MAX - 4095) return EINVAL;
     size_t native_stack_size = (attr->stack_size + 4095) & ~(size_t)4095;
 #else
     size_t native_stack_size = attr->stack_size;
@@ -155,6 +171,12 @@ int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *na
     if (result)
         pthread_attr_destroy(native);
     return result;
+}
+
+int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *native)
+{
+    if (!address) return EINVAL;
+    return android_thread_attr_compat_for_create(address, native, NULL);
 }
 
 bool android_thread_attr_compat_resolve(const char *name, const char *version,
