@@ -180,10 +180,17 @@ Neither those results nor a successful cross-build demonstrates a Roblox frame.
 The guest sysconf adapter translates Android's page-size aliases and CPU and
 memory queries. On Horizon it uses the core mask and memory budget available
 to the current process. Unknown queries return EINVAL. A host staging scan of
-the private image identified above resolved 425 distinct imports and missed
-157, including two weak imports. The host disables target-only graphics
+the private image identified above resolved 426 distinct imports and missed
+156, including two weak imports. The host disables target-only graphics
 providers. Use the console inventory for milestone A.
 
 Legacy IPv4 DNS lookups now keep the returned address list alive until the
 thread replaces it or exits. The host test checks two threads resolving
 different IPv4 addresses. Live DNS and Roblox login on Horizon remain unverified.
+
+Calendar conversion functions now use the full 56-byte Bionic ARM64 struct tm.
+UTC and local results include the offset and timezone name, and reentrant
+calls write into caller-owned storage. The calendar tests cover the New Year
+boundary west of UTC, the valid timestamp -1, and formatting a guest-supplied
+timezone containing a percent sign. Extended nonstandard format modifiers
+still depend on the native formatter.

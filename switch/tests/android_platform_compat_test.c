@@ -817,6 +817,38 @@ int main(void)
     assert(setenv("TZ", "EST5EDT", 1) == 0);
     tzset();
     assert(*guest_timezone == 18000 && *guest_daylight != 0);
+    typedef struct {
+        int fields[9];
+        long offset;
+        const char *zone;
+    } AndroidCalendar;
+    AndroidCalendar cal;
+    assert(android_libc_compat_resolve("localtime_r", "LIBC", "libc.so", &address));
+    AndroidCalendar *(*local_calendar)(const time_t *, AndroidCalendar *) = (void *)(uintptr_t)address;
+    assert(local_calendar(&epoch, &cal) == &cal);
+    assert(cal.fields[5] == 69 && cal.fields[3] == 31 && cal.fields[2] == 19);
+    assert(cal.offset == -18000 && !strcmp(cal.zone, "EST"));
+    assert(android_libc_compat_resolve("mktime", "LIBC", "libc.so", &address));
+    time_t (*make_time)(AndroidCalendar *) = (void *)(uintptr_t)address;
+    assert(make_time(&cal) == 0 && cal.offset == -18000);
+    --cal.fields[0];
+    assert(make_time(&cal) == -1 && cal.fields[0] == 59);
+    assert(android_libc_compat_resolve("gmtime_r", "LIBC", "libc.so", &address));
+    AndroidCalendar *(*utc_calendar)(const time_t *, AndroidCalendar *) = (void *)(uintptr_t)address;
+    assert(utc_calendar(&epoch, &cal) == &cal && cal.offset == 0 && cal.zone);
+    assert(android_libc_compat_resolve("strftime_l", "LIBC", "libc.so", &address));
+    size_t (*format_time)(char *, size_t, const char *, const AndroidCalendar *, locale_t) =
+        (void *)(uintptr_t)address;
+    char calendar_text[80];
+    locale_t locale = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    assert(locale);
+    cal.zone = "A%B";
+    cal.offset = 19800;
+    const char *expected = "1970-01-01 +0530 A%B %z";
+    assert(format_time(calendar_text, strlen(expected) + 1, "%F %z %Z %%z", &cal, locale) == strlen(expected));
+    assert(!strcmp(calendar_text, expected));
+    assert(format_time(calendar_text, strlen(expected), "%F %z %Z %%z", &cal, locale) == 0);
+    freelocale(locale);
     assert(!strcmp(guest_zones[0], "EST") && !strcmp(guest_zones[1], "EDT"));
     assert(setenv("TZ", "UTC0", 1) == 0);
     tzset();

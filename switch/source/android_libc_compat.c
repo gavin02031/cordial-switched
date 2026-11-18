@@ -10,6 +10,7 @@
 #include <stdatomic.h>
 #include <ctype.h>
 #include <math.h>
+#include <locale.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -294,6 +295,154 @@ static void *android_memrchr(const void *data, int character, size_t count)
             return (void *)(bytes + count);
     }
     return NULL;
+}
+
+// Android LP64 has two fields after the nine POSIX ints. Newlib's struct tm
+// may end at tm_isdst. Returning a native pointer exposes unrelated memory
+// when a guest reads the timezone fields.
+typedef struct {
+    int fields[9];
+    long offset;
+    const char *zone;
+} GuestTm;
+_Static_assert(sizeof(GuestTm) == 56 && offsetof(GuestTm, offset) == 40 &&
+               offsetof(GuestTm, zone) == 48 && sizeof(time_t) == 8, "Bionic LP64 calendar ABI");
+
+static void export_tm(GuestTm *guest, const struct tm *t)
+{
+    int fields[] = {t->tm_sec, t->tm_min, t->tm_hour, t->tm_mday, t->tm_mon,
+                    t->tm_year, t->tm_wday, t->tm_yday, t->tm_isdst};
+    memcpy(guest->fields, fields, sizeof(fields));
+}
+
+static struct tm import_tm(const GuestTm *t)
+{
+    return (struct tm){.tm_sec = t->fields[0], .tm_min = t->fields[1],
+        .tm_hour = t->fields[2], .tm_mday = t->fields[3], .tm_mon = t->fields[4],
+        .tm_year = t->fields[5], .tm_wday = t->fields[6], .tm_yday = t->fields[7],
+        .tm_isdst = t->fields[8]};
+}
+
+static GuestTm *guest_gmtime_r(const time_t *when, GuestTm *out)
+{
+    struct tm native;
+    if (!gmtime_r(when, &native)) return NULL;
+    export_tm(out, &native);
+    out->offset = 0;
+    out->zone = "UTC";
+    return out;
+}
+
+static GuestTm *guest_localtime_r(const time_t *when, GuestTm *out)
+{
+    struct tm native, utc;
+    if (!localtime_r(when, &native) || !gmtime_r(when, &utc)) return NULL;
+    // The local and UTC dates for the same instant differ by at most one
+    // day. Comparing year too handles New Year's Eve in either direction.
+    long days = native.tm_year == utc.tm_year ? native.tm_yday - utc.tm_yday :
+                native.tm_year > utc.tm_year ? 1 : -1;
+    export_tm(out, &native);
+    out->offset = days * 86400 + (native.tm_hour - utc.tm_hour) * 3600 +
+                  (native.tm_min - utc.tm_min) * 60 + native.tm_sec - utc.tm_sec;
+    out->zone = tzname[native.tm_isdst > 0];
+    return out;
+}
+
+static _Thread_local GuestTm calendar_result;
+
+static GuestTm *guest_gmtime(const time_t *when)
+{
+    return guest_gmtime_r(when, &calendar_result);
+}
+
+static GuestTm *guest_localtime(const time_t *when)
+{
+    return guest_localtime_r(when, &calendar_result);
+}
+
+static time_t guest_mktime(GuestTm *when)
+{
+    struct tm native = import_tm(when);
+    // -1 is both an error and a valid instant. On success mktime supplies
+    // the weekday even when the input did not contain one.
+    native.tm_wday = -1;
+    time_t stamp = mktime(&native);
+    if (stamp != (time_t)-1 || native.tm_wday != -1)
+        guest_localtime_r(&stamp, when);
+    return stamp;
+}
+
+// Newlib obtains %z and %Z from process TZ. Android reads the two extra
+// fields of its struct tm, even after TZ changes or when formatting gmtime.
+static const char *next_zone(const char *p, const char **code)
+{
+    while ((p = strchr(p, '%'))) {
+        const char *spec = p + 1;
+        if (*spec == 'E' || *spec == 'O') ++spec;
+        if (*spec == 'z' || *spec == 'Z') { *code = spec; return p; }
+        if (!*spec) break;
+        p = spec + 1;
+    }
+    return NULL;
+}
+
+static size_t guest_strftime(char *out, size_t capacity, const char *format, const GuestTm *t)
+{
+    if (!capacity) return 0;
+    struct tm native = import_tm(t);
+    const char *code, *start = next_zone(format, &code);
+    if (!start) return strftime(out, capacity, format, &native);
+    const char *zone = t->zone;
+    if ((!zone || !*zone) && t->fields[8] >= 0) zone = tzname[t->fields[8] > 0];
+    if (!zone) zone = "";
+    char offset[32];
+    unsigned long seconds = t->offset < 0 ? 0UL - (unsigned long)t->offset : (unsigned long)t->offset;
+    snprintf(offset, sizeof(offset), "%c%02lu%02lu",
+             t->offset < 0 || (!seconds && zone[0] == '-') ? '-' : '+',
+             seconds / 3600, seconds / 60 % 60);
+
+    // Replace timezone conversions with literal text. Percent signs in a
+    // supplied abbreviation must never become new formatting directives.
+    size_t zone_size = strlen(zone);
+    for (const char *p = zone; (p = strchr(p, '%')); ++p) {
+        if (zone_size == SIZE_MAX) return 0;
+        ++zone_size;
+    }
+    size_t size = strlen(format) + 1;
+    const char *scan = start;
+    while (scan) {
+        size_t add = *code == 'z' ? strlen(offset) : zone_size;
+        size -= (size_t)(code - scan + 1);
+        if (add > SIZE_MAX - size) return 0;
+        size += add;
+        scan = next_zone(code + 1, &code);
+    }
+    char local[128], *expanded = size <= sizeof(local) ? local : malloc(size);
+    if (!expanded) return 0;
+    char *dest = expanded;
+    const char *p = format;
+    while ((start = next_zone(p, &code))) {
+        size_t n = (size_t)(start - p);
+        memcpy(dest, p, n);
+        dest += n;
+        for (const char *literal = *code == 'z' ? offset : zone; *literal; ++literal) {
+            if (*literal == '%') *dest++ = '%';
+            *dest++ = *literal;
+        }
+        p = code + 1;
+    }
+    strcpy(dest, p);
+    size_t result = strftime(out, capacity, expanded, &native);
+    if (expanded != local) free(expanded);
+    return result;
+}
+
+static size_t guest_strftime_l(char *out, size_t capacity, const char *format,
+                              const GuestTm *t, locale_t locale)
+{
+    // Bionic implements strftime_l using the same C-locale formatter.
+    (void)locale;
+    return guest_strftime(out, capacity, format, t);
 }
 
 static int android_getpagesize(void)
@@ -656,12 +805,6 @@ bool android_libc_compat_resolve(const char *name, const char *version,
     MAP_LIBC(write)
     MAP_LIBC(fsync)
     MAP_LIBC(strerror)
-    MAP_LIBC(gmtime)
-    MAP_LIBC(gmtime_r)
-    MAP_LIBC(strftime)
-    MAP_LIBC(localtime)
-    MAP_LIBC(localtime_r)
-    MAP_LIBC(mktime)
     MAP_LIBC(clock)
     MAP_LIBC(tzset)
     MAP_LIBC(inet_pton)
@@ -687,6 +830,20 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         *address = (uint64_t)(uintptr_t)&android_memrchr;
     else if (strcmp(name, "getauxval") == 0)
         *address = (uint64_t)(uintptr_t)&android_getauxval;
+    else if (strcmp(name, "strftime") == 0)
+        *address = (uintptr_t)&guest_strftime;
+    else if (strcmp(name, "strftime_l") == 0)
+        *address = (uintptr_t)&guest_strftime_l;
+    else if (strcmp(name, "gmtime") == 0)
+        *address = (uint64_t)(uintptr_t)&guest_gmtime;
+    else if (strcmp(name, "gmtime_r") == 0)
+        *address = (uint64_t)(uintptr_t)&guest_gmtime_r;
+    else if (strcmp(name, "localtime") == 0)
+        *address = (uint64_t)(uintptr_t)&guest_localtime;
+    else if (strcmp(name, "localtime_r") == 0)
+        *address = (uint64_t)(uintptr_t)&guest_localtime_r;
+    else if (strcmp(name, "mktime") == 0)
+        *address = (uint64_t)(uintptr_t)&guest_mktime;
     else if (strcmp(name, "sysconf") == 0)
         *address = (uint64_t)(uintptr_t)&android_sysconf;
     else if (strcmp(name, "getpagesize") == 0)
