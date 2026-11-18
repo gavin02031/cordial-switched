@@ -32,3 +32,17 @@ int64_t android_virtual_next_expiry_ms(const int *fds, int count)
     }
     return soonest;
 }
+
+static void (*close_hook)(int fd);
+
+void android_virtual_register_close_hook(void (*hook)(int fd))
+{
+    // Single consumer (epoll), registered once at first instance create;
+    // an idempotent pointer store needs no lock.
+    close_hook = hook;
+}
+
+void android_virtual_notify_close(int fd)
+{
+    if (close_hook) close_hook(fd);
+}

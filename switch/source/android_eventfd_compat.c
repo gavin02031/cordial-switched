@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "android_eventfd_compat.h"
+#include "android_virtual_fd.h"
 
 #include <errno.h>
 #include <pthread.h>
@@ -275,6 +276,9 @@ int android_eventfd_close(int fd)
     pthread_cond_broadcast(&object->readable);
     pthread_cond_broadcast(&object->writable);
     pthread_mutex_unlock(&object->lock);
+    // Linux drops epoll watches when the file description is released;
+    // notify before waking so waiters rescan without the dead watch.
+    android_virtual_notify_close(fd);
     android_virtual_note_change();
     return 0;
 }

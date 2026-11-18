@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "android_eventfd_compat.h"
+#include "android_virtual_fd.h"
 
 // Linux timerfd semantics, lazily evaluated: the object records the arm
 // time and interval in nanoseconds; reads and readiness queries fold
@@ -289,6 +290,9 @@ int android_timerfd_close(int fd)
     object->expirations = 0;
     pthread_cond_broadcast(&object->changed);
     pthread_mutex_unlock(&object->lock);
+    // Linux drops epoll watches when the file description is released;
+    // notify before waking so waiters rescan without the dead watch.
+    android_virtual_notify_close(fd);
     android_virtual_note_change();
     return 0;
 }

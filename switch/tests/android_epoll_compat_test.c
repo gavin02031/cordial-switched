@@ -13,6 +13,8 @@
 
 #define EPOLLIN_T  0x001u
 #define EPOLLOUT_T 0x004u
+#define EPOLLRDHUP_T 0x2000u
+#define EPOLLEXCLUSIVE_T (1u << 28)
 #define EPOLLONESHOT_T (1u << 30)
 #define EPOLLET_T  (1u << 31)
 
@@ -52,6 +54,14 @@ static void *blocked_waiter(void *unused)
     return NULL;
 }
 
+static void *blocked_waiter_negative(void *unused)
+{
+    (void)unused;
+    wait_result = android_epoll_wait(wait_fd, &wait_events[0].events,
+                                     (uint64_t *)&wait_events[0].data, 1, -7);
+    return NULL;
+}
+
 int main(void)
 {
     resolve("epoll_create1", &epoll_create1_fn);
@@ -73,9 +83,23 @@ int main(void)
     assert(epoll_ctl_fn(epfd, 1, efd, &event) == -1 && errno == EEXIST);
     errno = 0;
     assert(epoll_ctl_fn(epfd, 1, 1, &event) == -1 && errno == EPERM);
+    // fs/eventpoll.c applies no generic mask validation: EPOLLRDHUP and
+    // other bits are accepted and stored, never fired by these objects.
+    assert(epoll_ctl_fn(epfd, 2, efd, NULL) == 0); // drop the watch first
+    TestEpollEvent rdhup = {EPOLLIN_T | EPOLLRDHUP_T, 0, 0xFE};
+    assert(epoll_ctl_fn(epfd, 1, efd, &rdhup) == 0);
+    assert(epoll_ctl_fn(epfd, 2, efd, NULL) == 0); // remove the probe
+    assert(epoll_ctl_fn(epfd, 1, efd, &event) == 0); // restore the watch
+    // EPOLLEXCLUSIVE is refused on ADD and MOD (kernel refuses MOD; its
+    // exclusive-wakeup distribution is not implemented).
+    TestEpollEvent exclusive = {EPOLLIN_T | EPOLLEXCLUSIVE_T, 0, 0};
     errno = 0;
-    TestEpollEvent bad = {0x8000u, 0, 0}; // EPOLLRDHUP: outside the subset
-    assert(epoll_ctl_fn(epfd, 1, efd, &bad) == -1 && errno == EINVAL);
+    assert(epoll_ctl_fn(epfd, 1, efd, &exclusive) == -1 && errno == EINVAL);
+    errno = 0;
+    assert(epoll_ctl_fn(epfd, 3, efd, &exclusive) == -1 && errno == EINVAL);
+    // MOD with an arbitrary unknown bit is accepted, as the kernel does.
+    TestEpollEvent unknown = {EPOLLIN_T | (1u << 20), 0, 0xDEADBEEFULL};
+    assert(epoll_ctl_fn(epfd, 3, efd, &unknown) == 0);
     errno = 0;
     assert(epoll_ctl_fn(epfd, 9, efd, &event) == -1 && errno == EINVAL);
 
@@ -200,10 +224,36 @@ int main(void)
         assert(new_fd != old_fd); // generation-advanced, never recycled
         assert(android_epoll_wait(epfd3, &wait_events[0].events,
                                   (uint64_t *)&wait_events[0].data, 4,
-                                  0) == 0); // old watch stays silent
-        assert(android_epoll_ctl(epfd3, 2, old_fd, 0, 0) == 0); // DEL works
+                                  0) == 0); // closed object reports nothing
+        // Linux drops the watch at close (eventpoll_release_file), so a
+        // later DEL fails ENOENT rather than succeeding.
+        errno = 0;
+        assert(android_epoll_ctl(epfd3, 2, old_fd, 0, 0) == -1 &&
+               errno == ENOENT);
         assert(android_epoll_close(epfd3) == 0);
         assert(android_eventfd_close(new_fd) == 0);
+    }
+
+    // Any negative timeout is an infinite wait (ep_timeout_to_timespec:
+    // ms < 0 returns NULL), not just -1. Use -7 with a delayed armer.
+    {
+        int epfd4 = android_epoll_create();
+        int efd4 = android_eventfd_create(0, 0);
+        assert(android_epoll_ctl(epfd4, 1, efd4, EPOLLIN_T, 0x777) == 0);
+        wait_fd = epfd4;
+        wait_result = -2;
+        memset(wait_events, 0, sizeof(wait_events));
+        pthread_t thread2;
+        assert(pthread_create(&thread2, NULL, blocked_waiter_negative,
+                              NULL) == 0);
+        struct timespec pause2 = {0, 20000000};
+        nanosleep(&pause2, NULL);
+        one = 1;
+        assert(android_eventfd_write(efd4, &one, 8) == 8);
+        assert(pthread_join(thread2, NULL) == 0);
+        assert(wait_result == 1 && wait_events[0].data == 0x777);
+        assert(android_epoll_close(epfd4) == 0);
+        assert(android_eventfd_close(efd4) == 0);
     }
 
     // maxevents validation.

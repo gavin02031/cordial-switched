@@ -11,27 +11,32 @@
 // Linux epoll semantics, subset. Bionic passes the ABI through unchanged
 // (aarch64 struct epoll_event is 16 bytes: u32 events + 8-byte data at
 // offset 8; flags are the asm-generic values verified against bionic's
-// kernel uapi eventpoll.h). The supported set is deliberately narrow and
-// every deviation is explicit:
-//   - targets must be Morrow-virtual descriptors (eventfd today); a host
-//     fd or anything else fails EPERM, as Linux does for fds without a
-//     poll method - never silently level-poll a socket or file;
-//   - accepted event mask: EPOLLIN, EPOLLOUT, EPOLLERR, EPOLLHUP,
-//     EPOLLONESHOT, EPOLLET; edge-triggered watches report only on a
-//     not-ready -> ready transition of the watched set, per Linux;
+// kernel uapi eventpoll.h). Validation follows fs/eventpoll.c (v6.12):
+//   - the kernel applies no generic event-mask validation; unknown bits
+//     (EPOLLPRI, EPOLLRDHUP, ...) are accepted, stored, and simply never
+//     fire for our object kinds, so they are accepted here too;
+//   - EPOLLEXCLUSIVE is refused with EINVAL on both ADD and MOD: MOD is
+//     exactly the kernel's rule, and on ADD the exclusive-wakeup
+//     distribution is not implemented, so it is refused explicitly
+//     rather than accepted and silently broadcast;
+//   - targets must be Morrow-virtual descriptors; a host fd or anything
+//     else fails EPERM, as Linux does for fds without a poll method -
+//     never silently level-poll a socket or file;
+//   - edge-triggered watches report only on a not-ready -> ready
+//     transition of the watched set, per Linux;
 //   - readiness is recomputed from the live objects on every wake, so a
-//     descriptor closed or drained by another thread is never reported
-//     from stale state; a watch on a closed descriptor goes silent (the
-//     Linux file-description-teardown behavior) and DEL still finds it.
+//     descriptor drained by another thread is never reported from stale
+//     state; closing a watched descriptor drops its watches at close
+//     time (Linux file-description teardown via eventpoll_release_file),
+//     after which DEL fails ENOENT.
 
 #define EPOLLIN_V     0x001u
 #define EPOLLOUT_V    0x004u
 #define EPOLLERR_V    0x008u
 #define EPOLLHUP_V    0x010u
+#define EPOLLEXCLUSIVE_V (1u << 28)
 #define EPOLLONESHOT_V (1u << 30)
 #define EPOLLET_V     (1u << 31)
-#define EPOLL_SUPPORTED (EPOLLIN_V | EPOLLOUT_V | EPOLLERR_V | \
-                         EPOLLHUP_V | EPOLLONESHOT_V | EPOLLET_V)
 
 #define EPOLL_MAX_INSTANCES 32
 #define EPOLL_MAX_WATCHES 128
@@ -71,9 +76,31 @@ static VirtualEpoll *instance_for(int epfd)
     return (instance->in_use && instance->current_fd == epfd) ? instance : NULL;
 }
 
+// Linux removes a watch when the watched file description is released
+// (eventpoll_release_file). Registered as the virtual-fd close hook; a
+// closed object never reports again and DEL then fails ENOENT.
+static void drop_watches_for(int fd)
+{
+    pthread_mutex_lock(&instances_lock);
+    for (int s = 0; s < EPOLL_MAX_INSTANCES; s++) {
+        VirtualEpoll *instance = &instances[s];
+        if (!instance->in_use) continue;
+        for (int i = 0; i < instance->watch_count; i++) {
+            if (instance->watches[i].fd != fd) continue;
+            instance->watch_count--;
+            if (i < instance->watch_count)
+                instance->watches[i] =
+                    instance->watches[instance->watch_count];
+            i--;
+        }
+    }
+    pthread_mutex_unlock(&instances_lock);
+}
+
 int android_epoll_create(void)
 {
     pthread_mutex_lock(&instances_lock);
+    android_virtual_register_close_hook(drop_watches_for);
     int slot = -1;
     for (int i = 0; i < EPOLL_MAX_INSTANCES; i++) {
         if (!instances[i].in_use) { slot = i; break; }
@@ -112,7 +139,14 @@ bool android_epoll_is_virtual(int fd)
 int android_epoll_ctl(int epfd, int operation, int fd,
                       uint32_t events, uint64_t data)
 {
-    if (operation == 1 && (events & ~EPOLL_SUPPORTED)) {
+    // fs/eventpoll.c validates only EPOLLEXCLUSIVE: EINVAL on MOD,
+    // EINVAL on ADD for combinations we also reject. Exclusive-wakeup
+    // distribution is not implemented, so ADD is refused too - an
+    // explicit refusal, not a silent behavior difference. Every other
+    // mask bit is accepted and stored, exactly as the kernel stores it;
+    // bits no object ever raises can never fire.
+    if ((operation == 1 || operation == 3) &&
+        (events & EPOLLEXCLUSIVE_V)) {
         errno = EINVAL;
         return -1;
     }
@@ -225,9 +259,9 @@ int android_epoll_wait(int epfd, uint32_t *out_events, uint64_t *out_data,
             if (!android_virtual_readiness_edges(watch->fd, &live,
                                                  &read_edges,
                                                  &write_edges)) {
-                // Watched object closed: with the description gone, Linux
-                // removes the interest silently; matching that, the watch
-                // simply never reports again (DEL still finds it).
+                // Watched object already closed: the close hook drops
+                // watches eagerly, so this is only the narrow race of a
+                // close that has not notified yet; stay silent for it.
                 watch->was_ready = false;
                 continue;
             }
