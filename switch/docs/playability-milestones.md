@@ -180,6 +180,10 @@ Neither those results nor a successful cross-build demonstrates a Roblox frame.
 The guest sysconf adapter translates Android's page-size aliases and CPU and
 memory queries. On Horizon it uses the core mask and memory budget available
 to the current process. Unknown queries return EINVAL. A host staging scan of
-the private image identified above resolved 424 distinct imports and missed
-158, including two weak imports. The host disables target-only graphics
+the private image identified above resolved 425 distinct imports and missed
+157, including two weak imports. The host disables target-only graphics
 providers. Use the console inventory for milestone A.
+
+Legacy IPv4 DNS lookups now keep the returned address list alive until the
+thread replaces it or exits. The host test checks two threads resolving
+different IPv4 addresses. Live DNS and Roblox login on Horizon remain unverified.

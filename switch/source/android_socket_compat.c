@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/select.h>
 #include <netinet/in.h>
 #include <stddef.h>
@@ -69,6 +70,78 @@ enum {
     GUEST_AI_ADDRCONFIG = 0x0400,
     GUEST_AI_V4MAPPED = 0x0800,
 };
+
+// libnx allocates each hostent; Bionic callers borrow the result until
+// the next lookup on their thread. All nested pointers share its lifetime.
+_Static_assert(sizeof(struct hostent) == 32 && offsetof(struct hostent, h_name) == 0 &&
+               offsetof(struct hostent, h_aliases) == 8 && offsetof(struct hostent, h_addrtype) == 16 &&
+               offsetof(struct hostent, h_length) == 20 && offsetof(struct hostent, h_addr_list) == 24,
+               "Android LP64 hostent layout");
+static pthread_key_t host_key;
+static pthread_once_t host_once = PTHREAD_ONCE_INIT;
+static int host_key_error;
+
+#ifndef __SWITCH__
+typedef struct {
+    struct hostent entry;
+    char buffer[];
+} HostLookup;
+#endif
+
+static void free_lookup(void *lookup)
+{
+#ifdef __SWITCH__
+    freehostent(lookup);
+#else
+    free(lookup);
+#endif
+}
+
+static void make_host_key(void)
+{
+    host_key_error = pthread_key_create(&host_key, free_lookup);
+}
+
+static struct hostent *guest_gethostbyname(const char *name)
+{
+    if (!name) { errno = EINVAL; return NULL; }
+    if (!ready()) return NULL;
+    int error = pthread_once(&host_once, make_host_key);
+    if (error || host_key_error) { errno = error ? error : host_key_error; return NULL; }
+#ifdef __SWITCH__
+    struct hostent *entry = gethostbyname(name);
+    void *owner = entry;
+#else
+    struct hostent *entry = NULL;
+    HostLookup *owner = NULL;
+    size_t capacity = 1024;
+    for (;;) {
+        owner = malloc(sizeof(*owner) + capacity);
+        if (!owner) return NULL;
+        int resolver_error = 0;
+        error = gethostbyname_r(name, &owner->entry, owner->buffer, capacity, &entry, &resolver_error);
+        if (!error && entry) break;
+        free(owner);
+        if (error != ERANGE || capacity > (SIZE_MAX - sizeof(*owner)) / 2) {
+            h_errno = resolver_error;
+            if (error) errno = error;
+            return NULL;
+        }
+        capacity *= 2;
+    }
+#endif
+    if (!entry) return NULL;
+    if (entry->h_addrtype != AF_INET || entry->h_length != 4) {
+        free_lookup(owner);
+        errno = EAFNOSUPPORT;
+        return NULL;
+    }
+    void *old = pthread_getspecific(host_key);
+    error = pthread_setspecific(host_key, owner);
+    if (error) { free_lookup(owner); errno = error; return NULL; }
+    if (old) free_lookup(old);
+    return entry;
+}
 
 // Bionic puts ai_canonname before ai_addr. Linux/glibc puts ai_addr first;
 // copying native struct addrinfo into guest storage would corrupt pointers.
@@ -982,6 +1055,7 @@ bool android_socket_compat_resolve(const char *name, const char *version,
     }
     if (strcmp(version, "LIBC")) return false;
 #define MAP(symbol, target) if (!strcmp(name, symbol)) *address = (uint64_t)(uintptr_t)&target; else
+    MAP("gethostbyname", guest_gethostbyname)
     MAP("getnameinfo", guest_getnameinfo)
     MAP("poll", guest_poll)
     MAP("select", guest_select)

@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -518,6 +520,28 @@ static void messages_invalid_test(void)
     assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
 }
 
+static void *lookup_second_host(void *ptr)
+{
+    struct hostent *(*lookup)(const char *) = (void *)(uintptr_t)symbol("gethostbyname");
+    for (unsigned i = 0; i < 16; ++i) {
+        struct hostent *h = lookup("127.0.0.2");
+        assert(h && h->h_addrtype == 2 && h->h_length == 4 && h->h_addr_list[0][3] == 2);
+    }
+    return ptr;
+}
+
+static void legacy_dns_test(void)
+{
+    struct hostent *(*lookup)(const char *) = (void *)(uintptr_t)symbol("gethostbyname");
+    struct hostent *first = lookup("127.0.0.1");
+    assert(first && first->h_name && first->h_addr_list[0][3] == 1);
+    pthread_t worker;
+    assert(pthread_create(&worker, NULL, lookup_second_host, NULL) == 0);
+    assert(pthread_join(worker, NULL) == 0);
+    assert(first->h_addr_list[0][3] == 1);
+    assert(!lookup(NULL) && errno == EINVAL);
+}
+
 int main(void)
 {
     messages_invalid_test();
@@ -531,6 +555,7 @@ int main(void)
     udp_test();
     ipv6_test();
     dns_test();
+    legacy_dns_test();
     ip_text_test();
     puts("Android socket ABI tests passed (IPv4 TCP/UDP, IPv6, DNS, flags, readiness, message vectors and batching)");
     return 0;
