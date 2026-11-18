@@ -126,10 +126,20 @@ int main(void)
     assert(epoll_ctl_fn(epfd, 3, efd, &event) == 0); // re-arm
     assert(epoll_wait_fn(epfd, wait_events, 4, 0) == 1);
 
-    // EPOLLET is accepted (reported level-triggered, documented deviation).
+    // EPOLLET reports once per not-ready -> ready transition, not per wait.
     event.events = EPOLLIN_T | EPOLLET_T;
-    assert(epoll_ctl_fn(epfd, 3, efd, &event) == 0);
+    assert(epoll_ctl_fn(epfd, 3, efd, &event) == 0); // MOD re-arms the edge
+    assert(epoll_wait_fn(epfd, wait_events, 4, 0) == 1); // initial state edge
+    assert(epoll_wait_fn(epfd, wait_events, 4, 0) == 0); // no new transition
+    one = 1;
+    assert(android_eventfd_write(efd, &one, 8) == 8); // counter rises, not 0->1
+    assert(epoll_wait_fn(epfd, wait_events, 4, 0) == 0); // still no edge
+    assert(android_eventfd_read(efd, &one, 8) == 8);    // drain to 0
+    one = 2;
+    assert(android_eventfd_write(efd, &one, 8) == 8);   // 0 -> nonzero edge
     assert(epoll_wait_fn(epfd, wait_events, 4, 0) == 1);
+    assert(epoll_wait_fn(epfd, wait_events, 4, 0) == 0);
+    assert(android_eventfd_read(efd, &one, 8) == 8);
 
     // DEL removes the watch.
     assert(epoll_ctl_fn(epfd, 2, efd, NULL) == 0);
@@ -163,6 +173,38 @@ int main(void)
 
     // Bounded wait with no events returns 0 after the timeout.
     assert(epoll_wait_fn(epfd, wait_events, 4, 5) == 0);
+
+    // A bounded wait measures from call start: an unrelated change
+    // notification mid-wait must not extend the budget.
+    {
+        struct timespec before, after;
+        clock_gettime(CLOCK_MONOTONIC, &before);
+        // Bump the generation twice during the wait via unrelated objects.
+        int noise = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+        assert(android_eventfd_close(noise) == 0);
+        assert(epoll_wait_fn(epfd, wait_events, 4, 60) == 0);
+        clock_gettime(CLOCK_MONOTONIC, &after);
+        const long elapsed_ms = (after.tv_sec - before.tv_sec) * 1000L +
+                                (after.tv_nsec - before.tv_nsec) / 1000000L;
+        assert(elapsed_ms >= 55 && elapsed_ms < 3000);
+    }
+
+    // Close/reuse ABA: closing a watched eventfd and creating a new one
+    // (slot reuse) must not make the old watch report the new object.
+    {
+        int epfd3 = android_epoll_create();
+        int old_fd = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+        assert(android_epoll_ctl(epfd3, 1, old_fd, EPOLLIN_T, 0x111) == 0);
+        assert(android_eventfd_close(old_fd) == 0);
+        int new_fd = android_eventfd_create(9, ANDROID_EFD_NONBLOCK);
+        assert(new_fd != old_fd); // generation-advanced, never recycled
+        assert(android_epoll_wait(epfd3, &wait_events[0].events,
+                                  (uint64_t *)&wait_events[0].data, 4,
+                                  0) == 0); // old watch stays silent
+        assert(android_epoll_ctl(epfd3, 2, old_fd, 0, 0) == 0); // DEL works
+        assert(android_epoll_close(epfd3) == 0);
+        assert(android_eventfd_close(new_fd) == 0);
+    }
 
     // maxevents validation.
     errno = 0;

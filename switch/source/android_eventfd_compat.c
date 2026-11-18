@@ -20,13 +20,23 @@
 
 #define EVENTFD_MAX_OBJECTS 64
 #define EVENTFD_FD_BASE 0x3FFD0000
+#define EVENTFD_FD_GENERATIONS 1024
 #define EVENTFD_COUNTER_LIMIT UINT64_C(0xFFFFFFFFFFFFFFFE)
+
+// A virtual fd embeds a reuse generation (fd = BASE + gen*OBJECTS + slot)
+// so an epoll watch or a stale caller holding a closed fd can never alias
+// a NEW object that reused its slot: after close, the old number names
+// nothing (watches on it simply never report, like a destroyed Linux file
+// description).
 
 typedef struct {
     bool in_use;
     bool semaphore;
     bool nonblock;
+    int current_fd;
     uint64_t counter;
+    uint64_t read_edges;  // 0 -> nonzero transitions (EPOLLET, EPOLLIN)
+    uint64_t write_edges; // saturated -> writable transitions (EPOLLET, EPOLLOUT)
     pthread_mutex_t lock;
     pthread_cond_t readable;
     pthread_cond_t writable;
@@ -100,13 +110,19 @@ static void table_init(void)
 
 static VirtualEventFd *object_for(int fd)
 {
-    const int slot = fd - EVENTFD_FD_BASE;
-    if (slot < 0 || slot >= EVENTFD_MAX_OBJECTS) return NULL;
-    VirtualEventFd *object = &objects[slot];
-    return object->in_use ? object : NULL;
+    const int relative = fd - EVENTFD_FD_BASE;
+    if (relative < 0 ||
+        relative >= EVENTFD_MAX_OBJECTS * EVENTFD_FD_GENERATIONS)
+        return NULL;
+    VirtualEventFd *object = &objects[relative % EVENTFD_MAX_OBJECTS];
+    // Generation check: a closed-then-reused slot only answers to its
+    // current fd number.
+    return (object->in_use && object->current_fd == fd) ? object : NULL;
 }
 
-bool android_eventfd_poll_readiness(int fd, uint32_t *ready_events)
+bool android_eventfd_readiness_edges(int fd, uint32_t *ready_events,
+                                     uint64_t *read_edges,
+                                     uint64_t *write_edges)
 {
     VirtualEventFd *object = object_for(fd);
     if (!object) return false;
@@ -114,9 +130,16 @@ bool android_eventfd_poll_readiness(int fd, uint32_t *ready_events)
     uint32_t ready = 0;
     if (object->counter > 0) ready |= 0x001;             // EPOLLIN
     if (object->counter < EVENTFD_COUNTER_LIMIT) ready |= 0x004; // EPOLLOUT
-    pthread_mutex_unlock(&object->lock);
     if (ready_events) *ready_events = ready;
+    if (read_edges) *read_edges = object->read_edges;
+    if (write_edges) *write_edges = object->write_edges;
+    pthread_mutex_unlock(&object->lock);
     return true;
+}
+
+bool android_eventfd_poll_readiness(int fd, uint32_t *ready_events)
+{
+    return android_eventfd_readiness_edges(fd, ready_events, NULL, NULL);
 }
 
 int android_eventfd_create(unsigned initial, int flags)
@@ -143,17 +166,34 @@ int android_eventfd_create(unsigned initial, int flags)
     object->semaphore = (flags & ANDROID_EFD_SEMAPHORE) != 0;
     object->nonblock = (flags & ANDROID_EFD_NONBLOCK) != 0;
     object->counter = initial;
+    object->read_edges = 0;
+    object->write_edges = 0;
+    int generation = 0;
+    if (object->current_fd) // Slot reuse: advance the generation.
+        generation = (object->current_fd - EVENTFD_FD_BASE) /
+                     EVENTFD_MAX_OBJECTS + 1;
+    if (generation >= EVENTFD_FD_GENERATIONS) {
+        pthread_mutex_unlock(&object->lock);
+        pthread_mutex_unlock(&table_lock);
+        errno = EMFILE; // Slot's fd numbers exhausted; never recycle one.
+        return -1;
+    }
+    object->current_fd = EVENTFD_FD_BASE +
+                         generation * EVENTFD_MAX_OBJECTS + slot;
+    const int fd = object->current_fd;
     pthread_mutex_unlock(&object->lock);
     pthread_mutex_unlock(&table_lock);
     android_virtual_note_change();
     // EFD_CLOEXEC is accepted and intentionally a no-op: the guest cannot
     // exec on Horizon, so there is no exec boundary to close across.
-    return EVENTFD_FD_BASE + slot;
+    return fd;
 }
 
 bool android_eventfd_is_virtual(int fd)
 {
-    return fd >= EVENTFD_FD_BASE && fd < EVENTFD_FD_BASE + EVENTFD_MAX_OBJECTS;
+    const int relative = fd - EVENTFD_FD_BASE;
+    return relative >= 0 &&
+           relative < EVENTFD_MAX_OBJECTS * EVENTFD_FD_GENERATIONS;
 }
 
 ssize_t android_eventfd_read(int fd, void *buffer, size_t count)
@@ -177,6 +217,7 @@ ssize_t android_eventfd_read(int fd, void *buffer, size_t count)
         return -1;
     }
     uint64_t value;
+    const uint64_t before = object->counter;
     if (object->semaphore) {
         value = 1;
         object->counter--;
@@ -184,6 +225,7 @@ ssize_t android_eventfd_read(int fd, void *buffer, size_t count)
         value = object->counter;
         object->counter = 0;
     }
+    if (before == EVENTFD_COUNTER_LIMIT) object->write_edges++;
     pthread_cond_signal(&object->writable);
     pthread_mutex_unlock(&object->lock);
     android_virtual_note_change();
@@ -213,6 +255,7 @@ ssize_t android_eventfd_write(int fd, const void *buffer, size_t count)
         errno = EBADF;
         return -1;
     }
+    if (object->counter == 0 && value != 0) object->read_edges++;
     object->counter += value;
     pthread_cond_signal(&object->readable);
     pthread_mutex_unlock(&object->lock);

@@ -28,6 +28,14 @@ int android_eventfd_close(int fd);
 // when fd is not a live virtual eventfd.
 bool android_eventfd_poll_readiness(int fd, uint32_t *ready_events);
 
+// Edge accounting for EPOLLET: read_edges counts 0 -> nonzero counter
+// transitions, write_edges counts saturated -> writable transitions. A
+// transition between two epoll scans is still an edge, so edge-triggered
+// watches compare these instead of just the last scanned state.
+bool android_eventfd_readiness_edges(int fd, uint32_t *ready_events,
+                                     uint64_t *read_edges,
+                                     uint64_t *write_edges);
+
 // Change notification shared by every Morrow-virtual descriptor: any
 // eventfd create/read/write/close and any epoll_ctl bumps the generation.
 // android_virtual_wait_change blocks up to timeout_millis for the

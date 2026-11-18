@@ -11,9 +11,15 @@ document identifies instead of spinning or sleeping forever.
 Documented epoll subset boundaries (all refusals are deliberate):
 watches accept only Morrow-virtual descriptors (others fail EPERM, the
 Linux answer for fds with no poll method); the accepted event mask is
-EPOLLIN/EPOLLOUT/EPOLLERR/EPOLLHUP/EPOLLONESHOT plus EPOLLET, which is
-accepted but reported level-triggered - edge latching is NOT
-implemented; epoll_wait caps maxevents at 64.
+EPOLLIN/EPOLLOUT/EPOLLERR/EPOLLHUP/EPOLLONESHOT/EPOLLET with genuine
+edge semantics - per-object transition counters arbitrate edges that
+fall entirely between two scans (drained and refilled), and MOD re-arms
+an edge exactly as Linux re-registration does; epoll_wait caps maxevents
+at 64. Descriptor fds embed a reuse generation, so a stale fd or a watch
+on a closed object can never alias a new object that reused the slot
+(watches on closed objects go silent, matching Linux file-description
+teardown). Bounded waits budget from call start; unrelated change
+notifications cannot extend them.
 
 ## Verified constraints
 
