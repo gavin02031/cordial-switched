@@ -419,16 +419,19 @@ that same libnx TLS (nx/source/runtime/newlib.c). TPIDR_EL0 is therefore
 free for the guest: installing the bionic shadow TCB there does not
 collide with host errno, compiler TLS, or libnx thread data.
 
-Remaining validation before execution, kept honest: (1) any prebuilt
-portlib object that reads TPIDR_EL0 directly would still collide - the
+Remaining validation before execution, kept honest: (1) Morrow's own
+sources contain exactly two _Thread_local variables
+(android_egl_gles_compat.c pending_guest_error, android_libc_compat.c
+calendar_result), both reachable from guest calls into our providers -
+they are safe only because the toolchain routes compiler TLS through
+TPIDRRO_EL0 per the readtp.s evidence; if any prebuilt portlib object
+or future Morrow code reads TPIDR_EL0 directly it would collide, so the
 first console run with the bridge installed is the real test, and the
 bridge install/restore will be journaled so a fault sequence is
 attributable; (2) guest-created threads will each need their own TLS
 thread image and shadow TCB - single-thread bridge first; (3) the
 shadow's bionic slots (bionic_tls, dtv, stack_guard) must be filled
-from the prepared TLS thread image before install. Morrow's own C
-sources use no __thread/_Thread_local storage, so no host compiler-TLS
-reads of TPIDR_EL0 exist in our code today.
+from the prepared TLS thread image before install.
 
 Plan: tiny asm helpers to save/install/restore TPIDR_EL0 around the
 constructor sequence (later JNI_OnLoad too), per-constructor
