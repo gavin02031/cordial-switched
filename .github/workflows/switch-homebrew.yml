@@ -275,6 +275,7 @@ jobs:
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/android_eventfd_compat_test.c \
             switch/source/android_eventfd_compat.c \
+            switch/source/android_epoll_compat.c \
             switch/source/android_libc_compat.c -pthread -lm \
             -o /tmp/morrow-eventfd-test
           /tmp/morrow-eventfd-test
