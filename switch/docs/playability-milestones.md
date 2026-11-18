@@ -535,3 +535,10 @@ Also this push: the presented-property table groundwork
 table ships EMPTY; the provider consults it first and logs
 result=presented/empty so the first console run's query log drops in as
 data with no redesign.
+
+Recovery semantics for the constructor phase (reviewed 2026-11-18): a
+crash during constructors leaves the in-progress marker, which the next
+launch archives as crash-NN.txt with phase=constructors before the new
+run starts. Re-running constructors in that fresh process is correct -
+their side effects died with the crashed process - while within one
+process the run-once state machine still forbids blind re-execution.
