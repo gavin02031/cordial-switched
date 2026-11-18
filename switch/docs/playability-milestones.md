@@ -63,6 +63,14 @@ Milestone A list. Do not ask for a separate Switch run per missing symbol or
 substitute provider names inferred from source. The Switch remains necessary
 for checks of guest runtime behaviour and constructor execution.
 
+On 64-bit Linux, add `--host-providers` to compile the checked-out adapters
+with `cc` and query every exact import key. The resulting
+`host_provider_coverage` includes weak imports and marks each entry separately.
+For the x86-64 host build and image above, 426 resolved, 154 required and two
+optional imports were unavailable. A second scan of the staged relocation
+tables produced the same lookup results for every key. Switch-specific
+graphics are disabled in the host build.
+
 Optionally pass `--providers /path/to/providers.json`. This file is a JSON array
 of `{ "name": "pread", "version": "LIBC", "library": "libc.so" }` records
 obtained from a verified target provider inventory. Unversioned references use

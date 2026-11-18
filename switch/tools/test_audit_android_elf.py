@@ -1,10 +1,24 @@
+import ctypes
+import platform
+import shutil
 import struct
 import unittest
 from audit_android_elf import (parse_imports, svc_candidates,
                                text_section_ranges, section_svc_candidates,
-                               compare_provider_manifest)
+                               compare_provider_manifest, host_provider_coverage)
 
 class AuditTests(unittest.TestCase):
+    @unittest.skipUnless(platform.system() == 'Linux' and ctypes.sizeof(ctypes.c_void_p) == 8
+                         and shutil.which('cc'), 'requires the 64-bit Linux host compiler')
+    def test_host_provider_reports_exact_versions_and_weak_misses(self):
+        imports = [dict(name='mmap', version='LIBC', library='libc.so', required=True),
+                   dict(name='mmap', version='LIBC_N', library='libc.so', required=True),
+                   dict(name='morrow_optional_fixture', version=None, library=None, required=False)]
+        coverage = host_provider_coverage(imports)
+        self.assertEqual((coverage['supported'], coverage['missing_required'],
+                          coverage['missing_optional']), (1, 1, 1))
+        self.assertEqual([item['supported'] for item in coverage['imports']], [True, False, False])
+
     def test_versions_and_weak(self):
         symbols = ' 1: 00000000 0 FUNC GLOBAL DEFAULT UND pread@LIBC (2)\n 2: 00000000 0 NOTYPE WEAK DEFAULT UND optional\n'
         versions = 'Version needs section x:\n File: libc.so Cnt: 1\n Name: LIBC Flags: none Version: 2\n'

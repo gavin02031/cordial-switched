@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Read-only ARM64 import inventory. Never loads or executes the supplied ELF."""
 import argparse
+import ctypes
 import hashlib
 import json
+import platform
 import re
 import struct
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -218,14 +221,53 @@ def compare_provider_manifest(imports, providers):
     return missing, distinct
 
 
+def host_provider_coverage(imports):
+    """Query the host build of the same resolver the two Switch link paths use."""
+    if platform.system() != 'Linux' or ctypes.sizeof(ctypes.c_void_p) != 8:
+        raise ValueError('--host-providers requires a 64-bit Linux build host')
+    source = Path(__file__).resolve().parents[1] / 'source'
+    sources = sorted(source.glob('android_*_compat.c'))
+    sources.extend(source / name for name in (
+        'android_import_resolver.c', 'android_arm64_tcb_shadow.c', 'engine_tls_scratch.c'))
+    if platform.machine() == 'aarch64':
+        sources.append(source / 'android_bionic_setjmp.s')
+    with tempfile.TemporaryDirectory() as tmp:
+        library = Path(tmp) / 'host-providers.so'
+        subprocess.run(['cc', '-std=c11', '-O2', '-fPIC', '-shared', '-Wl,-z,defs',
+                        *sources, '-lm', '-pthread', '-o', library], check=True)
+        resolve = ctypes.CDLL(str(library)).android_import_resolve
+        resolve.restype = ctypes.c_bool
+        resolve.argtypes = [ctypes.c_char_p] * 3 + [ctypes.POINTER(ctypes.c_uint64)]
+        records = []
+        for item in imports:
+            args = [item[key].encode() if item[key] is not None else None
+                    for key in ('name', 'version', 'library')]
+            address = ctypes.c_uint64()
+            found = resolve(*args, ctypes.byref(address))
+            records.append(dict(item, supported=bool(found and address.value)))
+    return dict(platform='Linux', machine=platform.machine(),
+                supported=sum(row['supported'] for row in records),
+                missing_required=sum(row['required'] and not row['supported'] for row in records),
+                missing_optional=sum(not row['required'] and not row['supported'] for row in records),
+                imports=records)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf', type=Path)
     parser.add_argument('--readelf', default='llvm-readelf')
-    parser.add_argument('--providers', type=Path, help='JSON: target-verified list of {name, version, library} objects')
+    comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument('--host-providers', action='store_true',
+                            help='compile and query local Linux providers; diagnostic only')
+    comparison.add_argument('--providers', type=Path, help='JSON: target-verified list of {name, version, library} objects')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     report = inventory(args.elf, args.readelf)
+    if args.host_providers:
+        host = host_provider_coverage(report['imports'])
+        report['host_provider_coverage'] = host
+        print(f"Linux {host['machine']} providers: {host['supported']} supported, "
+              f"{host['missing_required']} required and {host['missing_optional']} optional missing")
     if args.providers:
         supplied = json.loads(args.providers.read_text())
         (report['missing_required'], report['missing_required_distinct']) = (
