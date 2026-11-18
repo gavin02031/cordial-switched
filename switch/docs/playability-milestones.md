@@ -469,3 +469,22 @@ sequencing, gate refusal consuming no state, and once-only semantics.
 Whether real guest constructors run clean on Horizon - with real bionic
 TLS reads through the installed TPIDR - is exactly what the next
 console run with Gavin answers; nothing here asserts it.
+
+Correction and review of the milestone-B wiring against the audited ELF
+(2026-11-18, same day): libroblox.so itself has no PT_TLS program header,
+no TLS relocations in .rela.plt or its packed .rela.dyn, imports no
+__tls_get_addr, and a full disassembly finds zero reads of tpidr_el0 or
+tpidrro_el0. For this binary the bridge never installs
+(guest_main_tls_ready=no) and constructors run without it; the paragraph
+above describes the mechanism for an ELF that does carry TLS, not this
+one's runtime path. Its stack-protected functions instead import
+__stack_chk_guard as a data symbol (GOT, version LIBC/libc.so) and
+__stack_chk_fail as a function - both already bound to host providers,
+so the canary scheme resolves without any thread-pointer state. The
+shadow TCB/DTV layout was re-reviewed against Bionic tls_defines.h
+(TP[-1] bionic_tls, TP[0] dtv, TP[1] thread_id, TP[5] stack_guard,
+TP[7] art_thread_self) and matches at those offsets; slots beyond 7 are
+absent, which stays a documented console-validation obligation for any
+future ELF that does use TLS. Journal durability remains best-effort: a
+fault inside the bridge or journal code itself is not guaranteed to
+leave the exact index.

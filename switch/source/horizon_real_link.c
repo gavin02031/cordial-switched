@@ -45,6 +45,7 @@
 #include "elf_probe.h"
 #include "engine_entry_probe.h"
 #include "engine_constructor_plan.h"
+#include "engine_constructor_run.h"
 #include "engine_execution_attempt.h"
 #include "engine_run_journal.h"
 #include "engine_memory_plan.h"

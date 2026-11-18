@@ -9,9 +9,12 @@
 #include "engine_tls_scratch.h"
 
 // One Android ELF module's isolated TLS storage on one native thread. This
-// provides a real per-thread copy and a diagnostic DTV image; it does not
-// install TPIDR_EL0, implement dynamic module generations or provide a Bionic
-// pthread_internal_t. In particular it must not be passed to Roblox yet.
+// provides a real per-thread copy and a single-module DTV image; it does not
+// implement dynamic module generations or provide a Bionic pthread_internal_t.
+// engine_guest_tpidr_install hands this layout to TPIDR_EL0 only when the
+// guest ELF ships a PT_TLS template; the audited ELF (libroblox.so) has none,
+// no TLS relocations and no TPIDR reads in its disassembly, so constructors
+// run without the bridge for this binary.
 typedef struct {
     uint64_t generation;
     unsigned char *modules[2]; // Slot 0 unused; the isolated ELF is module 1.
