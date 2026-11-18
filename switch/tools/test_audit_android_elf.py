@@ -18,6 +18,29 @@ class AuditTests(unittest.TestCase):
         self.assertEqual((coverage['supported'], coverage['missing_required'],
                           coverage['missing_optional']), (1, 1, 1))
         self.assertEqual([item['supported'] for item in coverage['imports']], [True, False, False])
+        self.assertEqual([item['target_registered'] for item in coverage['imports']],
+                         [False, False, False])
+        self.assertEqual(coverage['target_registered_required'], 0)
+
+    @unittest.skipUnless(platform.system() == 'Linux' and ctypes.sizeof(ctypes.c_void_p) == 8
+                         and shutil.which('cc'), 'requires the 64-bit Linux host compiler')
+    def test_host_provider_marks_target_registered_names(self):
+        imports = [dict(name='eglInitialize', version=None, library='libEGL.so', required=True),
+                   dict(name='glClear', version=None, library='libGLESv2.so', required=True),
+                   dict(name='setjmp', version='LIBC', library='libc.so', required=True),
+                   dict(name='mallinfo', version='LIBC', library='libc.so', required=True)]
+        coverage = host_provider_coverage(imports)
+        by_name = {item['name']: item for item in coverage['imports']}
+        # The host build disables the EGL/GLES catalogue and the ARM64 jump
+        # bridge, so those three are host-unsupported but target-registered;
+        # mallinfo resolves on host through the C-library heap adapter.
+        self.assertFalse(by_name['eglInitialize']['supported'])
+        self.assertTrue(by_name['eglInitialize']['target_registered'])
+        self.assertTrue(by_name['glClear']['target_registered'])
+        self.assertTrue(by_name['setjmp']['target_registered'])
+        self.assertTrue(by_name['mallinfo']['supported'])
+        self.assertFalse(by_name['mallinfo']['target_registered'])
+        self.assertEqual(coverage['target_registered_required'], 3)
 
     def test_versions_and_weak(self):
         symbols = ' 1: 00000000 0 FUNC GLOBAL DEFAULT UND pread@LIBC (2)\n 2: 00000000 0 NOTYPE WEAK DEFAULT UND optional\n'

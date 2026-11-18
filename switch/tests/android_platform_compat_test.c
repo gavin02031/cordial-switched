@@ -165,6 +165,24 @@ int main(void)
     assert(!android_libc_compat_resolve("localeconv", "LIBC", "libm.so", &address));
 
     typedef struct {
+        size_t arena, ordblks, smblks, hblks, hblkhd,
+               usmblks, fsmblks, uordblks, fordblks, keepcost;
+    } GuestMallinfo;
+    assert(android_libc_compat_resolve("mallinfo", "LIBC", "libc.so", &address));
+    GuestMallinfo (*guest_mallinfo)(void) =
+        (GuestMallinfo (*)(void))(uintptr_t)address;
+    GuestMallinfo heap = guest_mallinfo();
+    // Real counters from the host C-library heap: this process has allocated,
+    // so arena and in-use bytes must be nonzero. The four fields bionic
+    // documents as unused must report zero even though glibc counts hblks.
+    assert(heap.arena > 0 && heap.uordblks > 0);
+    assert(heap.smblks == 0 && heap.hblks == 0 &&
+           heap.usmblks == 0 && heap.fsmblks == 0);
+    assert(heap.uordblks <= heap.arena + heap.hblkhd);
+    assert(!android_libc_compat_resolve("mallinfo", "LIBC_N", "libc.so", &address));
+    assert(!android_libc_compat_resolve("mallinfo", "LIBC", "libm.so", &address));
+
+    typedef struct {
         void *name; uint32_t name_length; void *iov; size_t iov_length;
         void *control; size_t control_length; int flags;
     } GuestMessage;

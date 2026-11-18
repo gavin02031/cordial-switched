@@ -363,6 +363,50 @@ genuinely outstanding required import, deferred because its by-value return
 cannot fail closed and any host answer would describe the wrong allocator.
 None of this has run on a console.
 
+### C-library heap accounting, with a justified allocator strategy (2026-11-18)
+
+`mallinfo` now resolves. The earlier deferral rationale - that any answer
+would describe the wrong allocator because the guest statically links its
+own - applies identically on real Android: bionic `mallinfo` has never
+described an app's private allocator, only the C-library heap. The faithful
+binding therefore reports the C-library heap Morrow's providers allocate
+from, exactly the relationship bionic mallinfo has to bionic malloc.
+
+ABI and field semantics are evidence-grounded, not assumed. Bionic's
+`struct mallinfo` is ten `size_t` fields (bionic libc/include/malloc.h,
+`__MALLINFO_BODY`); devkitPro newlib's `struct mallinfo` uses the identical
+ten-`size_t` layout, so the binding needs no field translation on Switch
+and the by-value AAPCS64 return matches what the guest compiled against.
+Bionic documents `smblks`, `hblks`, `fsmblks` and `usmblks` as unused, so
+the binding reports zero there even where the backing allocator counts
+`hblks`; the other six fields are real counters. The by-value return cannot
+fail closed, so nothing is fabricated: a zero field is either bionic's
+documented unused answer or a true zero counter.
+
+Host audit: 487 of 576 required imports resolve on host. The remaining 93
+host-missing names are all target-registered, none genuinely outstanding:
+91 EGL/GLES2 names the host build compiles out (the resolver catalogue was
+verified name-for-name against the guest's import list - exact coverage,
+no gaps) and `setjmp`/`longjmp`, which the resolver registers only on
+AArch64 and whose bridge CI executes under qemu-aarch64. Registration is
+not execution: none of these 93 has run on hardware, and the graphics
+bindings additionally depend on the unprobed Mesa context path. The audit
+tool now reports this split itself (target-registered vs host-supported vs
+genuinely missing) instead of flattening everything into one "missing"
+count. Two optional imports (the dyninit pair) remain unresolved.
+
+Resolver-registration status, keeping the three tiers distinct:
+- 487 host-supported bindings: resolver registration and behaviour are
+  exercised by host suites on every CI run.
+- 91 EGL/GLES2 + 2 jump imports: registered with the target resolver
+  (catalogue verified against the guest import list; the jump bridge's ARM64
+  code paths are executed under qemu-aarch64 CI). Bound, not exercised on
+  Horizon.
+- 0 genuinely outstanding required imports. Every import in the guest's
+  BIND_NOW table now has a registered binding, which is necessary for the
+  load to proceed and says nothing about runtime behaviour until the
+  console run.
+
 ### Refusals leave evidence (2026-11-18)
 
 Every fail-closed provider now logs the first call to its facility (WARN,

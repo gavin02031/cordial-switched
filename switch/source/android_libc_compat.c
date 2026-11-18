@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <locale.h>
+#include <malloc.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -722,6 +723,51 @@ static int guest_close(int fd)
     return close(fd);
 }
 
+// Bionic's struct mallinfo is ten size_t fields (bionic
+// libc/include/malloc.h, __MALLINFO_BODY). devkitPro newlib's struct mallinfo
+// uses the identical ten-size_t layout, so no field translation is needed on
+// Switch. The return is by value and cannot fail, so the answer must never be
+// fabricated: report the real counters of the C-library heap Morrow's
+// providers allocate from. That is the same relationship bionic mallinfo has
+// to bionic malloc - on Android a guest that statically links its own
+// allocator is likewise invisible to bionic mallinfo, so describing the
+// C-library heap is the faithful semantics, not a wrong-allocator answer.
+// Bionic documents smblks, hblks, fsmblks and usmblks as unused; mirror
+// bionic and report zero there even when the backing allocator counts them.
+typedef struct {
+    size_t arena, ordblks, smblks, hblks, hblkhd,
+           usmblks, fsmblks, uordblks, fordblks, keepcost;
+} MorrowBionicMallinfo;
+
+static size_t mallinfo_field(long long value)
+{
+    // glibc's deprecated mallinfo reports int fields that can wrap negative
+    // on heaps over 2 GiB; a negative counter is meaningless to the guest.
+    return value < 0 ? 0 : (size_t)value;
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+static MorrowBionicMallinfo morrow_bionic_mallinfo(void)
+{
+    // newlib's mallinfo is not deprecated; glibc's is. The pragma contains
+    // that host-only diagnostic to this one call.
+    struct mallinfo native = mallinfo();
+    MorrowBionicMallinfo info;
+    info.arena = mallinfo_field(native.arena);
+    info.ordblks = mallinfo_field(native.ordblks);
+    info.hblkhd = mallinfo_field(native.hblkhd);
+    info.uordblks = mallinfo_field(native.uordblks);
+    info.fordblks = mallinfo_field(native.fordblks);
+    info.keepcost = mallinfo_field(native.keepcost);
+    info.smblks = 0;
+    info.hblks = 0;
+    info.usmblks = 0;
+    info.fsmblks = 0;
+    return info;
+}
+#pragma GCC diagnostic pop
+
 bool android_libc_compat_resolve(const char *name, const char *version,
                                  const char *library, uint64_t *address)
 {
@@ -904,6 +950,8 @@ bool android_libc_compat_resolve(const char *name, const char *version,
         *address = (uint64_t)(uintptr_t)&android_cmsg_nxthdr;
     else if (strcmp(name, "localeconv") == 0)
         *address = (uint64_t)(uintptr_t)&android_localeconv;
+    else if (strcmp(name, "mallinfo") == 0)
+        *address = (uint64_t)(uintptr_t)&morrow_bionic_mallinfo;
 #undef MAP_LIBC
     return *address != 0;
 }

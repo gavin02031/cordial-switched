@@ -301,6 +301,21 @@ def compare_provider_manifest(imports, providers):
     return missing, distinct
 
 
+def target_registered_names():
+    """Names the Switch build registers that a host build cannot resolve: the
+    EGL/GLES2 catalogue (compiled out without __SWITCH__) and the ARM64 jump
+    bridge (compiled out without __aarch64__). Static source parse of the same
+    resolver sources the target links; a name listed here is registered with
+    the target resolver, not exercised on hardware."""
+    source = Path(__file__).resolve().parents[1] / 'source'
+    egl = (source / 'android_egl_gles_compat.c').read_text()
+    names = set(re.findall(r'X\((egl\w+|gl\w+)\)', egl))
+    names.update(re.findall(r'strcmp\(name, "(egl\w+|gl\w+)"\)', egl))
+    jump = (source / 'android_jump_compat.c').read_text()
+    names.update(re.findall(r'strcmp\(name, "(setjmp|longjmp)"\)', jump))
+    return names
+
+
 def host_provider_coverage(imports):
     """Query the host build of the same resolver the two Switch link paths use."""
     if platform.system() != 'Linux' or ctypes.sizeof(ctypes.c_void_p) != 8:
@@ -327,10 +342,17 @@ def host_provider_coverage(imports):
             address = ctypes.c_uint64()
             found = resolve(*args, ctypes.byref(address))
             records.append(dict(item, supported=bool(found and address.value)))
+    target = target_registered_names()
+    for row in records:
+        row['target_registered'] = not row['supported'] and row['name'] in target
     return dict(platform='Linux', machine=platform.machine(),
                 supported=sum(row['supported'] for row in records),
                 missing_required=sum(row['required'] and not row['supported'] for row in records),
                 missing_optional=sum(not row['required'] and not row['supported'] for row in records),
+                target_registered_required=sum(
+                    row['required'] and row['target_registered'] for row in records),
+                target_registered_optional=sum(
+                    not row['required'] and row['target_registered'] for row in records),
                 imports=records)
 
 
@@ -349,7 +371,10 @@ def main():
         host = host_provider_coverage(report['imports'])
         report['host_provider_coverage'] = host
         print(f"Linux {host['machine']} providers: {host['supported']} supported, "
-              f"{host['missing_required']} required and {host['missing_optional']} optional missing")
+              f"{host['missing_required']} required and {host['missing_optional']} optional missing "
+              f"({host['target_registered_required']} required and "
+              f"{host['target_registered_optional']} optional target-registered, "
+              f"not exercised on hardware)")
     if args.providers:
         supplied = json.loads(args.providers.read_text())
         (report['missing_required'], report['missing_required_distinct']) = (
