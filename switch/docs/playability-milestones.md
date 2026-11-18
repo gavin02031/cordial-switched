@@ -362,3 +362,13 @@ Host audit: 482 of 576 required imports resolve. `mallinfo` is the last
 genuinely outstanding required import, deferred because its by-value return
 cannot fail closed and any host answer would describe the wrong allocator.
 None of this has run on a console.
+
+### Refusals leave evidence (2026-11-18)
+
+Every fail-closed provider now logs the first call to its facility (WARN,
+tag "unsupported") and stays silent on retries, so one console run journal
+shows exactly which unsupported facilities the engine reached for, and in
+what order, without a poll loop flooding the log. Import aliases that share
+a handler (epoll_create/epoll_create1, the sched priority bounds) now log
+their own import names. This turns the next console run into a reachability
+map for the event-loop question instead of a guess.

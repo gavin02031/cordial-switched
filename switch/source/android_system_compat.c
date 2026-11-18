@@ -230,10 +230,39 @@ static void guest_closelog(void)
     syslog_open = false;
 }
 
-static int refuse_errno(int error)
+// A fail-closed refusal must never be silent on the console: the first call
+// to each unsupported facility logs once, so a run journal shows exactly
+// which facility the engine reached for, in order, without flooding the
+// sink on retry loops.
+enum { REFUSAL_LOG_MAX = 64 };
+static const char *refusals_seen[REFUSAL_LOG_MAX];
+static unsigned refusals_count;
+
+static void note_refusal(const char *facility)
 {
-    errno = error;
+    for (unsigned i = 0; i < refusals_count; i++) {
+        if (refusals_seen[i] == facility) return; // static literals: pointer-equal
+    }
+    if (refusals_count >= REFUSAL_LOG_MAX) return;
+    refusals_seen[refusals_count++] = facility;
+    char message[160];
+    snprintf(message, sizeof(message),
+             "unsupported facility called: %s (refusing ENOSYS)", facility);
+    cordial_android_log_write(5, "unsupported", message); // WARN
+}
+
+static int refuse_logged(const char *facility)
+{
+    note_refusal(facility);
+    errno = ENOSYS;
     return -1;
+}
+
+// pthread entry points return the error number itself instead of -1/errno.
+static int refuse_logged_pthread(const char *facility)
+{
+    note_refusal(facility);
+    return ENOSYS;
 }
 
 static int guest_sigaction(int signal_number, const void *action, void *old)
@@ -241,13 +270,14 @@ static int guest_sigaction(int signal_number, const void *action, void *old)
     (void)signal_number;
     (void)action;
     (void)old;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static void *guest_signal(int signal_number, void *handler)
 {
     (void)signal_number;
     (void)handler;
+    note_refusal(__func__);
     errno = ENOSYS;
     return (void *)(intptr_t)-1; // SIG_ERR
 }
@@ -255,7 +285,7 @@ static void *guest_signal(int signal_number, void *handler)
 static int guest_raise(int signal_number)
 {
     (void)signal_number;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_pthread_sigmask(int how, const void *set, void *old)
@@ -263,33 +293,39 @@ static int guest_pthread_sigmask(int how, const void *set, void *old)
     (void)how;
     (void)set;
     (void)old;
-    return ENOSYS; // pthread entry points return the error number itself.
+    return refuse_logged_pthread(__func__); // pthread entry points return the error number itself.
 }
 
 static int guest_sigaltstack(const void *stack, void *old)
 {
     (void)stack;
     (void)old;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
-static int guest_sched_priority_bound(int policy)
+static int guest_sched_priority_max(int policy)
 {
     (void)policy;
-    return refuse_errno(ENOSYS);
+    return refuse_logged("sched_get_priority_max");
+}
+
+static int guest_sched_priority_min(int policy)
+{
+    (void)policy;
+    return refuse_logged("sched_get_priority_min");
 }
 
 static int guest_sched_getparam(int32_t pid, void *param)
 {
     (void)pid;
     (void)param;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_sched_getscheduler(int32_t pid)
 {
     (void)pid;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_sched_setscheduler(int32_t pid, int policy, const void *param)
@@ -297,19 +333,19 @@ static int guest_sched_setscheduler(int32_t pid, int policy, const void *param)
     (void)pid;
     (void)policy;
     (void)param;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_sched_getcpu(void)
 {
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_getpriority(int which, unsigned who)
 {
     (void)which;
     (void)who;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_setpriority(int which, unsigned who, int priority)
@@ -317,21 +353,21 @@ static int guest_setpriority(int which, unsigned who, int priority)
     (void)which;
     (void)who;
     (void)priority;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_pthread_attr_setschedparam(void *attr, const void *param)
 {
     (void)attr;
     (void)param;
-    return ENOSYS;
+    return refuse_logged_pthread(__func__);
 }
 
 static int guest_pthread_getattr_np(uint64_t thread, void *attr)
 {
     (void)thread;
     (void)attr;
-    return ENOSYS;
+    return refuse_logged_pthread(__func__);
 }
 
 static int guest_pthread_getschedparam(uint64_t thread, int *policy, void *param)
@@ -339,7 +375,7 @@ static int guest_pthread_getschedparam(uint64_t thread, int *policy, void *param
     (void)thread;
     (void)policy;
     (void)param;
-    return ENOSYS;
+    return refuse_logged_pthread(__func__);
 }
 
 static int guest_pthread_setschedparam(uint64_t thread, int policy,
@@ -348,14 +384,14 @@ static int guest_pthread_setschedparam(uint64_t thread, int policy,
     (void)thread;
     (void)policy;
     (void)param;
-    return ENOSYS;
+    return refuse_logged_pthread(__func__);
 }
 
 static int guest_pthread_setname_np(uint64_t thread, const char *name)
 {
     (void)thread;
     (void)name;
-    return ENOSYS;
+    return refuse_logged_pthread(__func__);
 }
 
 static int guest_accept4(int fd, void *address, void *length, int flags)
@@ -364,21 +400,21 @@ static int guest_accept4(int fd, void *address, void *length, int flags)
     (void)address;
     (void)length;
     (void)flags;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_eventfd(unsigned initial, int flags)
 {
     (void)initial;
     (void)flags;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_timerfd_create(int clock, int flags)
 {
     (void)clock;
     (void)flags;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_timerfd_settime(int fd, int flags, const void *next, void *old)
@@ -387,13 +423,21 @@ static int guest_timerfd_settime(int fd, int flags, const void *next, void *old)
     (void)flags;
     (void)next;
     (void)old;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
-static int guest_epoll_create(int size_or_flags)
+// Distinct refusal names per import alias: the journal must show which
+// entry point the guest actually called, not a shared helper's name.
+static int guest_epoll_create(int size)
 {
-    (void)size_or_flags;
-    return refuse_errno(ENOSYS);
+    (void)size;
+    return refuse_logged("epoll_create");
+}
+
+static int guest_epoll_create1(int flags)
+{
+    (void)flags;
+    return refuse_logged("epoll_create1");
 }
 
 static int guest_epoll_ctl(int epfd, int operation, int fd, void *event)
@@ -402,7 +446,7 @@ static int guest_epoll_ctl(int epfd, int operation, int fd, void *event)
     (void)operation;
     (void)fd;
     (void)event;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_epoll_wait(int epfd, void *events, int count, int timeout)
@@ -411,13 +455,13 @@ static int guest_epoll_wait(int epfd, void *events, int count, int timeout)
     (void)events;
     (void)count;
     (void)timeout;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_pipe(int *fds)
 {
     (void)fds;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_socketpair(int domain, int type, int protocol, int *fds)
@@ -426,14 +470,14 @@ static int guest_socketpair(int domain, int type, int protocol, int *fds)
     (void)type;
     (void)protocol;
     (void)fds;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_ioctl(int fd, unsigned long request, ...)
 {
     (void)fd;
     (void)request;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static long guest_syscall(long number, ...)
@@ -446,14 +490,14 @@ static long guest_syscall(long number, ...)
 static int guest_prctl(int option, ...)
 {
     (void)option;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_mlock(const void *address, size_t size)
 {
     (void)address;
     (void)size;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_posix_fallocate(int fd, int64_t offset, int64_t size)
@@ -461,35 +505,35 @@ static int guest_posix_fallocate(int fd, int64_t offset, int64_t size)
     (void)fd;
     (void)offset;
     (void)size;
-    return ENOSYS; // posix_fallocate returns the error number itself.
+    return refuse_logged_pthread(__func__); // posix_fallocate returns the error number itself.
 }
 
 static int guest_statvfs(const char *path, void *result)
 {
     (void)path;
     (void)result;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_utime(const char *path, const void *times)
 {
     (void)path;
     (void)times;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_utimes(const char *path, const void *times)
 {
     (void)path;
     (void)times;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_gethostname(char *name, size_t size)
 {
     (void)name;
     (void)size;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static unsigned guest_if_nametoindex(const char *name)
@@ -511,7 +555,7 @@ static int guest_tcgetattr(int fd, void *termios)
 {
     (void)fd;
     (void)termios;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 static int guest_tcsetattr(int fd, int action, const void *termios)
@@ -519,7 +563,7 @@ static int guest_tcsetattr(int fd, int action, const void *termios)
     (void)fd;
     (void)action;
     (void)termios;
-    return refuse_errno(ENOSYS);
+    return refuse_logged(__func__);
 }
 
 bool android_system_compat_resolve(const char *name, const char *version,
@@ -544,8 +588,8 @@ bool android_system_compat_resolve(const char *name, const char *version,
     MAP_GUEST("raise", guest_raise)
     MAP_GUEST("pthread_sigmask", guest_pthread_sigmask)
     MAP_GUEST("sigaltstack", guest_sigaltstack)
-    MAP_GUEST("sched_get_priority_max", guest_sched_priority_bound)
-    MAP_GUEST("sched_get_priority_min", guest_sched_priority_bound)
+    MAP_GUEST("sched_get_priority_max", guest_sched_priority_max)
+    MAP_GUEST("sched_get_priority_min", guest_sched_priority_min)
     MAP_GUEST("sched_getparam", guest_sched_getparam)
     MAP_GUEST("sched_getscheduler", guest_sched_getscheduler)
     MAP_GUEST("sched_setscheduler", guest_sched_setscheduler)
@@ -562,7 +606,7 @@ bool android_system_compat_resolve(const char *name, const char *version,
     MAP_GUEST("timerfd_create", guest_timerfd_create)
     MAP_GUEST("timerfd_settime", guest_timerfd_settime)
     MAP_GUEST("epoll_create", guest_epoll_create)
-    MAP_GUEST("epoll_create1", guest_epoll_create)
+    MAP_GUEST("epoll_create1", guest_epoll_create1)
     MAP_GUEST("epoll_ctl", guest_epoll_ctl)
     MAP_GUEST("epoll_wait", guest_epoll_wait)
     MAP_GUEST("pipe", guest_pipe)

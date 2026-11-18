@@ -180,7 +180,15 @@ static void test_fail_closed_descriptors(void)
     errno = 0;
     assert(epoll_create_fn(1) == -1 && errno == ENOSYS);
     errno = 0;
+    int log_before = captured_count;
     assert(epoll_create1_fn(0) == -1 && errno == ENOSYS);
+    // The first refusal of a facility logs its name once.
+    assert(captured_count == log_before + 1);
+    assert(strstr(captured_message, "unsupported"));
+    assert(strstr(captured_message, "epoll_create1"));
+    assert(epoll_create1_fn(0) == -1);
+    // Retries stay silent so a poll loop cannot flood the journal.
+    assert(captured_count == log_before + 1);
     errno = 0;
     assert(epoll_ctl_fn(0, 0, 0, NULL) == -1 && errno == ENOSYS);
     errno = 0;
@@ -267,6 +275,17 @@ static void test_properties_and_locale(void)
     assert(mb_cur_max() == 4);
 }
 
+static void test_refusal_logging(void)
+{
+    // Every provider was already exercised by the fail-closed tests above,
+    // so repeat calls now must refuse without another log line.
+    int (*pthread_setname_fn)(uint64_t, const char *) =
+        (void *)(uintptr_t)resolve("pthread_setname_np");
+    int before = captured_count;
+    assert(pthread_setname_fn(0, "x") != 0);
+    assert(captured_count == before);
+}
+
 static void test_sysinfo_and_uname(void)
 {
     int (*sysinfo_fn)(void *) = (void *)(uintptr_t)resolve("sysinfo");
@@ -306,6 +325,7 @@ int main(void)
     test_fail_closed_misc();
     test_properties_and_locale();
     test_sysinfo_and_uname();
+    test_refusal_logging();
     const char *names[] = {
         "android_set_abort_message", "__system_property_get",
         "__ctype_get_mb_cur_max", "sysinfo", "uname", "openlog",
