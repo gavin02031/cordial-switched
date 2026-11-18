@@ -26,8 +26,11 @@ through the Homebrew Menu as before.
   - `guest_main_tls_ready=` - this ELF has no TLS segment; expect `no`.
   - `guest_tpidr_bridge=` - expect `not_needed_no_tls_template`.
   - `constructor_begin_NNN=` / `constructor_completed_NNN=` - how far
-    startup got. The last `begin` without a matching `completed` names the
-    exact routine that failed.
+    startup got, best-effort: the last `begin` without a matching
+    `completed` names the routine that was running when things stopped.
+    A fault inside the journaling or bridge code itself can leave an
+    earlier or no marker, so treat the index as the strongest hint, not
+    proof.
   - `constructor_run_completed=`, `constructor_run_next_index=`,
     `constructors_ok_for_jni_onload=`.
   - `event=entering_real_engine_jni_onload` - only appears if every
@@ -51,6 +54,6 @@ and any crash-NN.txt). No interpretation needed - the report is the data.
 
 This is a measurement run, not a playability milestone. Best case: the
 report shows all constructors completed and JNI_OnLoad returned. Likely
-case: a named blocker or a crash marker tells us exactly where to work
-next. A hard crash with no new report lines means the failure is before or
+case: a named blocker or a crash marker tells us where to work next.
+A hard crash with no new report lines means the failure is before or
 inside the journaling itself - also useful, differently.

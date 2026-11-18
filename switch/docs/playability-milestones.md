@@ -539,6 +539,12 @@ data with no redesign.
 Recovery semantics for the constructor phase (reviewed 2026-11-18): a
 crash during constructors leaves the in-progress marker, which the next
 launch archives as crash-NN.txt with phase=constructors before the new
-run starts. Re-running constructors in that fresh process is correct -
-their side effects died with the crashed process - while within one
+run starts. Re-running constructors in that fresh process is safe only
+for side effects held in process memory, which died with the crashed
+process. A constructor could also touch persistent state - files,
+services, registered handles - that survives; until the console run
+shows what these constructors actually do, a re-run after a
+constructors-phase crash marker must be treated as UNREVIEWED, and the
+archived crash-NN.txt plus the link report's last constructor marker
+are the evidence for deciding whether re-entry is safe. Within one
 process the run-once state machine still forbids blind re-execution.
