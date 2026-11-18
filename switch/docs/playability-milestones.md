@@ -403,3 +403,38 @@ from dynamically mapped code is known to be best-effort. The 117
 additional SVC #0 byte patterns the scanner finds in executable
 segments outside .text are literal-pool data, not instructions, and
 remain excluded from the count.
+
+### TPIDR bridge design, grounded (2026-11-18)
+
+Constructor execution (milestone B) needs the guest thread pointer
+installed first: bionic code reads TLS through TPIDR_EL0, and the
+constructor plan is validated but deliberately never executed while
+`tls_thread_pointer_installed=no`. The keystone fact is now verified
+against libnx source rather than assumed: host thread state on this
+toolchain lives on TPIDRRO_EL0 - `__aarch64_read_tp` (the function the
+devkitA64 compiler's TLS sequences call) reads tpidrro_el0
+(libnx nx/source/runtime/readtp.s), and libnx's armGetTls does the same
+(nx/include/switch/arm/tls.h). newlib's per-thread reent is served from
+that same libnx TLS (nx/source/runtime/newlib.c). TPIDR_EL0 is therefore
+free for the guest: installing the bionic shadow TCB there does not
+collide with host errno, compiler TLS, or libnx thread data.
+
+Remaining validation before execution, kept honest: (1) any prebuilt
+portlib object that reads TPIDR_EL0 directly would still collide - the
+first console run with the bridge installed is the real test, and the
+bridge install/restore will be journaled so a fault sequence is
+attributable; (2) guest-created threads will each need their own TLS
+thread image and shadow TCB - single-thread bridge first; (3) the
+shadow's bionic slots (bionic_tls, dtv, stack_guard) must be filled
+from the prepared TLS thread image before install. Morrow's own C
+sources use no __thread/_Thread_local storage, so no host compiler-TLS
+reads of TPIDR_EL0 exist in our code today.
+
+Plan: tiny asm helpers to save/install/restore TPIDR_EL0 around the
+constructor sequence (later JNI_OnLoad too), per-constructor
+begin/completed journaling via the existing run journal so a crash
+between markers names the exact constructor index, and host tests with
+native fake targets proving call order and journaling. The run journal
+and the refusal log together make the first console run with real
+constructors answer "how far did guest execution get" instead of
+"did it crash".
