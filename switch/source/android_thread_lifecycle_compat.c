@@ -1,10 +1,23 @@
+#ifdef __SWITCH__
 #define _POSIX_C_SOURCE 200809L
+#include <switch.h>
+#ifdef MORROW_HAS_STACK_GUARDS
+extern size_t morrowStackGuardSize(void *stack);
+#endif
+#else
+// Host builds answer the getattr model query through the native libc, which
+// needs _GNU_SOURCE for pthread_getattr_np on glibc. This validates the
+// bridge model only; target bounds come from the libnx capture path.
+#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "android_thread_lifecycle_compat.h"
 
 #include <errno.h>
 #include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "android_thread_attr_compat.h"
@@ -25,6 +38,11 @@ typedef struct {
     bool joinable;
     bool joining;
     bool consumed;
+    bool auto_registered; // First saw this native thread via pthread_self.
+    bool stack_known;     // Stack bounds were captured on the thread itself.
+    void *native_stack_base;
+    size_t native_stack_size;
+    size_t native_stack_guard;
     AndroidArm64TcbShadow tcb_shadow;
 } ThreadEntry;
 
@@ -80,6 +98,24 @@ static void *native_start(void *opaque)
     // incorrect pthread_self identity.
     if (pthread_setspecific(identity_key, entry) != 0)
         return NULL;
+#ifdef __SWITCH__
+    // Capture the real stack bounds while running on the new thread; the
+    // pinned libnx exposes them on the Thread struct. morrowStackGuardSize is
+    // supplied by the extended allocator when guards are compiled in.
+    Thread *native_self = threadGetSelf();
+    if (native_self) {
+        size_t captured_guard = 0;
+#ifdef MORROW_HAS_STACK_GUARDS
+        captured_guard = morrowStackGuardSize(native_self->stack_mirror);
+#endif
+        pthread_mutex_lock(&registry_lock);
+        entry->native_stack_base = native_self->stack_mirror;
+        entry->native_stack_size = native_self->stack_sz;
+        entry->native_stack_guard = captured_guard;
+        entry->stack_known = true;
+        pthread_mutex_unlock(&registry_lock);
+    }
+#endif
     void *result = entry->start(entry->argument);
     android_tls_compat_cleanup_current();
     return result;
@@ -156,6 +192,7 @@ static uint64_t bridge_self(void)
     if (entry) {
         entry->native = pthread_self();
         entry->joinable = false;
+        entry->auto_registered = true;
     }
     pthread_mutex_unlock(&registry_lock);
     if (!entry)
@@ -220,6 +257,74 @@ static int bridge_equal(uint64_t first, uint64_t second)
     return first == second;
 }
 
+// Bionic's pthread_getattr_np reports the queried thread's REAL stack bounds;
+// Roblox's runtime uses them for conservative stack walking, so an invented
+// answer is worse than a refusal. Bridged threads carry bounds captured on
+// the thread itself. Anything else fails closed: the process stack region is
+// only a superset of one thread's stack, so it is logged as diagnostics and
+// never returned as pthread attributes.
+static int bridge_getattr_np(uint64_t token, void *attr)
+{
+    if (!attr) return EINVAL;
+    pthread_mutex_lock(&registry_lock);
+    ThreadEntry *entry = find_entry(token);
+    pthread_t native = 0;
+    bool known = false, auto_registered = false, joinable = false;
+    void *base = NULL;
+    size_t size = 0, guard = 0;
+    if (entry) {
+        native = entry->native;
+        known = entry->stack_known;
+        auto_registered = entry->auto_registered;
+        joinable = entry->joinable;
+        base = entry->native_stack_base;
+        size = entry->native_stack_size;
+        guard = entry->native_stack_guard;
+    }
+    pthread_mutex_unlock(&registry_lock);
+    if (!entry) return EINVAL;
+    // ANDROID_ATTR_DETACHED == 1; auto-registered threads report flags 0,
+    // matching Bionic's answer for the process main thread.
+    const uint32_t flags = (!auto_registered && !joinable) ? 1u : 0u;
+    if (known) {
+        android_thread_attr_compat_write_native_facts(attr, flags, base, size, guard);
+        return 0;
+    }
+#ifdef __SWITCH__
+    u64 region_base = 0, region_size = 0;
+    const bool region_ok =
+        R_SUCCEEDED(svcGetInfo(&region_base, InfoType_StackRegionAddress,
+                               CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&region_size, InfoType_StackRegionSize,
+                               CUR_PROCESS_HANDLE, 0));
+    fprintf(stderr,
+            "morrow: pthread_getattr_np fail-closed token=%llu "
+            "diagnostics_only_process_stack_region_base=0x%llx size=0x%llx%s\n",
+            (unsigned long long)token,
+            (unsigned long long)(region_ok ? region_base : 0),
+            (unsigned long long)(region_ok ? region_size : 0),
+            region_ok ? " (region is a superset, NOT thread bounds)"
+                      : " (svcGetInfo failed)");
+    return ENOSYS;
+#else
+    // Host model only: the native libc answers real bounds so tests exercise
+    // the full round-trip. This says nothing about target behavior.
+    pthread_attr_t native_attr;
+    if (pthread_getattr_np(native, &native_attr) != 0)
+        return ENOSYS;
+    void *native_base = NULL;
+    size_t native_size = 0, native_guard = 0;
+    int result = pthread_attr_getstack(&native_attr, &native_base, &native_size);
+    if (!result) result = pthread_attr_getguardsize(&native_attr, &native_guard);
+    pthread_attr_destroy(&native_attr);
+    if (result || !native_size)
+        return ENOSYS;
+    android_thread_attr_compat_write_native_facts(attr, flags, native_base,
+                                                  native_size, native_guard);
+    return 0;
+#endif
+}
+
 bool android_thread_lifecycle_compat_resolve(const char *name, const char *version,
                                              const char *library, uint64_t *address)
 {
@@ -236,6 +341,7 @@ bool android_thread_lifecycle_compat_resolve(const char *name, const char *versi
     MAP_ANDROID("pthread_detach", bridge_detach)
     MAP_ANDROID("pthread_equal", bridge_equal)
     MAP_ANDROID("pthread_exit", bridge_exit)
+    MAP_ANDROID("pthread_getattr_np", bridge_getattr_np)
     (void)0;
 #undef MAP_ANDROID
     return *address != 0;

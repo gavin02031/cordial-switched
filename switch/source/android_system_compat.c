@@ -363,13 +363,6 @@ static int guest_pthread_attr_setschedparam(void *attr, const void *param)
     return refuse_logged_pthread(__func__);
 }
 
-static int guest_pthread_getattr_np(uint64_t thread, void *attr)
-{
-    (void)thread;
-    (void)attr;
-    return refuse_logged_pthread(__func__);
-}
-
 static int guest_pthread_getschedparam(uint64_t thread, int *policy, void *param)
 {
     (void)thread;
@@ -597,7 +590,8 @@ bool android_system_compat_resolve(const char *name, const char *version,
     MAP_GUEST("getpriority", guest_getpriority)
     MAP_GUEST("setpriority", guest_setpriority)
     MAP_GUEST("pthread_attr_setschedparam", guest_pthread_attr_setschedparam)
-    MAP_GUEST("pthread_getattr_np", guest_pthread_getattr_np)
+    // pthread_getattr_np is answered by the thread lifecycle bridge with
+    // captured per-thread stack bounds; unknown stacks fail closed there.
     MAP_GUEST("pthread_getschedparam", guest_pthread_getschedparam)
     MAP_GUEST("pthread_setschedparam", guest_pthread_setschedparam)
     MAP_GUEST("pthread_setname_np", guest_pthread_setname_np)

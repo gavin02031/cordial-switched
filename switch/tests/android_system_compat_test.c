@@ -133,8 +133,6 @@ static void test_fail_closed_pthread_policy(void)
 {
     int (*attr_setparam)(void *, const void *) =
         (void *)(uintptr_t)resolve("pthread_attr_setschedparam");
-    int (*getattr_np)(uint64_t, void *) =
-        (void *)(uintptr_t)resolve("pthread_getattr_np");
     int (*getschedparam)(uint64_t, int *, void *) =
         (void *)(uintptr_t)resolve("pthread_getschedparam");
     int (*setschedparam)(uint64_t, int, const void *) =
@@ -142,7 +140,7 @@ static void test_fail_closed_pthread_policy(void)
     int (*setname)(uint64_t, const char *) =
         (void *)(uintptr_t)resolve("pthread_setname_np");
     assert(attr_setparam(NULL, NULL) == ENOSYS);
-    assert(getattr_np(0, NULL) == ENOSYS);
+    // pthread_getattr_np moved to the lifecycle bridge (real stack bounds).
     assert(getschedparam(0, NULL, NULL) == ENOSYS);
     assert(setschedparam(0, 0, NULL) == ENOSYS);
     assert(setname(0, "worker") == ENOSYS);
@@ -334,7 +332,7 @@ int main(void)
         "sched_get_priority_max", "sched_get_priority_min", "sched_getparam",
         "sched_getscheduler", "sched_setscheduler", "sched_getcpu",
         "getpriority", "setpriority", "pthread_attr_setschedparam",
-        "pthread_getattr_np", "pthread_getschedparam", "pthread_setschedparam",
+        "pthread_getschedparam", "pthread_setschedparam",
         "pthread_setname_np", "accept4", "eventfd", "timerfd_create",
         "timerfd_settime", "epoll_create", "epoll_create1", "epoll_ctl",
         "epoll_wait", "pipe", "socketpair", "ioctl", "syscall", "prctl",

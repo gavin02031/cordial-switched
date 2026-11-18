@@ -479,8 +479,9 @@ tpidrro_el0. For this binary the bridge never installs
 above describes the mechanism for an ELF that does carry TLS, not this
 one's runtime path. Its stack-protected functions instead import
 __stack_chk_guard as a data symbol (GOT, version LIBC/libc.so) and
-__stack_chk_fail as a function - both already bound to host providers,
-so the canary scheme resolves without any thread-pointer state. The
+__stack_chk_fail as a function - both bound to host providers. Binding is
+not proof of runtime behavior: whether the canary scheme actually
+works on device remains a console-validation item. The
 shadow TCB/DTV layout was re-reviewed against Bionic tls_defines.h
 (TP[-1] bionic_tls, TP[0] dtv, TP[1] thread_id, TP[5] stack_guard,
 TP[7] art_thread_self) and matches at those offsets; slots beyond 7 are
@@ -488,3 +489,22 @@ absent, which stays a documented console-validation obligation for any
 future ELF that does use TLS. Journal durability remains best-effort: a
 fault inside the bridge or journal code itself is not guaranteed to
 leave the exact index.
+
+### pthread_getattr_np now answers real bounds (2026-11-18)
+
+The previous fail-closed refusal is replaced by the thread lifecycle
+bridge. Grounding (devkitPro sources, not inference): libsysbase's
+pthread.c declares but never implements pthread_getattr_np, so no host
+delegation exists on Switch; its pthread_create passes attr
+stackaddr/stacksize verbatim to libnx; our pinned libnx exposes each
+created thread's mapped stack as Thread.stack_mirror/stack_sz. The
+bridge now captures those bounds under the registry lock inside
+native_start and answers pthread_getattr_np with the thread's true
+stack base, size and guard in the Bionic LP64 attr layout (via a new
+layout-only writer, android_thread_attr_compat_write_native_facts).
+Threads first seen through pthread_self (in practice the main thread)
+stay FAIL CLOSED: the svcGetInfo stack region is only a superset of one
+thread's stack, so it is logged as explicitly labeled diagnostics and
+never returned as pthread attributes. Unknown tokens return EINVAL. The
+host test backend answers through the native libc and validates bridge
+model behavior only - target bounds remain a console-validation item.

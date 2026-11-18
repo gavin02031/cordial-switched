@@ -124,6 +124,30 @@ int main(void)
     assert(pthread_attr_destroy(&native) == 0);
 #endif
 
+    // The native-facts writer performs only the layout write: reserved bytes
+    // are zeroed, sched fields stay zero, and only the detached flag bit can
+    // survive the flags mask. Public getters read back what was written.
+    AndroidAttr written;
+    memset(&written, 0x77, sizeof(written));
+    android_thread_attr_compat_write_native_facts(&written, 1,
+                                                  (void *)(uintptr_t)0x50000,
+                                                  0x80000, 0x4000);
+    assert(written.flags == 1);
+    assert(written.stack_base == (void *)(uintptr_t)0x50000);
+    assert(written.stack_size == 0x80000 && written.guard_size == 0x4000);
+    assert(written.sched_policy == 0 && written.sched_priority == 0);
+    for (size_t i = 0; i < sizeof(written.reserved); i++)
+        assert(written.reserved[i] == 0);
+    void *read_base = NULL;
+    size_t read_size = 0;
+    assert(getstackaddr(&written, &read_base, &read_size) == 0);
+    assert(read_base == (void *)(uintptr_t)0x50000 && read_size == 0x80000);
+    assert(getguard(&written, &read_size) == 0 && read_size == 0x4000);
+    android_thread_attr_compat_write_native_facts(&written, 0xfffffffeu,
+                                                  NULL, 0, 0);
+    assert(written.flags == 0 && written.stack_base == NULL);
+    android_thread_attr_compat_write_native_facts(NULL, 0, NULL, 0, 0);
+
     puts("android_thread_attr_compat_test: Bionic LP64 attr layout and bounds passed");
     return 0;
 }

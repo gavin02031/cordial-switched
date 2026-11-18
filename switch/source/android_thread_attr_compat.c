@@ -117,6 +117,19 @@ static int android_attr_getstack(const void *address, void **stack_base,
     return 0;
 }
 
+void android_thread_attr_compat_write_native_facts(void *address, uint32_t flags,
+                                                   const void *stack_base,
+                                                   size_t stack_size, size_t guard_size)
+{
+    if (!address) return;
+    AndroidPthreadAttr *attr = address;
+    memset(attr, 0, sizeof(*attr));
+    attr->flags = flags & ANDROID_ATTR_DETACHED;
+    attr->stack_base = (void *)stack_base;
+    attr->stack_size = stack_size;
+    attr->guard_size = guard_size;
+}
+
 int android_thread_attr_compat_for_create(const void *address, pthread_attr_t *native,
                                           size_t *guard)
 {

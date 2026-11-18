@@ -17,4 +17,12 @@ int android_thread_attr_compat_to_native(const void *address, pthread_attr_t *na
 int android_thread_attr_compat_for_create(const void *address, pthread_attr_t *native,
                                           size_t *guard);
 
+// Writes a complete Bionic attr from facts the caller has already established
+// (used by pthread_getattr_np). This performs only the layout write; the
+// caller owns the truth of the values. flags keeps only the detached bit.
+void android_thread_attr_compat_write_native_facts(void *address, uint32_t flags,
+                                                   const void *stack_base,
+                                                   size_t stack_size,
+                                                   size_t guard_size);
+
 #endif

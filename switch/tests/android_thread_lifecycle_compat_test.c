@@ -66,7 +66,55 @@ static void *detached_start(void *arg)
 static void (*bionic_exit)(void *);
 static int (*bionic_join)(uint64_t, void **);
 static int (*bionic_setspecific)(uint32_t, const void *);
+static int (*bionic_getattr_np)(uint64_t, void *);
 static uint32_t exit_key;
+static atomic_int detached_attr_done;
+
+typedef struct {
+    uint64_t identity;
+    int getattr_result;
+    uintptr_t base;
+    size_t size;
+    uintptr_t local;
+} GetattrWorker;
+
+static void *getattr_worker(void *opaque)
+{
+    GetattrWorker *worker = opaque;
+    worker->identity = bionic_self();
+    char marker;
+    worker->local = (uintptr_t)&marker;
+    AndroidAttr attr;
+    memset(&attr, 0xa5, sizeof(attr));
+    worker->getattr_result = bionic_getattr_np(worker->identity, &attr);
+    worker->base = (uintptr_t)attr.stack_base;
+    worker->size = attr.stack_size;
+    // A joinable thread created with a NULL attr reports no flags, no
+    // scheduler state and zeroed reserved bytes.
+    assert(attr.flags == 0);
+    assert(attr.sched_policy == 0 && attr.sched_priority == 0);
+    for (size_t i = 0; i < sizeof(attr.reserved); i++)
+        assert(attr.reserved[i] == 0);
+    return NULL;
+}
+
+typedef struct {
+    int getattr_result;
+    uint32_t flags;
+    size_t size;
+} DetachedAttrWorker;
+
+static void *detached_attr_start(void *opaque)
+{
+    DetachedAttrWorker *worker = opaque;
+    AndroidAttr attr;
+    memset(&attr, 0, sizeof(attr));
+    worker->getattr_result = bionic_getattr_np(bionic_self(), &attr);
+    worker->flags = attr.flags;
+    worker->size = attr.stack_size;
+    atomic_fetch_add(&detached_attr_done, 1);
+    return NULL;
+}
 
 typedef struct {
     uint64_t identity;
@@ -206,6 +254,39 @@ int main(void)
     assert(init(&attr) == 0);
     attr.stack_base = (void *)(uintptr_t)0x10000;
     assert(create(&token, &attr, worker_start, NULL) == ENOTSUP);
+
+    // pthread_getattr_np: unknown tokens and NULL outputs fail closed; live
+    // threads answer with bounds that contain that thread's own frames. The
+    // host backend validates the bridge model only; target bounds come from
+    // the libnx capture path and stay a console-validation item.
+    bionic_getattr_np = BIND("pthread_getattr_np", int (*)(uint64_t, void *));
+    AndroidAttr probe;
+    assert(bionic_getattr_np(0, &probe) == EINVAL);
+    assert(bionic_getattr_np(UINT64_MAX, &probe) == EINVAL);
+    assert(bionic_getattr_np(main_id, NULL) == EINVAL);
+    memset(&probe, 0, sizeof(probe));
+    assert(bionic_getattr_np(main_id, &probe) == 0);
+    assert(probe.flags == 0 && probe.stack_size != 0);
+    uintptr_t main_frame = (uintptr_t)&probe;
+    assert((uintptr_t)probe.stack_base <= main_frame &&
+           main_frame < (uintptr_t)probe.stack_base + probe.stack_size);
+    GetattrWorker getattr = {0};
+    uint64_t getattr_token = 0;
+    assert(create(&getattr_token, NULL, getattr_worker, &getattr) == 0);
+    assert(join(getattr_token, NULL) == 0);
+    assert(getattr.getattr_result == 0);
+    assert(getattr.base <= getattr.local &&
+           getattr.local < getattr.base + getattr.size);
+    DetachedAttrWorker detached_probe = {0};
+    atomic_init(&detached_attr_done, 0);
+    assert(init(&attr) == 0);
+    assert(setdetach(&attr, 1) == 0);
+    assert(create(&token, &attr, detached_attr_start, &detached_probe) == 0);
+    for (unsigned i = 0; i < 500 && !atomic_load(&detached_attr_done); i++)
+        nanosleep(&wait_time, NULL);
+    assert(atomic_load(&detached_attr_done) == 1);
+    assert(detached_probe.getattr_result == 0);
+    assert(detached_probe.flags == 1 && detached_probe.size != 0);
 
     printf("android_thread_lifecycle_compat_test: %u worker joins, detached and invalid-handle checks passed\n",
            WORKERS);
