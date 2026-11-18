@@ -1,5 +1,6 @@
 #include "horizon_real_link.h"
 #include "android_import_resolver.h"
+#include "engine_module_registry.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1245,6 +1246,31 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                         engine_mapping_pinned = true;
                         stage.image = NULL;
                         log_line(log, "engine_mapped_executable=yes");
+                        // Register the mapped image so a guest
+                        // dl_iterate_phdr (its C++ unwinder needs it) sees
+                        // the real module, with the header table read back
+                        // from the mapped bytes rather than trusted input.
+                        {
+                            const unsigned char *mapped =
+                                (const unsigned char *)reservation.mapped;
+                            uint64_t phoff = 0;
+                            uint16_t phnum = 0;
+                            memcpy(&phoff, mapped + 0x20, sizeof(phoff));
+                            memcpy(&phnum, mapped + 0x38, sizeof(phnum));
+                            uint64_t bias = (uint64_t)(uintptr_t)mapped -
+                                stage.lowest_virtual_address;
+                            if (phnum && phoff <= plan.image_bytes &&
+                                (uint64_t)phnum * 56 <= plan.image_bytes - phoff &&
+                                engine_module_register(bias, mapped + phoff,
+                                                       phnum, "libroblox.so")) {
+                                log_line(log,
+                                         "engine_module_registered=bias_0x%llX_phnum_%u",
+                                         (unsigned long long)bias, phnum);
+                            } else {
+                                log_line(log,
+                                         "engine_module_registered=no");
+                            }
+                        }
                         int32_t version = 0;
                         bool onload_called = false;
                         bool onload_reported = false;

@@ -13,12 +13,90 @@
 #include "android_configuration_compat.h"
 #include "android_math_compat.h"
 #include "android_egl_gles_compat.h"
+#include "engine_module_registry.h"
 
 typedef void *(*OpenLibrary)(const char *, int);
 typedef void *(*LookupSymbol)(void *, const char *);
 typedef int (*CloseLibrary)(void *);
 typedef char *(*GetError)(void);
 typedef int (*FindAddress)(const void *, void *);
+
+static int (*iterate_phdr)(int (*)(void *, size_t, void *), void *);
+
+typedef struct {
+    unsigned calls;
+    uint64_t first_bias;
+    uint16_t first_phnum;
+    char first_name[64];
+    size_t reported_size;
+} IterateCapture;
+
+static int capture_module(void *raw_info, size_t size, void *raw_capture)
+{
+    // Mirror of the bionic LP64 layout the implementation documents.
+    struct {
+        uint64_t addr;
+        const char *name;
+        const void *phdr;
+        uint16_t phnum;
+        uint64_t adds;
+        uint64_t subs;
+        uint64_t tls_modid;
+        void *tls_data;
+    } *info = raw_info;
+    IterateCapture *capture = raw_capture;
+    capture->calls++;
+    if (capture->calls == 1) {
+        capture->first_bias = info->addr;
+        capture->first_phnum = info->phnum;
+        snprintf(capture->first_name, sizeof(capture->first_name), "%s",
+                 info->name);
+        capture->reported_size = size;
+    }
+    assert(info->adds >= 1 && info->subs == 0);
+    return 0;
+}
+
+static int stop_after_first(void *info, size_t size, void *data)
+{
+    (void)info;
+    (void)size;
+    unsigned *calls = data;
+    (*calls)++;
+    return 42;
+}
+
+static void test_iterate_phdr(void)
+{
+    uint64_t address = 0;
+    assert(android_dl_compat_resolve("dl_iterate_phdr", "LIBC", "libdl.so",
+                                     &address));
+    memcpy(&iterate_phdr, &address, sizeof(iterate_phdr));
+    engine_module_registry_reset();
+    IterateCapture capture;
+    memset(&capture, 0, sizeof(capture));
+    // No guest image mapped yet: a true empty walk, not an error.
+    assert(iterate_phdr(capture_module, &capture) == 0);
+    assert(capture.calls == 0);
+    assert(iterate_phdr(NULL, NULL) == -1);
+
+    static const unsigned char fake_phdrs[56 * 12];
+    assert(engine_module_register(0x400000, fake_phdrs, 12, "libroblox.so"));
+    assert(iterate_phdr(capture_module, &capture) == 0);
+    assert(capture.calls == 1);
+    assert(capture.first_bias == 0x400000);
+    assert(capture.first_phnum == 12);
+    assert(strcmp(capture.first_name, "libroblox.so") == 0);
+    assert(capture.reported_size == 64); // Full modern bionic LP64 layout.
+
+    assert(engine_module_register(0x800000, fake_phdrs, 3, "libengine2.so"));
+    unsigned stops = 0;
+    assert(iterate_phdr(stop_after_first, &stops) == 42);
+    assert(stops == 1);
+    assert(iterate_phdr(capture_module, &capture) == 0);
+    assert(capture.calls == 3);
+    engine_module_registry_reset();
+}
 
 static OpenLibrary open_library;
 static LookupSymbol lookup_symbol;
@@ -122,5 +200,6 @@ int main(void)
     assert(pthread_join(worker, NULL) == 0);
     assert(strstr(get_error(), "path is unavailable")); // Thread-local errors.
     assert(get_error() == NULL);
+    test_iterate_phdr();
     puts("android_dl_compat_test: all assertions passed");
 }

@@ -298,3 +298,27 @@ attr) alongside the existing summary keys, so the next console run can
 distinguish a refused permission change from a successful one the query
 disagrees with - the ambiguity in the v0.99.4 `read_only=0 none=0 rw=0`
 report. These are host-measured results; none of it has run on a console.
+
+### Guest module registry and dl_iterate_phdr (2026-11-18)
+
+`dl_iterate_phdr` now walks a new loader-owned module registry instead of
+failing to resolve: the guest's bundled C++ unwinder calls it to find
+PT_GNU_EH_FRAME, and an unresolved import would have blocked the audit while
+a wrong one would terminate every guest exception. When the RX mapping
+succeeds, the loader registers the image with its true load bias (final base
+minus lowest virtual page) and the program-header table read back from the
+mapped bytes. The callback receives the full modern bionic LP64
+`dl_phdr_info` (64 bytes) so old and new consumers stay inside the layout
+they compiled against; the TLS module id stays 0 until the guest TLS
+registry can supply a real one, which the known unwinder callers never read.
+Callbacks run on a snapshot, because an unwinder callback may itself call
+`dlopen` or re-enter the walk. Before any image is mapped the walk visits
+zero modules and succeeds - a true statement about loader state, and an
+empty answer the unwinder treats as "not found", never as a crash.
+
+Host audit after this batch: 478 of 576 required imports supported (482
+including the four supported weak imports). The remaining host-missing list
+is the 91 host-disabled EGL/GLES2 names, `setjmp`/`longjmp` (target ARM64
+bridge), and five genuinely outstanding required imports:
+`__ctype_get_mb_cur_max`, `__system_property_get`, `mallinfo`, `sysinfo` and
+`uname`. None of the registry or walk has run on a console.

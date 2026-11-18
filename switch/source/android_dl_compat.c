@@ -14,6 +14,7 @@
 #include "android_configuration_compat.h"
 #include "android_egl_gles_compat.h"
 #include "android_math_compat.h"
+#include "engine_module_registry.h"
 
 enum { DL_ERROR_BYTES = 128 };
 enum { MODULE_LOG, MODULE_ANDROID, MODULE_MATH, MODULE_DL,
@@ -187,6 +188,51 @@ static int bionic_dladdr(const void *address, void *info)
     return 0;
 }
 
+// Bionic LP64 dl_phdr_info: the classic four fields, then the load-counter
+// and TLS fields added in later Android releases. Handing the guest's
+// callback the full modern layout keeps both old and new consumers inside
+// the struct they were compiled against. The TLS module id is 0 until the
+// guest TLS registry can supply a real one; unwinders, the known callers,
+// read only the classic prefix.
+typedef struct {
+    uint64_t addr;        // dlpi_addr: load bias, not the first mapped byte.
+    const char *name;     // dlpi_name
+    const void *phdr;     // dlpi_phdr
+    uint16_t phnum;       // dlpi_phnum
+    uint64_t adds;        // dlpi_adds
+    uint64_t subs;        // dlpi_subs
+    uint64_t tls_modid;   // dlpi_tls_modid (0: no id assigned yet)
+    void *tls_data;       // dlpi_tls_data
+} BionicDlPhdrInfo;
+
+static int bionic_dl_iterate_phdr(int (*callback)(void *, size_t, void *),
+                                  void *data)
+{
+    if (!callback) {
+        set_error("Missing dl_iterate_phdr callback");
+        return -1;
+    }
+    // Snapshot first: the callback may itself call dl_iterate_phdr or
+    // dlopen, and the registry lock is not recursive. An empty walk means
+    // the loader has not mapped a guest image yet - a true statement about
+    // Morrow's own state, never a claim that a missing module is loaded.
+    EngineModule found[ENGINE_MODULE_REGISTRY_MAX];
+    unsigned count = engine_module_snapshot(found, ENGINE_MODULE_REGISTRY_MAX);
+    for (unsigned i = 0; i < count; i++) {
+        BionicDlPhdrInfo info;
+        memset(&info, 0, sizeof(info));
+        info.addr = found[i].load_bias;
+        info.name = found[i].name;
+        info.phdr = found[i].program_headers;
+        info.phnum = found[i].program_header_count;
+        info.adds = engine_module_adds();
+        info.subs = engine_module_subs();
+        int stop = callback(&info, sizeof(info), data);
+        if (stop) return stop;
+    }
+    return 0;
+}
+
 bool android_dl_compat_resolve(const char *name, const char *version,
                                const char *library, uint64_t *address)
 {
@@ -202,6 +248,7 @@ bool android_dl_compat_resolve(const char *name, const char *version,
     DL_MAP(dlclose, bionic_dlclose)
     DL_MAP(dlerror, bionic_dlerror)
     DL_MAP(dladdr, bionic_dladdr)
+    DL_MAP(dl_iterate_phdr, bionic_dl_iterate_phdr)
     (void)0;
 #undef DL_MAP
     return *address != 0;

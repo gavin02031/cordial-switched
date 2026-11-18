@@ -89,6 +89,7 @@ jobs:
             switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
             switch/source/android_process_compat.c \
             switch/source/android_system_compat.c \
+            switch/source/engine_module_registry.c \
             switch/source/android_wchar_compat.c \
             switch/source/android_socket_compat.c \
             switch/source/android_file_compat.c switch/source/android_mapping_compat.c \
@@ -161,9 +162,17 @@ jobs:
             switch/source/android_native_window_compat.c \
             switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
             switch/source/android_egl_gles_compat.c \
-            switch/source/android_math_compat.c -pthread -lm \
+            switch/source/android_math_compat.c \
+            switch/source/engine_module_registry.c -pthread -lm \
             -o /tmp/cordial-android-dl-test
           /tmp/cordial-android-dl-test
+      - name: Test guest module registry snapshots
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_module_registry_test.c \
+            switch/source/engine_module_registry.c -pthread \
+            -o /tmp/morrow-module-registry-test
+          /tmp/morrow-module-registry-test
       - name: Test Android libm ABI providers
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
