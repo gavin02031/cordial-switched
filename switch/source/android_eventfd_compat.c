@@ -26,8 +26,9 @@
 // One deliberate divergence, by design: Linux leaves a thread blocked
 // in read/write asleep when another thread closes the fd number (the
 // blocked syscall holds its own file reference), potentially forever;
-// Morrow wakes such waiters with EBADF instead, so a close can never
-// wedge a guest thread on a counter that can never move again.
+// Morrow wakes such waiters with EBADF instead: that particular
+// wait cannot outlive its counter (a guest thread can still block
+// elsewhere; no general never-wedges guarantee is claimed).
 // Blocking waits use pthread conditions, which libgloss/libsysbase
 // implements over Horizon condvars (devkitPro/newlib libgloss
 // libsysbase/pthread.c), so the same code runs on host and Switch.

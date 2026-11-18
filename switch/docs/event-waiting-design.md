@@ -34,8 +34,9 @@ The kernel's count == 2^64 - 1 EPOLLERR state is unreachable from
 userspace writes and is never reported. One deliberate divergence:
 Linux leaves a thread blocked in read/write asleep when another thread
 closes the fd number (the blocked syscall holds its own file
-reference); Morrow wakes such waiters with EBADF so a close can never
-wedge a guest thread on a counter that can never move again.
+reference); Morrow wakes such waiters with EBADF: that particular wait
+cannot outlive its counter (a guest thread can still block elsewhere;
+no general never-wedges guarantee is claimed).
 - EPOLLEXCLUSIVE is refused with EINVAL on both ADD and MOD (MOD is the
   kernel's own rule; on ADD the kernel accepts it - verified by
   differential syscall test on Linux 6.1 - but the exclusive-wakeup
