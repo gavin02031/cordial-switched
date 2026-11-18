@@ -26,7 +26,8 @@ typedef void (*EngineConstructorRunCall)(uintptr_t target, void *context);
 // A failed gate makes no attempt. Any attempt, including a failed journal,
 // consumes the state and cannot be retried in the same process. A crash between
 // markers is intentionally unresolved; restarting must read the durable journal
-// and refuse blind re-execution. This unit has NO live guest call site yet.
+// and refuse blind re-execution. The live call site is horizon_real_link.c's
+// milestone-B path: mapping pinned, guest TLS installed, crash marker durable.
 bool engine_constructor_run_once(const EngineConstructorPlan *plan,
                                  EngineConstructorRunState *state,
                                  EngineConstructorRunGate gate,

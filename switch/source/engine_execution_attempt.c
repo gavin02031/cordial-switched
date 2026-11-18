@@ -62,6 +62,17 @@ EngineExecutionDecision engine_execution_decide(
                                      "jni_onload_eligible_experimental"};
 }
 
+void engine_execution_call_constructor(uintptr_t target)
+{
+    // Android calls DT_INIT/DT_INIT_ARRAY functions with (argc, argv, envp);
+    // on the AArch64 ABI extra register arguments are harmless to callees
+    // declared void(void). A guest shared library has no process argv, so
+    // the honest triple is zero/NULL/NULL.
+    void (*ctor)(int, char **, char **) =
+        (void (*)(int, char **, char **))target;
+    ctor(0, NULL, NULL);
+}
+
 int32_t engine_execution_call_jni_onload(uintptr_t entry, void *java_vm)
 {
     // JNI_OnLoad has a stable JavaVM*, void* ABI on Android AArch64. This

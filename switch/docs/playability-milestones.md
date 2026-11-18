@@ -441,3 +441,31 @@ native fake targets proving call order and journaling. The run journal
 and the refusal log together make the first console run with real
 constructors answer "how far did guest execution get" instead of
 "did it crash".
+
+### Milestone B wired: constructors run under the TPIDR bridge (2026-11-18)
+
+The link path now executes the validated constructor plan before
+JNI_OnLoad, as dlopen would, instead of skipping straight to the entry
+point. Sequence on the mapping-success path, all inside the existing
+action-requested and eligibility gates (no guard weakened): prepare the
+guest main-thread TLS world from the ELF's PT_TLS template, open a
+durable "constructors" crash marker, install the shadow TCB pointer in
+TPIDR_EL0 (host state stays on TPIDRRO_EL0 per the verified libnx
+evidence), run each constructor wrapped in an fsynced begin marker and a
+completed marker so a crash names the exact constructor index in the
+link report, keep the bridge installed through JNI_OnLoad (it needs the
+same guest TLS), then restore the host register once at the end. A
+journal failure mid-sequence still reports how far execution got via
+constructor_run_next_index, and constructor_plan_executed can no longer
+claim "no" after a partial run. Constructor calls pass the Android
+(argc, argv, envp) triple as zero/NULL/NULL - a guest shared library has
+no process argv, and the AArch64 ABI makes the extra registers harmless
+to void(void) callees.
+
+Host verification only: new engine_guest_tpidr_test proves bridge
+symmetry (on the host model - no privileged register on a build host),
+call order, begin-before-call and completed-after-call marker
+sequencing, gate refusal consuming no state, and once-only semantics.
+Whether real guest constructors run clean on Horizon - with real bionic
+TLS reads through the installed TPIDR - is exactly what the next
+console run with Gavin answers; nothing here asserts it.

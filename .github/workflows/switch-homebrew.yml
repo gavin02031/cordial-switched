@@ -53,6 +53,17 @@ jobs:
             switch/source/engine_constructor_run.c \
             -o /tmp/morrow-constructor-run-test
           /tmp/morrow-constructor-run-test
+      - name: Test guest TPIDR bridge model and constructor run order
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_guest_tpidr_test.c \
+            switch/source/engine_guest_tpidr.c \
+            switch/source/engine_constructor_run.c \
+            switch/source/engine_constructor_plan.c \
+            switch/source/engine_execution_attempt.c \
+            switch/source/engine_memory_plan.c \
+            -o /tmp/morrow-tpidr-test
+          /tmp/morrow-tpidr-test
       - name: Test exception register breadcrumb formatting (host only)
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

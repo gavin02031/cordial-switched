@@ -50,6 +50,7 @@
 #include "engine_memory_plan.h"
 #include "engine_stage.h"
 #include "engine_tls_scratch.h"
+#include "engine_guest_tpidr.h"
 #include "engine_tls_thread.h"
 #include "horizon_code_address.h"
 #include "horizon_code_memory.h"
@@ -65,6 +66,10 @@ static HorizonCodeMemory reservation;
 static bool engine_entry_started;
 static bool engine_mapping_pinned;
 static bool engine_jni_onload_succeeded;
+// The engine's own TLS world for its main thread, prepared once and kept for
+// the process lifetime: guest TLS is never freed while the engine runs.
+static EngineTlsThread engine_main_tls;
+static bool engine_main_tls_ready;
 static bool game_activity_attempt_consumed;
 static bool game_activity_entry_called;
 static uintptr_t live_game_activity_target;
@@ -496,6 +501,42 @@ static void probe_guest_data_mapping(FILE *log)
     bool released = unmap_fn(p, 4096) == 0;
     log_line(log, "guest_mapping_probe_zero=%d read_only=%d data=%d none=%d rw=%d released=%d",
              contents, read_only, preserved, inaccessible, writable, released);
+}
+
+typedef struct {
+    FILE *log;
+} ConstructorRunContext;
+
+// Gate proof for the constructor runner: the RX mapping is pinned for the
+// process lifetime and the guest main-thread TLS world exists.
+static bool constructor_run_gate(void *context)
+{
+    (void)context;
+    return engine_mapping_pinned && engine_main_tls_ready;
+}
+
+static bool constructor_begin(size_t index, uintptr_t target, void *context)
+{
+    ConstructorRunContext *ctx = context;
+    log_line(ctx->log, "constructor_begin_%03zu=0x%016llX", index,
+             (unsigned long long)target);
+    // Durability is the attribution: a crash after this line leaves the
+    // constructor's index as the report's last durable marker.
+    return fflush(ctx->log) == 0 && fsync(fileno(ctx->log)) == 0;
+}
+
+static bool constructor_completed(size_t index, uintptr_t target, void *context)
+{
+    ConstructorRunContext *ctx = context;
+    (void)target;
+    log_line(ctx->log, "constructor_completed_%03zu=yes", index);
+    return true;
+}
+
+static void constructor_call(uintptr_t target, void *context)
+{
+    (void)context;
+    engine_execution_call_constructor(target);
 }
 
 void horizon_real_link_run(RealLinkResult *result, unsigned action)
@@ -1195,8 +1236,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             log_line(log, "constructor_plan_validated_targets=%zu", constructors.call_count);
             log_line(log, "constructor_plan_first_invalid_index=%u",
                      constructors.first_invalid_index);
-            log_line(log, "constructor_plan_executed=no");
-            engine_constructor_plan_release(&constructors);
+            bool constructors_ran = false;
             if (action != 1)
                 log_line(log, "execution_gate=not_requested");
             if (action == 1) {
@@ -1270,6 +1310,61 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 log_line(log,
                                          "engine_module_registered=no");
                             }
+                        }
+                        // Milestone B: run the validated constructors before
+                        // JNI_OnLoad, as dlopen would. The guest thread
+                        // pointer is installed for the whole constructor +
+                        // JNI_OnLoad window and restored once at the end.
+                        if (!engine_main_tls_ready) {
+                            EngineTlsScratch scratch = {0};
+                            if (engine_tls_scratch_prepare(file, &probe,
+                                                           &scratch) ==
+                                    ENGINE_TLS_PREPARED && scratch.size &&
+                                engine_tls_thread_prepare(&scratch, NULL,
+                                                          &engine_main_tls))
+                                engine_main_tls_ready = true;
+                            engine_tls_scratch_release(&scratch);
+                        }
+                        log_line(log, "guest_main_tls_ready=%s",
+                                 engine_main_tls_ready ? "yes" : "no");
+                        uint64_t saved_tpidr = 0;
+                        bool bridge_installed = false;
+                        if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
+                                                      "constructors",
+                                                      result->log_path)) {
+                            log_line(log, "blocker=crash_journal_not_durable");
+                        } else if (!engine_main_tls_ready) {
+                            log_line(log,
+                                     "constructor_run_blocker=guest_tls_not_ready");
+                            engine_run_journal_finish(ENGINE_REPORT_DIR);
+                        } else {
+                            saved_tpidr = engine_guest_tpidr_install(
+                                android_arm64_tcb_shadow_pointer(
+                                    &engine_main_tls.tcb));
+                            bridge_installed = true;
+                            log_line(log, "guest_tpidr_bridge=installed");
+                            ConstructorRunContext ctx = { log };
+                            EngineConstructorRunState run_state = {0};
+                            const bool constructors_done =
+                                engine_constructor_run_once(
+                                    &constructors, &run_state,
+                                    constructor_run_gate, constructor_begin,
+                                    constructor_completed, constructor_call,
+                                    &ctx);
+                            log_line(log, "constructor_run_completed=%s",
+                                     constructors_done ? "yes" : "no");
+                            log_line(log, "constructor_run_next_index=%zu",
+                                     run_state.next_index);
+                            if (engine_run_journal_finish(ENGINE_REPORT_DIR))
+                                log_line(log,
+                                         "constructor_crash_marker_cleared=yes");
+                            else
+                                log_line(log,
+                                         "blocker=constructor_crash_marker_stuck");
+                            // Even a journal-failed partial run executed
+                            // guest code; the count above says how far.
+                            constructors_ran =
+                                constructors_done || run_state.next_index != 0;
                         }
                         int32_t version = 0;
                         bool onload_called = false;
@@ -1369,9 +1464,16 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                      live_main_thread_message_target ? "yes" : "no");
                         }
                         log_line(log, "engine_gameplay_started=no");
+                        if (bridge_installed) {
+                            engine_guest_tpidr_restore(saved_tpidr);
+                            log_line(log, "guest_tpidr_bridge=restored");
+                        }
                     }
                 }
             }
+            log_line(log, "constructor_plan_executed=%s",
+                     constructors_ran ? "yes" : "no");
+            engine_constructor_plan_release(&constructors);
         } else {
             detail(result, "Real engine entry blocked; see complete link report.");
             // Strict binding stops at the first unknown symbol. Continue a
