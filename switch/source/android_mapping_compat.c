@@ -2,6 +2,8 @@
 #include "android_mapping_compat.h"
 
 #include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +26,8 @@ typedef struct {
 typedef struct Region {
     void *base;
     size_t size;
+    bool private_file;
+    int protection; // -1 when subranges have different or unknown permissions.
 #ifdef __SWITCH__
     Backing *backing;
     size_t backing_offset;
@@ -129,34 +133,100 @@ static int allocate_pages(Region *region)
     return 0;
 }
 
+// Caller holds lock. If kernel cleanup fails, preserve the backing reference.
+static void discard_private(Region *region)
+{
+    int saved = errno;
+    if (release_pages(region, 0, region->size) == 0) drop_piece(region);
+    else {
+        region->next = rollback_pending;
+        rollback_pending = region;
+    }
+    errno = saved;
+}
+
+static Region *new_region(size_t size)
+{
+    Region *region = calloc(1, sizeof(*region));
+    if (!region) { errno = ENOMEM; return NULL; }
+    region->size = size;
+    region->protection = 3;
+    if (allocate_pages(region)) { free(region); return NULL; }
+    return region;
+}
+
+static Region **find_range(void *base, size_t size)
+{
+    uintptr_t start = (uintptr_t)base;
+    for (Region **slot = &regions; *slot; slot = &(*slot)->next) {
+        uintptr_t origin = (uintptr_t)(*slot)->base;
+        if (start >= origin && size <= (*slot)->size &&
+            start - origin <= (*slot)->size - size) return slot;
+    }
+    return NULL;
+}
+
+// Read the file through positional I/O. The guest may close its descriptor
+// immediately after mmap or have another thread using the same file offset.
+static int copy_file_pages(Region *region, int fd, int64_t offset)
+{
+#if defined(__SWITCH__) && !defined(MORROW_HAS_POSITIONAL_IO)
+    (void)region; (void)fd; (void)offset;
+    return reject(ENOTSUP);
+#else
+#ifdef __SWITCH__
+    extern ssize_t morrowFsdevPread(int, void *, size_t, off_t);
+#endif
+    struct stat st;
+    if (fstat(fd, &st)) return -1;
+    if (!S_ISREG(st.st_mode)) return reject(ENODEV);
+    if (offset >= st.st_size) return reject(ENOTSUP);
+    uint64_t available = (uint64_t)(st.st_size - offset);
+    // Beyond the final partial page Linux raises SIGBUS. Restrict our
+    // snapshot to ranges we can serve without fabricating data there.
+    if (available <= region->size - PAGE_BYTES) return reject(ENOTSUP);
+    size_t bytes = available < region->size ? (size_t)available : region->size;
+    for (size_t done = 0; done < bytes;) {
+        size_t chunk = bytes - done;
+        if (chunk > 1024 * 1024) chunk = 1024 * 1024;
+        unsigned char *out = (unsigned char *)region->base + done;
+#ifdef __SWITCH__
+        ssize_t n = morrowFsdevPread(fd, out, chunk, (off_t)(offset + (int64_t)done));
+#else
+        ssize_t n = pread(fd, out, chunk, (off_t)(offset + (int64_t)done));
+#endif
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) return -1;
+        if (!n) return reject(EIO); // concurrent truncation during initialisation
+        done += (size_t)n;
+    }
+    return 0;
+#endif
+}
+
 static void *guest_mmap(void *hint, size_t length, int protection, int flags,
                         int fd, int64_t offset)
 {
     (void)hint; // A non-fixed hint may be ignored.
     size_t size = page_bytes(length);
-    if (!size || offset) { errno = EINVAL; return FAILED_ADDRESS; }
-    if (flags != PRIVATE_ANONYMOUS || fd != -1 || !allowed(protection)) {
+    bool file = flags == 2; // MAP_PRIVATE without MAP_ANONYMOUS
+    if (!size || offset < 0 || offset % PAGE_BYTES || (!file && offset)) { errno = EINVAL; return FAILED_ADDRESS; }
+    if ((!file && (flags != PRIVATE_ANONYMOUS || fd != -1)) || !allowed(protection)) {
         errno = ENOTSUP;
         return FAILED_ADDRESS;
     }
     retry_rollbacks();
-    Region *region = calloc(1, sizeof(*region));
-    if (!region) { errno = ENOMEM; return FAILED_ADDRESS; }
-    region->size = size;
-    if (allocate_pages(region)) { free(region); return FAILED_ADDRESS; }
-    if (protection != 3 && protect_pages(region->base, size, protection)) {
-        int saved = errno;
-        // Rollback must never free backing that the kernel still owns.
-        if (release_pages(region, 0, size) == 0) drop_piece(region);
-        else {
-            pthread_mutex_lock(&lock);
-            region->next = rollback_pending;
-            rollback_pending = region;
-            pthread_mutex_unlock(&lock);
-        }
-        errno = saved;
+    Region *region = new_region(size);
+    if (!region) return FAILED_ADDRESS;
+    region->private_file = file;
+    if ((file && copy_file_pages(region, fd, offset)) ||
+        (protection != 3 && protect_pages(region->base, size, protection))) {
+        pthread_mutex_lock(&lock);
+        discard_private(region);
+        pthread_mutex_unlock(&lock);
         return FAILED_ADDRESS;
     }
+    region->protection = protection;
     pthread_mutex_lock(&lock);
     region->next = regions;
     regions = region;
@@ -172,17 +242,51 @@ static int guest_mprotect(void *base, size_t length, int protection)
     if (!size || start % PAGE_BYTES) return reject(EINVAL);
     if (!allowed(protection)) return reject(ENOTSUP);
     pthread_mutex_lock(&lock);
-    int result = -1;
-    errno = ENOMEM;
-    for (Region *r = regions; r; r = r->next) {
-        uintptr_t origin = (uintptr_t)r->base;
-        if (start >= origin && size <= r->size && start - origin <= r->size - size) {
-            result = protect_pages(base, size, protection);
-            break;
-        }
+    Region **slot = find_range(base, size);
+    int result = slot ? protect_pages(base, size, protection) : reject(ENOMEM);
+    if (!result) {
+        Region *r = *slot;
+        if (base == r->base && size == r->size) r->protection = protection;
+        else if (r->protection != protection) r->protection = -1;
     }
     pthread_mutex_unlock(&lock);
     return result;
+}
+
+static int remove_range(Region **slot, void *base, size_t size)
+{
+    Region *r = *slot;
+    uintptr_t start = (uintptr_t)base, origin = (uintptr_t)r->base;
+    size_t before = start - origin;
+    size_t after = r->size - before - size;
+    // Allocate split metadata before changing the actual mapping, so
+    // allocation failure leaves both the registry and the pages intact.
+    Region *tail = before && after ? malloc(sizeof(*tail)) : NULL;
+    if (before && after && !tail) return reject(ENOMEM);
+    int result = release_pages(r, before, size);
+    if (result) { free(tail); return result; }
+    if (!before && !after) {
+        *slot = r->next;
+        drop_piece(r);
+    } else {
+        if (tail) {
+            *tail = *r;
+#ifdef __SWITCH__
+            tail->backing->pieces++;
+#endif
+            r->next = tail;
+        }
+        if (before) r->size = before;
+        if (after) {
+            Region *right = tail ? tail : r;
+            right->base = (unsigned char *)base + size;
+            right->size = after;
+#ifdef __SWITCH__
+            right->backing_offset += before + size;
+#endif
+        }
+    }
+    return 0;
 }
 
 static int guest_munmap(void *base, size_t length)
@@ -190,47 +294,81 @@ static int guest_munmap(void *base, size_t length)
     size_t size = page_bytes(length);
     if (!size || (uintptr_t)base % PAGE_BYTES) return reject(EINVAL);
     pthread_mutex_lock(&lock);
-    Region **slot = &regions;
-    int result = -1;
-    errno = EINVAL;
-    while (*slot) {
-        Region *r = *slot;
-        uintptr_t start = (uintptr_t)base, origin = (uintptr_t)r->base;
-        if (start < origin || size > r->size || start - origin > r->size - size) {
-            slot = &r->next;
-            continue;
-        }
-        size_t before = start - origin;
-        size_t after = r->size - before - size;
-        // Allocate split metadata before changing the actual mapping, so
-        // allocation failure leaves both the registry and the pages intact.
-        Region *tail = before && after ? malloc(sizeof(*tail)) : NULL;
-        if (before && after && !tail) { errno = ENOMEM; break; }
-        result = release_pages(r, before, size);
-        if (result) { free(tail); break; }
-        if (!before && !after) {
-            *slot = r->next;
-            drop_piece(r);
-        } else {
-            if (tail) {
-                *tail = *r;
-#ifdef __SWITCH__
-                tail->backing->pieces++;
-#endif
-                r->next = tail;
-            }
-            if (before) r->size = before;
-            if (after) {
-                Region *right = tail ? tail : r;
-                right->base = (unsigned char *)base + size;
-                right->size = after;
-#ifdef __SWITCH__
-                right->backing_offset += before + size;
-#endif
-            }
-        }
-        break;
+    Region **slot = find_range(base, size);
+    int result = slot ? remove_range(slot, base, size) : reject(EINVAL);
+    pthread_mutex_unlock(&lock);
+    return result;
+}
+
+static void *guest_mremap(void *base, size_t old_length, size_t new_length,
+                          int flags, ...)
+{
+    size_t old_size = page_bytes(old_length), new_size = page_bytes(new_length);
+    if (!old_size || !new_size || (uintptr_t)base % PAGE_BYTES) {
+        errno = EINVAL;
+        return FAILED_ADDRESS;
     }
+    if (flags & ~1) { errno = ENOTSUP; return FAILED_ADDRESS; }
+    pthread_mutex_lock(&lock);
+    Region **slot = find_range(base, old_size);
+    void *out = FAILED_ADDRESS;
+    if (!slot || (*slot)->base != base || (*slot)->size != old_size) errno = EFAULT;
+    else if (new_size == old_size) out = base;
+    else if (new_size < old_size) {
+        if (!remove_range(slot, (unsigned char *)base + new_size, old_size - new_size))
+            out = base;
+    } else if (!flags) errno = ENOMEM; // Additional adjacent pages are not reserved.
+    else if ((*slot)->private_file || (*slot)->protection != 3) errno = ENOTSUP;
+    else {
+        Region *old = *slot;
+        Region *replacement = new_region(new_size);
+        if (replacement) {
+            memcpy(replacement->base, old->base, old_size);
+            if (release_pages(old, 0, old_size)) discard_private(replacement);
+            else {
+                replacement->next = old->next;
+                *slot = replacement;
+                out = replacement->base;
+                drop_piece(old);
+            }
+        }
+    }
+    pthread_mutex_unlock(&lock);
+    return out;
+}
+
+static int guest_madvise(void *base, size_t length, int advice)
+{
+    size_t size = page_bytes(length);
+    if (!size || (uintptr_t)base % PAGE_BYTES) return reject(EINVAL);
+    if (advice != 4) return reject(ENOTSUP); // MADV_DONTNEED
+    pthread_mutex_lock(&lock);
+    Region **slot = find_range(base, size);
+    int result = 0;
+    if (!slot) result = reject(ENOMEM);
+    else if ((*slot)->private_file || (*slot)->protection != 3) result = reject(ENOTSUP);
+    else {
+#ifdef __SWITCH__
+        // Anonymous private data reads back zero after discard. This eager
+        // backend keeps its heap allocation until unmap.
+        memset(base, 0, size);
+#else
+        result = madvise(base, size, MADV_DONTNEED);
+#endif
+    }
+    pthread_mutex_unlock(&lock);
+    return result;
+}
+
+static int guest_msync(void *base, size_t length, int flags)
+{
+    size_t size = page_bytes(length);
+    if (!size || (uintptr_t)base % PAGE_BYTES || (flags & ~7) ||
+        (flags & 5) == 5) return reject(EINVAL);
+    if (flags & 2) return reject(ENOTSUP); // MS_INVALIDATE
+    pthread_mutex_lock(&lock);
+    // All supported mappings are private. No dirty data is owed to a file.
+    int result = find_range(base, size) ? 0 : reject(ENOMEM);
     pthread_mutex_unlock(&lock);
     return result;
 }
@@ -243,6 +381,9 @@ bool android_mapping_compat_resolve(const char *name, const char *version,
     if (!strcmp(name, "mmap")) *address = (uintptr_t)&guest_mmap;
     else if (!strcmp(name, "munmap")) *address = (uintptr_t)&guest_munmap;
     else if (!strcmp(name, "mprotect")) *address = (uintptr_t)&guest_mprotect;
+    else if (!strcmp(name, "mremap")) *address = (uintptr_t)&guest_mremap;
+    else if (!strcmp(name, "msync")) *address = (uintptr_t)&guest_msync;
+    else if (!strcmp(name, "madvise")) *address = (uintptr_t)&guest_madvise;
     else return false;
     return true;
 }

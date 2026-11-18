@@ -152,11 +152,20 @@ constructor runner alone does not supply the missing Android application.
 ### Private anonymous data mappings
 
 The runtime now exposes the engine's LIBC imports for mmap, mprotect and
-munmap. The supported mapping is private anonymous data, offset zero, with
+munmap, plus mremap and madvise. Supported mappings include private anonymous data with offset zero and
+private snapshots of regular files at page-aligned offsets, with
 no access, read access or read/write access. On Horizon it obtains a
 page-aligned backing allocation, maps a kernel alias and changes permissions
-on the alias. A non-fixed address hint may be ignored. File mappings, fixed
-addresses, executable permissions, remap and memory advice remain unavailable.
+on the alias. A non-fixed address hint may be ignored. Shared mappings, fixed
+addresses and executable permissions remain unavailable. Whole mappings can
+shrink in place. A uniformly writable mapping can grow with MREMAP_MAYMOVE,
+preserving the old bytes and zeroing new pages. Failed growth leaves the
+original intact. Private file snapshots use positional reads, retain zeroes
+after EOF in the final page, and stay usable after closing the descriptor.
+Requests spanning wholly nonexistent file pages fail. MS_SYNC and MS_ASYNC
+on live private ranges require no writeback. Invalidation is unsupported.
+MADV_DONTNEED on writable anonymous pages restores their
+zero contents. On Horizon that operation retains backing memory.
 Protection and release accept a subrange of one live region. Removing a
 middle range retains the surviving pieces and their shared backing allocation.
 Backing memory can therefore stay committed until the final piece is removed.

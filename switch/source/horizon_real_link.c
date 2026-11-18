@@ -1,4 +1,5 @@
 #include "horizon_real_link.h"
+#include "android_import_resolver.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -267,33 +268,7 @@ static bool resolve_compatible(const char *name, const char *version,
         diagnostics->lookups++;
     // Match the same real providers used by ZR's import audit, without
     // fabricating pointers for Android services that do not exist on Horizon.
-    const bool supported = ((!version && !library &&
-             android_log_compat_resolve(name, address, NULL)) ||
-            android_media_codec_compat_resolve(name, version, library, address) ||
-            android_image_reader_compat_resolve(name, version, library, address) ||
-            android_coverage_compat_resolve(name, version, library, address) ||
-            android_media_format_compat_resolve(name, version, library, address) ||
-            android_cxa_compat_resolve(name, version, library, address) ||
-            android_looper_compat_resolve(name, version, library, address) ||
-            android_native_window_compat_resolve(name, version, library, address) ||
-            android_asset_compat_resolve(name, version, library, address) ||
-            android_configuration_compat_resolve(name, version, library, address) ||
-            android_egl_gles_compat_resolve(name, version, library, address) ||
-            android_dl_compat_resolve(name, version, library, address) ||
-            android_math_compat_resolve(name, version, library, address) ||
-            android_jump_compat_resolve(name, version, library, address) ||
-            android_libc_compat_resolve(name, version, library, address) ||
-            android_wchar_compat_resolve(name, version, library, address) ||
-            android_socket_compat_resolve(name, version, library, address) ||
-                            android_file_compat_resolve(name, version, library, address) ||
-                            android_mapping_compat_resolve(name, version, library, address) ||
-            android_stdio_compat_resolve(name, version, library, address) ||
-            android_fortify_compat_resolve(name, version, library, address) ||
-            android_pthread_compat_resolve(name, version, library, address) ||
-            android_sem_compat_resolve(name, version, library, address) ||
-            android_tls_compat_resolve(name, version, library, address) ||
-            android_thread_attr_compat_resolve(name, version, library, address) ||
-            android_thread_lifecycle_compat_resolve(name, version, library, address));
+    const bool supported = android_import_resolve(name, version, library, address);
     if (supported) {
         if (diagnostics) {
             if (diagnostics->resolved_list &&
