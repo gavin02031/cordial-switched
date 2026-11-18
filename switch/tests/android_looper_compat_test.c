@@ -44,6 +44,16 @@ static int on_fd(int fd, int events, void *data)
     return 0; // Android callbacks returning zero auto-unregister.
 }
 
+static int on_eventfd(int fd, int events, void *data)
+{
+    assert(events & 1);
+    uint64_t value;
+    assert(android_eventfd_read(fd, &value, 8) == 8);
+    assert(data == &callbacks);
+    callbacks++;
+    return 0;
+}
+
 static void *thread_test(void *unused)
 {
     (void)unused;
@@ -82,7 +92,10 @@ int main(void)
     release(looper);
     assert(poll_once(0, NULL, NULL, NULL) == -3);
     assert(add_fd(looper, -1, 42, 1, NULL, NULL) == -1);
-    assert(add_fd(looper, 0, 42, 8, NULL, NULL) == -1);
+    // AOSP applies no mask validation: an ERROR/HANGUP-only mask is
+    // accepted (the wait maps only INPUT/OUTPUT; ERR/HUP always report).
+    assert(add_fd(looper, 0, 42, 8, NULL, NULL) == 1);
+    assert(remove_fd(looper, 0) == 1);
 
     int a[2], b[2], c[2];
     assert(pipe(a) == 0 && pipe(b) == 0 && pipe(c) == 0);
@@ -131,6 +144,40 @@ int main(void)
     assert(remove_fd(looper, a[0]) == 1);
     assert(remove_fd(looper, vfd) == 1);
     assert(android_eventfd_close(vfd) == 0);
+
+    // AOSP ordering: a batch with both a callback fd and an ident fd
+    // runs the callback AND returns the ident (queued ident responses
+    // outrank POLL_CALLBACK). Two ready ident fds are returned one per
+    // call, the second from the queue even after everything drains.
+    // All-virtual registrations: host+virtual mixing stays refused.
+    int vfd2 = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    int vfd3 = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    int vfd4 = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    assert(vfd2 >= 0 && vfd3 >= 0 && vfd4 >= 0);
+    assert(add_fd(looper, vfd4, 0, 1, on_eventfd, &callbacks) == 1);
+    assert(add_fd(looper, vfd2, 91, 1, NULL, NULL) == 1);
+    assert(add_fd(looper, vfd3, 92, 1, NULL, NULL) == 1);
+    const unsigned before = callbacks;
+    assert(android_eventfd_write(vfd4, &one, 8) == 8);
+    assert(android_eventfd_write(vfd2, &one, 8) == 8);
+    assert(android_eventfd_write(vfd3, &one, 8) == 8);
+    int r_fd = -1, r_events = -1;
+    void *r_data = NULL;
+    const int first = poll_once(25, &r_fd, &r_events, &r_data);
+    assert(first == 91 || first == 92); // ident outranks POLL_CALLBACK
+    assert(callbacks == before + 1);    // callback still ran, same call
+    const int second = poll_once(0, &r_fd, &r_events, &r_data);
+    assert(second == 91 || second == 92);
+    assert(second != first);            // the queued sibling response
+    // Drain everything: the queue is empty, so timeout resumes.
+    assert(android_eventfd_read(vfd2, &one, 8) == 8);
+    assert(android_eventfd_read(vfd3, &one, 8) == 8);
+    assert(poll_once(0, NULL, NULL, NULL) == -3);
+    assert(remove_fd(looper, vfd4) == 0); // callback auto-unregistered
+    assert(remove_fd(looper, vfd2) == 1 && remove_fd(looper, vfd3) == 1);
+    assert(android_eventfd_close(vfd2) == 0);
+    assert(android_eventfd_close(vfd3) == 0);
+    assert(android_eventfd_close(vfd4) == 0);
 
     close(a[0]); close(a[1]); close(b[0]); close(b[1]);
     close(c[0]); close(c[1]);

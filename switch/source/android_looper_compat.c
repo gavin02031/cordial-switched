@@ -44,6 +44,16 @@ typedef struct {
     uint64_t generation;
 } LooperFd;
 
+// Queued ident responses, per AOSP: one poll batch can carry several
+// ident>=0 results; pollOnce returns them one per call, even if the fd
+// drains or unregisters in between (AOSP returns these stale by design).
+typedef struct {
+    int fd;
+    int ident;
+    int events;
+    void *data;
+} LooperResponse;
+
 typedef struct {
     pthread_mutex_t lock;
     unsigned references;
@@ -51,6 +61,8 @@ typedef struct {
     size_t count;
     uint64_t generation;
     LooperFd registrations[ALOOPER_MAX_FDS];
+    LooperResponse pending[ALOOPER_MAX_FDS];
+    size_t pending_count;
 } NativeLooper;
 
 static pthread_key_t looper_thread_key;
@@ -121,10 +133,13 @@ static void looper_acquire(NativeLooper *looper)
 static int looper_add_fd(NativeLooper *looper, int fd, int ident, int events,
                          LooperCallback callback, void *data)
 {
-    if (!looper || fd < 0 || !(events & (ALOOPER_EVENT_INPUT | ALOOPER_EVENT_OUTPUT)) ||
-        (events & ~(ALOOPER_EVENT_INPUT | ALOOPER_EVENT_OUTPUT)))
-        return -1;
-    if (!callback && (!(looper->options & ALOOPER_ALLOW_NON_CALLBACKS) || ident < 0))
+    // AOSP applies no event-mask validation: unknown bits are stored but
+    // only INPUT/OUTPUT map onto the wait (ERROR/HANGUP are always
+    // reported for a registered fd). Zero is legal too: the registration
+    // then reports only error/hangup conditions, as Android does.
+    if (!looper || fd < 0) return -1;
+    if (!callback && (!(looper->options & ALOOPER_ALLOW_NON_CALLBACKS) ||
+                      ident < 0))
         return -1;
     pthread_mutex_lock(&looper->lock);
     size_t i = 0;
@@ -192,10 +207,12 @@ static int android_events(short revents)
 // 1. libnx poll() (nx/source/runtime/devices/socket.c:473) multiplexes
 //    ONLY registered BSD sockets: _socketGetFd fails for any other fd
 //    and the call returns -1, which would read here as an eternal
-//    ALOOPER_POLL_ERROR storm. Morrow currently produces no socket-backed
-//    guest fds (eventfd/timerfd/epoll are fail-closed refusals), so a
-//    Switch-side wait over registered fds is journaled and refused until
-//    a real Horizon wait primitive backs it (event-waiting-design.md).
+//    ALOOPER_POLL_ERROR storm. Morrow produces no socket-backed guest
+//    fds today (pipe/socketpair/accept4 are fail-closed refusals), so a
+//    Switch-side wait over host fd numbers is journaled and refused
+//    until a real Horizon wait primitive backs it
+//    (event-waiting-design.md). Morrow-virtual fds take the readiness
+//    path below on every platform instead.
 //
 // 2. ALooper_pollOnce(-1) with zero registered fds blocks until
 //    ALooper_wake, but no ALooper_wake import is bound, so wake can never
@@ -304,6 +321,22 @@ static int looper_poll_once(int timeout_millis, int *out_fd,
     NativeLooper *looper = looper_for_thread();
     if (!looper) return ALOOPER_POLL_ERROR;
 
+    // AOSP pollOnce drains queued ident responses before re-polling.
+    pthread_mutex_lock(&looper->lock);
+    if (looper->pending_count) {
+        const LooperResponse head = looper->pending[0];
+        looper->pending_count--;
+        if (looper->pending_count)
+            memmove(looper->pending, looper->pending + 1,
+                    looper->pending_count * sizeof(*looper->pending));
+        pthread_mutex_unlock(&looper->lock);
+        if (out_fd) *out_fd = head.fd;
+        if (out_events) *out_events = head.events;
+        if (out_data) *out_data = head.data;
+        return head.ident;
+    }
+    pthread_mutex_unlock(&looper->lock);
+
     LooperFd snapshots[ALOOPER_MAX_FDS];
     struct pollfd polls[ALOOPER_MAX_FDS];
     pthread_mutex_lock(&looper->lock);
@@ -320,10 +353,9 @@ static int looper_poll_once(int timeout_millis, int *out_fd,
 
     // One poll() batch may contain several ready callbacks. Run all of them
     // without the registry mutex so callbacks may add/remove registrations.
+    // Every ident response is queued per AOSP; callbacks running in the
+    // same batch do not suppress or reorder ident results.
     bool called = false;
-    int first_ident = ALOOPER_POLL_TIMEOUT;
-    int first_fd = 0, first_events = 0;
-    void *first_data = NULL;
     for (size_t i = 0; i < count; i++) {
         const int events = android_events(polls[i].revents);
         if (!events) continue;
@@ -337,6 +369,11 @@ static int looper_poll_once(int timeout_millis, int *out_fd,
                 break;
             }
         }
+        if (current && !item->callback &&
+            looper->pending_count < ALOOPER_MAX_FDS) {
+            looper->pending[looper->pending_count++] =
+                (LooperResponse){item->fd, item->ident, events, item->data};
+        }
         pthread_mutex_unlock(&looper->lock);
         if (!current) continue;
 
@@ -344,20 +381,25 @@ static int looper_poll_once(int timeout_millis, int *out_fd,
             called = true;
             if (item->callback(item->fd, events, item->data) == 0)
                 looper_remove_fd_generation(looper, item->fd, item->generation);
-        } else if (first_ident == ALOOPER_POLL_TIMEOUT) {
-            first_ident = item->ident;
-            first_fd = item->fd;
-            first_events = events;
-            first_data = item->data;
         }
     }
-    if (called) return ALOOPER_POLL_CALLBACK;
-    if (first_ident != ALOOPER_POLL_TIMEOUT) {
-        if (out_fd) *out_fd = first_fd;
-        if (out_events) *out_events = first_events;
-        if (out_data) *out_data = first_data;
-        return first_ident;
+    // A queued ident result outranks POLL_CALLBACK, exactly as AOSP
+    // pollOnce drains mResponses before returning pollInner's result.
+    pthread_mutex_lock(&looper->lock);
+    if (looper->pending_count) {
+        const LooperResponse head = looper->pending[0];
+        looper->pending_count--;
+        if (looper->pending_count)
+            memmove(looper->pending, looper->pending + 1,
+                    looper->pending_count * sizeof(*looper->pending));
+        pthread_mutex_unlock(&looper->lock);
+        if (out_fd) *out_fd = head.fd;
+        if (out_events) *out_events = head.events;
+        if (out_data) *out_data = head.data;
+        return head.ident;
     }
+    pthread_mutex_unlock(&looper->lock);
+    if (called) return ALOOPER_POLL_CALLBACK;
     return ALOOPER_POLL_WAKE;
 }
 
