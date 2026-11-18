@@ -22,9 +22,12 @@
 //     (differential-tested against Linux 6.1);
 //   - targets must be Morrow-virtual descriptors; a dead virtual number
 //     (in-range but closed) fails EBADF exactly as Linux fd validation
-//     does, and a foreign number fails EPERM, as Linux does for open
-//     files without a poll method - never silently level-poll a socket
-//     or file;
+//     does for an invalid closed descriptor. A foreign number (never
+//     issued by the virtual allocator) fails EPERM: that is a
+//     compatibility limitation, not Linux parity - Morrow cannot know
+//     whether a foreign number names an open unpollable file (Linux
+//     EPERM) or an invalid descriptor (Linux EBADF) - and it keeps
+//     silent wrong readiness off the console;
 //   - edge-triggered watches report only on a not-ready -> ready
 //     transition of the watched set, per Linux;
 //   - readiness is recomputed from the live objects on every wake, so a
@@ -162,10 +165,12 @@ int android_epoll_ctl(int epfd, int operation, int fd,
         return -1;
     }
     if (operation == 2) { // DEL: the event argument is ignored (Linux >= 2.6.9)
-        // Kernel ordering, differential-tested on Linux 6.1: a closed
-        // descriptor number fails EBADF before any watch lookup; an
-        // open-but-unpollable file fails EPERM; only a live, watchable
-        // target reaches the registry and can yield ENOENT.
+        // Kernel ordering, differential-tested on Linux 6.1: an invalid
+        // closed descriptor number fails EBADF before any watch lookup.
+        // Foreign numbers get EPERM as a documented limitation (their
+        // true validity is unknowable to Morrow; Linux would give EBADF
+        // for an invalid one). Only a live, watchable target reaches
+        // the registry and can yield ENOENT.
         if (android_virtual_is_virtual(fd)) {
             if (!android_virtual_readiness_edges(fd, NULL, NULL, NULL)) {
                 pthread_mutex_unlock(&instances_lock);
@@ -191,9 +196,11 @@ int android_epoll_ctl(int epfd, int operation, int fd,
         return -1;
     }
     // ADD and MOD both require a watchable target. A dead virtual
-    // number is EBADF (kernel fd validation); a foreign number is EPERM
-    // (kernel's open-but-unpollable rule). Refusing foreign numbers
-    // keeps silent wrong readiness off the console.
+    // number is EBADF (kernel fd validation of an invalid closed
+    // descriptor). A foreign number is EPERM: a compatibility
+    // limitation, not parity - its real validity and pollability are
+    // unknowable here - chosen so a wrong guess can never silently
+    // level-poll something unwatchable.
     if (!android_virtual_is_virtual(fd)) {
         pthread_mutex_unlock(&instances_lock);
         errno = EPERM;

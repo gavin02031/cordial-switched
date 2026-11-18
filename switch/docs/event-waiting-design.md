@@ -27,16 +27,24 @@ Known partial corners, by policy refused rather than faked:
   differential syscall test on Linux 6.1 - but the exclusive-wakeup
   distribution is not implemented, so it is refused rather than
   silently broadcast).
-Validation follows fs/eventpoll.c (Linux v6.12), checked line by line,
-with every error-code claim confirmed by differential syscall tests on
-host Linux 6.1: no generic event-mask validation (unknown bits such as
-EPOLLRDHUP are accepted, stored, and never fire for these object
-kinds), EPERM for open-but-unpollable targets, EBADF for any ctl op on
-a closed descriptor number (fd validation precedes the watch lookup, so
-teardown-then-DEL is EBADF, not ENOENT), any negative epoll_wait
-timeout waits forever, EPOLLONESHOT disarms on report and MOD re-arms,
-and closing a watched descriptor drops its watches at close time
-(eventpoll_release_file).
+Validation follows fs/eventpoll.c (Linux v6.12), checked line by line.
+The following specific cases - and only these - are additionally
+confirmed by differential syscall tests on host Linux 6.1: ADD on a
+live eventfd succeeds; DEL/MOD/ADD on an invalid closed descriptor
+number all fail EBADF (fd validation precedes the watch lookup);
+DEL on a live unregistered fd fails ENOENT; DEL/ADD on an open regular
+file fail EPERM; ADD with EPOLLEXCLUSIVE succeeds on the kernel;
+MOD on an exclusive watch fails EINVAL; MOD with EPOLLRDHUP, an
+unknown bit, or EPOLLWAKEUP on a non-exclusive watch succeeds. Morrow
+matches all of these except the EPOLLEXCLUSIVE ADD refusal noted above.
+Foreign descriptor numbers (never issued by the virtual allocator) get
+EPERM as a compatibility limitation, not a parity claim: Morrow cannot
+know whether such a number is open-but-unpollable (Linux EPERM) or
+invalid (Linux EBADF). Source-verified but not syscall-tested: the
+absence of generic mask validation (v6.12 source), any negative
+epoll_wait timeout waiting forever, EPOLLONESHOT disarm on report with
+MOD re-arm, and close-time watch teardown (eventpoll_release_file),
+which Morrow implements through the dispatcher close hook.
 All of the above is host-tested only; no console run has observed any
 of it yet, and host timing windows say nothing about console timing.
 
