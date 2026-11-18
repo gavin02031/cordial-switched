@@ -11,6 +11,7 @@
 #include "android_epoll_compat.h"
 #include "android_eventfd_compat.h"
 #include "android_property_compat.h"
+#include "android_timerfd_compat.h"
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -422,18 +423,13 @@ static int guest_eventfd(unsigned initial, int flags)
 
 static int guest_timerfd_create(int clock, int flags)
 {
-    (void)clock;
-    (void)flags;
-    return refuse_logged(__func__);
+    return android_timerfd_create(clock, flags);
 }
 
 static int guest_timerfd_settime(int fd, int flags, const void *next, void *old)
 {
-    (void)fd;
-    (void)flags;
-    (void)next;
-    (void)old;
-    return refuse_logged(__func__);
+    if (!next) { errno = EFAULT; return -1; }
+    return android_timerfd_settime(fd, flags, next, old);
 }
 
 // Distinct refusal names per import alias: the journal must show which

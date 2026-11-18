@@ -11,6 +11,7 @@
 
 #include "android_eventfd_compat.h"
 #include "android_log_compat.h"
+#include "android_virtual_fd.h"
 
 #include <time.h>
 
@@ -212,7 +213,7 @@ static int morrow_looper_wait(struct pollfd *polls, size_t count,
     bool any_virtual = false, any_host = false;
     for (size_t i = 0; i < count; i++) {
         if (polls[i].fd < 0) continue; // poll ignores negative fds
-        if (android_eventfd_is_virtual(polls[i].fd)) any_virtual = true;
+        if (android_virtual_is_virtual(polls[i].fd)) any_virtual = true;
         else any_host = true;
     }
     if (any_virtual && any_host) {
@@ -237,11 +238,15 @@ static int morrow_looper_wait(struct pollfd *polls, size_t count,
         uint64_t since = android_virtual_generation();
         for (;;) {
             int ready = 0;
+            int watched[ALOOPER_MAX_FDS];
+            int watched_count = 0;
             for (size_t i = 0; i < count; i++) {
                 polls[i].revents = 0;
                 if (polls[i].fd < 0) continue;
+                watched[watched_count++] = polls[i].fd;
                 uint32_t live = 0;
-                if (!android_eventfd_poll_readiness(polls[i].fd, &live))
+                if (!android_virtual_readiness_edges(polls[i].fd, &live,
+                                                     NULL, NULL))
                     continue;
                 short revents = 0;
                 if (live & 0x001) revents |= POLLIN;
@@ -261,6 +266,13 @@ static int morrow_looper_wait(struct pollfd *polls, size_t count,
                 remaining = timeout_millis - (int)elapsed_ms;
                 if (remaining <= 0) return 0;
             }
+            // Wake at the soonest timer expiry too: time-driven readiness
+            // raises no change signal.
+            const int64_t expiry =
+                android_virtual_next_expiry_ms(watched, watched_count);
+            if (expiry >= 0 && (remaining < 0 || expiry < remaining))
+                remaining = (int)expiry;
+            if (remaining == 0) continue;
             since = android_virtual_wait_change(since, remaining);
         }
     }

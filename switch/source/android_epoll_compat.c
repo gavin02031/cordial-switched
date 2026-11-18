@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "android_eventfd_compat.h"
+#include "android_virtual_fd.h"
 
 // Linux epoll semantics, subset. Bionic passes the ABI through unchanged
 // (aarch64 struct epoll_event is 16 bytes: u32 events + 8-byte data at
@@ -139,7 +140,8 @@ int android_epoll_ctl(int epfd, int operation, int fd,
     // ADD and MOD both require a watchable target. Only Morrow-virtual
     // descriptors qualify; refusing others keeps silent wrong readiness
     // off the console.
-    if (!android_eventfd_is_virtual(fd) || !android_eventfd_poll_readiness(fd, NULL)) {
+    if (!android_virtual_is_virtual(fd) ||
+        !android_virtual_readiness_edges(fd, NULL, NULL, NULL)) {
         pthread_mutex_unlock(&instances_lock);
         errno = EPERM;
         return -1;
@@ -220,7 +222,7 @@ int android_epoll_wait(int epfd, uint32_t *out_events, uint64_t *out_data,
             if (watch->disarmed) continue;
             uint32_t live = 0;
             uint64_t read_edges = 0, write_edges = 0;
-            if (!android_eventfd_readiness_edges(watch->fd, &live,
+            if (!android_virtual_readiness_edges(watch->fd, &live,
                                                  &read_edges,
                                                  &write_edges)) {
                 // Watched object closed: with the description gone, Linux
@@ -270,6 +272,24 @@ int android_epoll_wait(int epfd, uint32_t *out_events, uint64_t *out_data,
             remaining = timeout_millis - (int)elapsed_ms;
             if (remaining <= 0) return 0;
         }
+        // Timer expiries are time-driven: no change signal fires for
+        // them, so cap the wait slice at the soonest watched expiry and
+        // re-scan when it comes due.
+        int watched[EPOLL_MAX_WATCHES];
+        int watched_count = 0;
+        pthread_mutex_lock(&instances_lock);
+        VirtualEpoll *live_instance = instance_for(epfd);
+        if (live_instance) {
+            watched_count = live_instance->watch_count;
+            for (int i = 0; i < watched_count; i++)
+                watched[i] = live_instance->watches[i].fd;
+        }
+        pthread_mutex_unlock(&instances_lock);
+        const int64_t expiry =
+            android_virtual_next_expiry_ms(watched, watched_count);
+        if (expiry >= 0 && (remaining < 0 || expiry < remaining))
+            remaining = (int)expiry;
+        if (remaining == 0) continue; // Due now: re-scan without sleeping.
         since = android_virtual_wait_change(since, remaining);
     }
 }
