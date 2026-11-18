@@ -3,6 +3,7 @@ import platform
 import shutil
 import struct
 import unittest
+from pathlib import Path
 from audit_android_elf import (parse_imports, svc_candidates,
                                text_section_ranges, section_svc_candidates,
                                compare_provider_manifest, host_provider_coverage)
@@ -41,6 +42,21 @@ class AuditTests(unittest.TestCase):
         self.assertTrue(by_name['mallinfo']['supported'])
         self.assertFalse(by_name['mallinfo']['target_registered'])
         self.assertEqual(coverage['target_registered_required'], 3)
+
+    def test_provider_manifest_covers_every_compat_source(self):
+        # The manifest is the single source list for the audit host-provider
+        # build and the CI stage test; a new android_*_compat.c that is not
+        # added here must fail loudly instead of silently dropping out of
+        # host-provider coverage.
+        source = Path(__file__).resolve().parents[1] / 'source'
+        manifest = [line for line in (source / 'PROVIDER_SOURCES.txt').read_text().splitlines()
+                    if line and not line.startswith('#')]
+        expected = sorted(p.name for p in source.glob('android_*_compat.c')) + [
+            'android_import_resolver.c', 'android_arm64_tcb_shadow.c',
+            'android_virtual_fd.c', 'engine_tls_scratch.c',
+            'engine_module_registry.c']
+        self.assertEqual(sorted(manifest), sorted(expected))
+        self.assertTrue(all((source / name).is_file() for name in manifest))
 
     def test_versions_and_weak(self):
         symbols = ' 1: 00000000 0 FUNC GLOBAL DEFAULT UND pread@LIBC (2)\n 2: 00000000 0 NOTYPE WEAK DEFAULT UND optional\n'

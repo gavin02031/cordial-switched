@@ -383,7 +383,9 @@ the binding reports zero there even where the backing allocator counts
 fail closed, so nothing is fabricated: a zero field is either bionic's
 documented unused answer or a true zero counter.
 
-Host audit: 487 of 576 required imports resolve on host. The remaining 93
+Host audit: 483 of 576 required imports resolve on the host build (the
+tool's "487 supported" headline adds the 4 supported optional imports).
+The remaining 93
 host-missing names are all target-registered, none genuinely outstanding:
 91 EGL/GLES2 names the host build compiles out (the resolver catalogue was
 verified name-for-name against the guest's import list - exact coverage,
@@ -396,16 +398,21 @@ genuinely missing) instead of flattening everything into one "missing"
 count. Two optional imports (the dyninit pair) remain unresolved.
 
 Resolver-registration status, keeping the three tiers distinct:
-- 487 host-supported bindings: resolver registration and behaviour are
-  exercised by host suites on every CI run.
+- 483 required + 4 optional host-resolvable bindings: registered with the
+  host resolver. Host suites exercise per-symbol behaviour only where a
+  suite covers that symbol; a returned address is registration, not
+  exercised behaviour.
 - 91 EGL/GLES2 + 2 jump imports: registered with the target resolver
   (catalogue verified against the guest import list; the jump bridge's ARM64
   code paths are executed under qemu-aarch64 CI). Bound, not exercised on
   Horizon.
-- 0 genuinely outstanding required imports. Every import in the guest's
-  BIND_NOW table now has a registered binding, which is necessary for the
-  load to proceed and says nothing about runtime behaviour until the
-  console run.
+- 0 genuinely outstanding required imports; 2 optional imports (the dyninit
+  pair) remain unresolved. Every import in the guest's BIND_NOW table now
+  has a registered binding, which is necessary for the load to proceed and
+  says nothing about runtime behaviour until the console run. mallinfo in
+  particular is covered by host synthetic-call tests only; a by-value return
+  cannot signal failure, so an ABI or semantic fault would surface only at
+  the guest's first real call on Horizon.
 
 ### Refusals leave evidence (2026-11-18)
 

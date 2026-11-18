@@ -86,31 +86,13 @@ jobs:
           /tmp/morrow-engine-journal-test
       - name: Test non-executable ARM64 segment staging
         run: |
+          # Provider list lives in switch/source/PROVIDER_SOURCES.txt (shared
+          # with the audit tool's host-provider build); add the three engine
+          # sources this test also exercises.
+          PROVIDERS=$(grep -v '^#' switch/source/PROVIDER_SOURCES.txt | sed 's|^|switch/source/|' | tr '\n' ' ')
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
-            switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/android_import_resolver.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
-            switch/source/android_log_compat.c switch/source/android_math_compat.c \
-            switch/source/android_media_format_compat.c switch/source/android_media_codec_compat.c \
-            switch/source/android_image_reader_compat.c \
-            switch/source/android_coverage_compat.c \
-            switch/source/android_cxa_compat.c switch/source/android_looper_compat.c \
-            switch/source/android_native_window_compat.c \
-            switch/source/android_asset_compat.c switch/source/android_configuration_compat.c \
-            switch/source/android_egl_gles_compat.c \
-            switch/source/android_dl_compat.c \
-            switch/source/android_stdio_compat.c switch/source/android_libc_compat.c \
-            switch/source/android_process_compat.c \
-            switch/source/android_system_compat.c \
-            switch/source/android_property_compat.c \
-            switch/source/engine_module_registry.c \
-            switch/source/android_wchar_compat.c \
-            switch/source/android_socket_compat.c \
-            switch/source/android_file_compat.c switch/source/android_mapping_compat.c \
-            switch/source/android_jump_compat.c \
-            switch/source/android_sem_compat.c \
-            switch/source/android_fortify_compat.c switch/source/android_pthread_compat.c \
-            switch/source/android_tls_compat.c switch/source/android_thread_attr_compat.c \
-            switch/source/android_thread_lifecycle_compat.c switch/source/android_arm64_tcb_shadow.c \
-            switch/source/engine_tls_scratch.c switch/source/android_eventfd_compat.c switch/source/android_timerfd_compat.c switch/source/android_epoll_compat.c switch/source/android_virtual_fd.c -lm -pthread \
+            switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/engine_boot_log.c switch/source/elf_probe.c \
+            $PROVIDERS -lm -pthread \
             -o /tmp/cordial-engine-stage-test
           /tmp/cordial-engine-stage-test
       - name: Test strict Android liblog providers

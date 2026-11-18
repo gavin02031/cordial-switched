@@ -321,11 +321,9 @@ def host_provider_coverage(imports):
     if platform.system() != 'Linux' or ctypes.sizeof(ctypes.c_void_p) != 8:
         raise ValueError('--host-providers requires a 64-bit Linux build host')
     source = Path(__file__).resolve().parents[1] / 'source'
-    sources = sorted(source.glob('android_*_compat.c'))
-    sources.extend(source / name for name in (
-        'android_import_resolver.c', 'android_arm64_tcb_shadow.c',
-        'android_virtual_fd.c', 'engine_tls_scratch.c',
-        'engine_module_registry.c'))
+    manifest = source / 'PROVIDER_SOURCES.txt'
+    sources = [source / line for line in manifest.read_text().splitlines()
+               if line and not line.startswith('#')]
     if platform.machine() == 'aarch64':
         sources.append(source / 'android_bionic_setjmp.s')
     with tempfile.TemporaryDirectory() as tmp:
