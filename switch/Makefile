@@ -12,12 +12,14 @@ BUILD        := build
 SOURCES      := source
 APP_TITLE    := Cordial Switched
 APP_AUTHOR   := Cordial Switched contributors
-APP_VERSION  := 0.99.4
+APP_VERSION  := 0.99.5
+BUILD_REVISION := $(or $(shell git rev-parse --short=12 HEAD 2>/dev/null),$(GITHUB_SHA))
+BUILD_ID      := $(APP_VERSION)$(if $(BUILD_REVISION),+$(BUILD_REVISION))
 
 ARCH        := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS      := -O2 -g -Wall -Wextra -Werror -ffunction-sections $(ARCH) -D__SWITCH__ $(INCLUDE) \
                `sdl2-config --cflags` `$(PREFIX)pkg-config --cflags SDL2_ttf`
-CFLAGS      += -DMORROW_BUILD_VERSION=\"$(APP_VERSION)\"
+CFLAGS      += -DMORROW_BUILD_VERSION=\"$(BUILD_ID)\"
 ASFLAGS     := -g $(ARCH)
 LDFLAGS     := -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
 LIBS        := `sdl2-config --libs` `$(PREFIX)pkg-config --libs SDL2_ttf` -lGLESv2 -lEGL -lglapi -ldrm_nouveau -lnx -lm

@@ -139,8 +139,8 @@ int android_thread_attr_compat_for_create(const void *address, pthread_attr_t *n
             return ENOTSUP;
     }
 #ifdef __SWITCH__
-    // libsysbase ignores detached state in thread_create and rejects even a
-    // zero-sized guard through setguardsize. Do not promise either feature.
+    // libsysbase cannot set a guard. Only the extended libnx creation path
+    // consumes this reservation size. Detached creation is still unavailable.
     if (attr->guard_size) {
 #ifdef MORROW_HAS_STACK_GUARDS
         if (!guard) return ENOTSUP;

@@ -5,7 +5,7 @@ index e35879c..6f61ed3 100644
 @@ -12,6 +12,8 @@
  #include "../internal.h"
  #include "../runtime/alloc.h"
- 
+
 +#include "horizon_stack_guard.inc"
 +
  #define USER_TLS_BEGIN 0x180
@@ -20,24 +20,24 @@ index e35879c..6f61ed3 100644
 +    void* stack_mirror = NULL;
 +    Result rc = morrowMapStack(&stack_mirror, stack_mem, aligned_stack_sz);
      virtmemUnlock();
- 
+
      if (R_SUCCEEDED(rc))
 @@ -181,7 +183,8 @@ Result threadCreate(
          }
- 
+
          if (R_FAILED(rc)) {
 -            svcUnmapMemory(stack_mirror, stack_mem, aligned_stack_sz);
 +            if (R_FAILED(morrowUnmapStack(stack_mirror, stack_mem, aligned_stack_sz)))
 +                owns_stack_mem = false; // Kernel still owns the alias.
          }
      }
- 
+
 @@ -241,7 +244,7 @@ Result threadClose(Thread* t) {
      const size_t reent_sz = (sizeof(struct _reent)+0xF) &~ 0xF;
      const size_t aligned_stack_sz = (t->stack_sz + sizeof(ThreadEntryArgs) + tls_sz + reent_sz + 0xFFF) & ~0xFFF;
- 
+
 -    rc = svcUnmapMemory(t->stack_mirror, t->stack_mem, aligned_stack_sz);
 +    rc = morrowUnmapStack(t->stack_mirror, t->stack_mem, aligned_stack_sz);
- 
+
      if (R_SUCCEEDED(rc)) {
          if (t->owns_stack_mem) {

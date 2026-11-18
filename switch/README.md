@@ -1372,23 +1372,16 @@ exercise our adapters, not proprietary engine execution. **INFERRED:** Switch
 worker exit, cleanup and thread-ID behaviour remain unverified on hardware.
 Main-thread exit and foreign host-thread teardown are not validated.
 
-A separate known thread-startup limitation remains: devkitPro libsysbase's
-`pthread_attr_setguardsize` returns `ENOSYS`, while the current attribute bridge
-requests a guard size for explicit attributes. Native detached-thread support
-also needs a separate implementation. Neither limitation is bypassed by reporting
-success; guest startup and playable Roblox remain blocked.
+### Joinable worker stacks in preview 0.99.5
 
-### Explicit zero-guard worker attributes
+The CI previews include a pinned libnx extension that reserves an unmapped
+range below each Android worker's stack. A default joinable worker requests
+a 992 KiB stack and a 16 KiB guard. Explicit sizes round up to a 4 KiB page.
+A zero guard is supported. Detached creation and caller-owned stacks still
+return an error on Horizon.
 
-The Horizon attribute adapter now permits explicit process-local, joinable
-threads with a zero guard size. It skips libsysbase's unsupported guard setter
-and rounds the requested stack allocation up to the 4 KiB size required by
-libnx, checking overflow before allocation. The guest attribute retains its
-requested size. Nonzero guard sizes and detached requests remain unsupported;
-libsysbase does not implement the requested guard and detach semantics.
-Android's default nonzero guard request still requires a future implementation.
-
-Host CI exercises this target policy with `__SWITCH__` defined, including
-rounding, overflow and unsupported requests. The actual Switch targets are
-cross-built separately. **INFERRED:** successful worker creation on hardware;
-this is not evidence of Roblox startup or gameplay.
+On the Loader page, press L3. The numbered link report records
+whether a worker observed the whole 16 KiB guard unmapped and whether joining
+released its reservation. The report also records the preview version and,
+for Git builds, its source revision. See the [playability milestones](docs/playability-milestones.md)
+for the engine import audit and the evidence still needed for gameplay.
