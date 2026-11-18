@@ -1,0 +1,88 @@
+MORROW - CODEX HOURLY RESEARCH & DEVELOPMENT SUGGESTIONS
+========================================================
+
+Role agreement (2026-11-18): Flint (Instinct) owns ALL implementation,
+tests, build integration, releases and the active development PR. Codex
+does research and code review hourly. This text file is the sole repository
+file Codex may update. Findings are suggestions, NOT changes to program
+behaviour or hardware-verified fixes. If there is no substantive new
+evidence, make no file change and no commit.
+
+Handoff: switch/docs/FLINT_DEVELOPMENT_HANDOFF.md
+Active branch: feat/switch-horizon-smoke-test
+Starting source baseline: 1153d906243240e58716d2cce1f31d01bd081ad7
+
+Each new substantive entry should give:
+  Date (America/Chicago), priority and status (OBSERVED / INFERRED)
+  Exact evidence (logs, source functions, CI or link)
+  Proposed fix or investigation for Flint
+  Acceptance test and remaining unknowns
+Do not embed proprietary engine code, binaries, URLs or private logs.
+
+BASELINE RESEARCH QUEUE - 2026-11-18 (existing evidence, not new hardware)
+--------------------------------------------------------------------------
+
+[CRITICAL][OBSERVED IN v0.99.4 / CURRENT STATUS UNKNOWN]
+Milestone A: strict final-base relocation failed on geteuid@LIBC. The
+read-only audit observed 629 lookups, 562 resolved, 67 missing (2 weak),
+and 65 missing REQUIRED relocation sites. The 0.99.6 process adapter now
+resolves geteuid by name but returns ENOSYS on Horizon, which may still
+block a caller. Current unresolved import keys are UNKNOWN.
+Files: switch/source/horizon_real_link.c (horizon_real_link_run),
+switch/source/engine_stage.c, switch/source/android_import_resolver.c,
+switch/tools/export_horizon_providers.py, switch/tools/audit_android_elf.py.
+SUGGESTION TO FLINT: Obtain one complete target-observed provider inventory
+and compare all version/provider-qualified imports offline. Separate
+distinct missing ABI keys from relocation-site counts. Implement needed
+adapters by subsystem with real error and success semantics, not blind stubs.
+ACCEPTANCE: strict full required relocation audit passes with complete
+provider list and no unsupported relocations; record a new Switch report.
+EVIDENCE: switch/docs/playability-milestones.md (v0.99.4 hardware section)
+
+[HIGH][OBSERVED IN v0.99.4 / CAUSE UNKNOWN]
+The hardware guest mapping probe reported zero=1, read_only=0, data=0,
+none=0, rw=0, released=1. Permission changes were not confirmed.
+Files: switch/source/android_mapping_compat.c (protect_pages,
+guest_mprotect), switch/source/horizon_real_link.c
+(probe_guest_data_mapping), switch/source/horizon_code_memory.c.
+SUGGESTION TO FLINT: Log precise return codes and queried MemoryInfo for
+each permission transition; distinguish a failed protection operation
+from a successful operation whose queried permissions disagree. Keep the
+probe on Morrow-owned pages and avoid crashing the Switch intentionally.
+ACCEPTANCE: repeatable console evidence for RW->R->None->RW transitions
+or a specific kernel restriction with a safe alternative.
+EVIDENCE: latest v0.99.4 console report supplied to development chat.
+
+[HIGH][OBSERVED SOURCE GATE / LIVE CONSTRUCTOR EXECUTION UNKNOWN]
+The current source validates DT_INIT_ARRAY targets but does not execute
+the observed 2,505 guest entries. engine_execution_decide refuses real
+JNI_OnLoad whenever constructors remain unrun.
+Files: switch/source/engine_constructor_plan.c
+(engine_constructor_plan_prepare),
+switch/source/engine_constructor_run.c (engine_constructor_run_once),
+switch/source/engine_execution_attempt.c (engine_execution_decide),
+switch/source/engine_run_journal.c.
+SUGGESTION TO FLINT: Establish dependency and guest TLS/thread context,
+pin executable mapping, then journal the live constructor sequence with
+durable before/after markers and fail-closed crash recovery.
+ACCEPTANCE: hardware evidence of constructor begin/return order with
+no skipped required entries; only then attempt real JNI_OnLoad.
+EVIDENCE: current source and switch/docs/playability-milestones.md.
+
+[HIGH][STATIC FINDING / RUNTIME REACHABILITY UNKNOWN]
+Private offline ARM64 audit found 16 svc #0 candidates in named .text;
+seven directly followed loads of Linux futex/getpid/gettid numbers. The
+libnx exception handler records diagnostic registers but does not
+resume, emulate or intercept arbitrary guest SVC instructions.
+Files: switch/source/horizon_exception_log.c,
+switch/source/engine_exception_format.c.
+SUGGESTION TO FLINT: Treat the static candidates as investigation targets,
+not proof of reached syscalls. First establish a reliable target trace of
+real guest execution and document how the kernel dispatches exceptions
+from dynamically mapped code before proposing an ABI-correct solution.
+ACCEPTANCE: verified console evidence distinguishing executed Linux SVC
+from static data or unreachable instruction candidates.
+EVIDENCE: switch/docs/playability-milestones.md.
+
+NEXT ENTRY:
+Use a new dated section only when a verified finding improves this queue.
