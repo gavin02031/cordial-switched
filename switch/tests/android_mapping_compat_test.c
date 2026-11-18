@@ -41,7 +41,6 @@ static void *worker(void *arg)
         assert(discard_data(grown + 4096, 1, 4) == 0);
         assert(grown[8191] == 0 && grown[0] == (uintptr_t)arg);
         assert(resize_data(grown, 12288, 4096, 0) == grown);
-        assert(protect_data(grown + 4096, 4096, 3) == -1);
         assert(unmap_data(grown, 4096) == 0);
     }
     return NULL;
@@ -113,6 +112,12 @@ int main(void)
     assert(discard_data(p, 5, 4) == -1);
     assert(resize_data(p, 5, 8192, 1) == FAILED);
     assert(unmap_data(p, 5) == 0);
+    // With no other allocating threads, the released address cannot already
+    // belong to a different guest mapping.
+    p = map_data(NULL, 8192, 3, 0x22, -1, 0);
+    assert(p != FAILED && resize_data(p, 8192, 4096, 0) == p);
+    assert(protect_data(p + 4096, 4096, 3) == -1 && errno == ENOMEM);
+    assert(unmap_data(p, 4096) == 0);
     pthread_t threads[8];
     for (uintptr_t i = 0; i < 8; ++i)
         assert(pthread_create(&threads[i], NULL, worker, (void *)i) == 0);

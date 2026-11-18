@@ -152,7 +152,7 @@ constructor runner alone does not supply the missing Android application.
 ### Private anonymous data mappings
 
 The runtime now exposes the engine's LIBC imports for mmap, mprotect and
-munmap, plus mremap and madvise. Supported mappings include private anonymous data with offset zero and
+munmap, mremap, madvise and msync. Supported mappings include private anonymous data with offset zero and
 private snapshots of regular files at page-aligned offsets, with
 no access, read access or read/write access. On Horizon it obtains a
 page-aligned backing allocation, maps a kernel alias and changes permissions

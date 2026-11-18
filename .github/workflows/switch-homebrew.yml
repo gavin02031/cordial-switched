@@ -329,6 +329,12 @@ jobs:
             switch/source/android_bionic_setjmp.s -pthread \
             -o /tmp/morrow-arm64-jump-test
           qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/morrow-arm64-jump-test
+      - name: Exercise ARM64 private mappings, faults and remapping
+        run: |
+          aarch64-linux-gnu-gcc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_mapping_compat_test.c switch/source/android_mapping_compat.c \
+            -pthread -o /tmp/morrow-arm64-mapping-test
+          timeout 60s qemu-aarch64 -L /usr/aarch64-linux-gnu /tmp/morrow-arm64-mapping-test
       - name: Test ARM64 Android socket readiness and DNS ABI
         run: |
           aarch64-linux-gnu-gcc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
