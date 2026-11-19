@@ -1268,8 +1268,26 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 const bool constructors_pending_only =
                     !candidate.eligible && candidate.reason &&
                     strcmp(candidate.reason, "elf_constructors_not_run") == 0;
+                // dlopen ordering says WHEN constructors run, not WHAT they
+                // may touch: these arbitrary constructors could use any
+                // runtime service. Every non-constructor prerequisite
+                // (runtime readiness, memory plan, RX target) is knowable
+                // now, so all of them gate BEFORE the first guest
+                // constructor executes; none has a reason to await the run.
+                const EngineExecutionDecision prerequisites =
+                    engine_execution_decide(
+                        true, true, true, &probe, &entry, &plan,
+                        (uint64_t)(uintptr_t)reservation.mapped,
+                        vm_ready, env_ready, activity_ready,
+                        true /* constructors_run: evaluate every other rule */);
+                log_line(log, "experimental_jni_onload_prerequisites=%s",
+                         prerequisites.reason);
                 if (!candidate.eligible && !constructors_pending_only) {
                     log_line(log, "experimental_jni_onload_called=no");
+                } else if (!prerequisites.eligible) {
+                    log_line(log, "blocker=jni_entry_prerequisites_not_met");
+                    detail(result,
+                           "Engine blocked: JNI entry prerequisites not met.");
                 } else if (!constructors_verified) {
                     log_line(log, "experimental_jni_onload_blocker=constructor_plan_invalid");
                 } else if (stage.image_size != plan.image_bytes ||
