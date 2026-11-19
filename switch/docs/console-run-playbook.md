@@ -131,6 +131,14 @@ is the expected steady state.
     (link-36), matching nx-hbloader's NPDM whitelist. A hint means the
     process may attempt the call, not that it is granted or will succeed;
     the path's actual svc results remain the only capability evidence.
+  - `guest_code_mapping_map=0x... rx=0x... query=.. perm=0x.. type=0x..
+    content_match=.. rollback=0x...` - the granted-capability test for
+    those hinted syscalls: one private test page is mapped into the code
+    region, set RX, queried and compared against its source. No code is
+    executed. `guest_code_mapping_probe=reservation_failed` or
+    `process_handle_unavailable` mean the test could not start;
+    `reservation_retained=1` means rollback failed and the reservation is
+    deliberately kept tracked instead of lost.
 - `crash-NN.txt` - archived marker from a run that died mid-step, with the
   phase (`constructors` or `jni_onload`) it died in. The app recovers this
   automatically on the next launch; a fresh process re-running constructors

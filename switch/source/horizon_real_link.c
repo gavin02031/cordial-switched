@@ -552,6 +552,73 @@ static void probe_guest_data_mapping(FILE *log)
     log_line(log, "guest_code_memory_syscalls_hinted=map:%d unmap:%d setperm:%d",
              envIsSyscallHinted(0x77) ? 1 : 0, envIsSyscallHinted(0x78) ? 1 : 0,
              envIsSyscallHinted(0x73) ? 1 : 0);
+
+    // Hints only permit attempting the code-memory syscalls. Map one
+    // private test page RX and read it back to learn whether they are
+    // actually granted; nothing is executed, guest or otherwise.
+    if (envGetOwnProcessHandle() == INVALID_HANDLE) {
+        log_line(log, "guest_code_mapping_probe=process_handle_unavailable");
+        return;
+    }
+    unsigned char *code_src = memalign(4096, 4096);
+    if (!code_src) {
+        log_line(log, "guest_code_mapping_probe=alloc_failed");
+        return;
+    }
+    for (size_t i = 0; i < 4096; i++) code_src[i] = (unsigned char)(i ^ 0x5a);
+    armDCacheFlush(code_src, 4096);
+    virtmemLock();
+    void *span = virtmemFindCodeMemory(4096, 4096);
+    void *rsv = span ? virtmemAddReservation(span, 4096) : NULL;
+    virtmemUnlock();
+    if (!rsv) {
+        log_line(log, "guest_code_mapping_probe=reservation_failed");
+        free(code_src);
+        return;
+    }
+    const Handle self = envGetOwnProcessHandle();
+    Result map_rc = svcMapProcessCodeMemory(self, (u64)(uintptr_t)span,
+                                            (u64)(uintptr_t)code_src, 4096);
+    if (R_FAILED(map_rc)) {
+        log_line(log, "guest_code_mapping_map=0x%08x", (unsigned)map_rc);
+        virtmemLock();
+        virtmemRemoveReservation(span);
+        virtmemUnlock();
+        free(code_src);
+        return;
+    }
+    Result rx_rc = svcSetProcessMemoryPermission(self, (u64)(uintptr_t)span,
+                                                 4096, Perm_Rx);
+    bool rx_query = false, content_match = false;
+    unsigned rx_perm = 0, rx_type = 0;
+    if (R_SUCCEEDED(rx_rc)) {
+        armICacheInvalidate(span, 4096);
+        rx_query = R_SUCCEEDED(svcQueryMemory(&info, &page_info,
+                                              (u64)(uintptr_t)span));
+        rx_perm = rx_query ? info.perm : 0;
+        rx_type = rx_query ? info.type : 0;
+        content_match = memcmp(span, code_src, 4096) == 0;
+    }
+    // Roll back: writable again, then unmap the code pages. A rollback
+    // failure retains the reservation rather than losing track of it.
+    Result back_rc = svcSetProcessMemoryPermission(self, (u64)(uintptr_t)span,
+                                                   4096, Perm_Rw);
+    Result unmap_rc = R_SUCCEEDED(back_rc)
+        ? svcUnmapProcessCodeMemory(self, (u64)(uintptr_t)span,
+                                    (u64)(uintptr_t)code_src, 4096)
+        : back_rc;
+    log_line(log,
+             "guest_code_mapping_map=0x%08x rx=0x%08x query=%d perm=0x%x type=0x%x content_match=%d rollback=0x%08x",
+             (unsigned)map_rc, (unsigned)rx_rc, rx_query, rx_perm, rx_type,
+             content_match, (unsigned)unmap_rc);
+    if (R_SUCCEEDED(unmap_rc)) {
+        virtmemLock();
+        virtmemRemoveReservation(span);
+        virtmemUnlock();
+    } else {
+        log_line(log, "guest_code_mapping_reservation_retained=1");
+    }
+    free(code_src);
 }
 
 typedef struct {
