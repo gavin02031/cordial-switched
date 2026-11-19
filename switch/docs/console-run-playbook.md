@@ -57,6 +57,17 @@ reports whether classes.dex is present for information only; dex content is
 never extracted because the classpath is not installed on Horizon. The APK
 stays private.
 
+## Resolved: the two dyninit symbols
+
+`__start_ls_rbx_dyninit1` / `__stop_ls_rbx_dyninit1` are GNU ld boundary
+symbols for a section named `ls_rbx_dyninit1`, and this ELF has no such
+section (it ships `ls_rbx_dyninit2` through `dyninit6`, whose boundary
+symbols are defined). An absent section leaves the pair weak-undefined;
+the stage writes S=0 for both, so guest code walking `[__start, __stop)` sees
+an empty range. That is the correct, complete handling: no special case is
+required, and the `strict_missing_imports=2` line naming exactly this pair
+is the expected steady state.
+
 ## What the run will do, in order
 
 1. Probe and audit libroblox.so, map it, bind the 576 imports.
@@ -101,6 +112,15 @@ stays private.
     Roblox startup strictly requires is unobserved guest behavior.
   - `asset_manifest_present/valid/declared/observed/counts_match=` - the
     SD asset-copy check described above.
+  - `guest_heap_protect_read_only=0x...` / `guest_heap_protect_restore_rw=` -
+    whether a plain heap page accepts svcSetMemoryPermission, the candidate
+    backing that could let the guest mprotect provider work. The mirror
+    alias already failed with kernel 0x0000d401 (InvalidCurrentMemory: the
+    region lacks the FlagCanReprotect state, per switchbrew's
+    svcSetMemoryPermission documentation), so it cannot be that backing.
+  - `guest_code_memory_syscalls_hinted=map:.. unmap:.. setperm:..` -
+    whether this process is offered the privileged code-memory syscalls
+    the executable (RX) mapping path needs.
 - `crash-NN.txt` - archived marker from a run that died mid-step, with the
   phase (`constructors` or `jni_onload`) it died in. The app recovers this
   automatically on the next launch; a fresh process re-running constructors

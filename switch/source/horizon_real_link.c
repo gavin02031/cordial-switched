@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <malloc.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -502,6 +503,33 @@ static void probe_guest_data_mapping(FILE *log)
     bool released = unmap_fn(p, 4096) == 0;
     log_line(log, "guest_mapping_probe_zero=%d read_only=%d data=%d none=%d rw=%d released=%d",
              contents, read_only, preserved, inaccessible, writable, released);
+
+    // The mirror alias above cannot carry FlagCanReprotect (kernel 0x0000d401
+    // = InvalidCurrentMemory, switchbrew svcSetMemoryPermission), so a plain
+    // heap page is probed as the candidate backing that may accept
+    // reprotection. Raw kernel answers only; no outcome is assumed.
+    unsigned char *heap = memalign(4096, 4096);
+    if (heap) {
+        heap[0] = 1;
+        Result heap_rc = svcSetMemoryPermission(heap, 4096, Perm_R);
+        bool heap_q = R_SUCCEEDED(svcQueryMemory(&info, &page_info,
+                                                 (u64)(uintptr_t)heap));
+        log_line(log,
+                 "guest_heap_protect_read_only=0x%08x query=%d perm=0x%x type=0x%x attr=0x%x",
+                 (unsigned)heap_rc, heap_q, heap_q ? info.perm : 0,
+                 heap_q ? info.type : 0, heap_q ? info.attr : 0);
+        Result heap_back = svcSetMemoryPermission(heap, 4096, Perm_Rw);
+        log_line(log, "guest_heap_protect_restore_rw=0x%08x",
+                 (unsigned)heap_back);
+        free(heap);
+    } else {
+        log_line(log, "guest_heap_protect=alloc_failed");
+    }
+    // Whether the privileged code-memory syscalls the RX path needs are even
+    // offered to this process decides the executable mapping strategy.
+    log_line(log, "guest_code_memory_syscalls_hinted=map:%d unmap:%d setperm:%d",
+             envIsSyscallHinted(0x77) ? 1 : 0, envIsSyscallHinted(0x78) ? 1 : 0,
+             envIsSyscallHinted(0x73) ? 1 : 0);
 }
 
 typedef struct {
