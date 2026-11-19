@@ -154,6 +154,9 @@ is the expected steady state.
     both ends of the possibly-live alias are deliberately kept;
     `source_retained=1 query=.. perm=..` alone means the unmap succeeded
     but the source did not query as heap RW afterwards.
+    `guest_code_mapping_source_restored=1 content_match=..` means the
+    unmap returned the source to heap RW and the bytes were re-read;
+    content_match=1 confirms the round trip left them intact.
 - `crash-NN.txt` - archived marker from a run that died mid-step, with the
   phase (`constructors` or `jni_onload`) it died in. The app recovers this
   automatically on the next launch; a fresh process re-running constructors

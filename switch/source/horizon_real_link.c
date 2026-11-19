@@ -252,9 +252,10 @@ static void log_line(FILE *out, const char *format, ...)
     va_end(args);
     fputc('\n', out);
     fflush(out);
-    // fsync too: after a fatal, FatFs only shows what reached the
-    // directory entry, and fflush alone leaves a crash's last lines
-    // invisible. Diagnostics exist to survive crashes.
+    // fsync too: fflush only reaches the fs service's buffers; fsync maps
+    // to fsFileFlush, which commits the data. After a fatal, only
+    // committed bytes are visible on SD. Diagnostics exist to survive
+    // crashes, though a fatal can still lose unflushed kernel state.
     fsync(fileno(out));
 }
 static void log_engine_export(FILE *log, const char *name,
@@ -634,6 +635,17 @@ static void probe_guest_data_mapping(FILE *log)
         bool src_q = R_SUCCEEDED(svcQueryMemory(&info, &page_info,
                                                 (u64)(uintptr_t)code_src));
         if (src_q && info.perm == Perm_Rw) {
+            // RW restored: reading the source is legal again. Confirm the
+            // bytes survived the map/unmap round trip intact.
+            bool src_match = true;
+            for (size_t i = 0; i < 4096; i++) {
+                if (code_src[i] != (unsigned char)(i ^ 0x5a)) {
+                    src_match = false;
+                    break;
+                }
+            }
+            log_line(log, "guest_code_mapping_source_restored=1 content_match=%d",
+                     src_match ? 1 : 0);
             free(code_src);
         } else {
             log_line(log, "guest_code_mapping_source_retained=1 query=%d perm=0x%x",
