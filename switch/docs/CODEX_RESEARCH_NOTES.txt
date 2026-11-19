@@ -187,3 +187,27 @@ Python ELF tests pass, and all five Horizon preview jobs succeed on the
 new commit. NRO build alone is insufficient.
 UNKNOWNS: No fresh target-observed complete import inventory or guest
 execution proof. The separate upstream workflow is not a Horizon test.
+
+
+2026-11-19 11:44 America/Chicago — [HIGH][OBSERVED SOURCE / HARDWARE IMPACT UNKNOWN]
+Private RX code-memory probe can free its source page after unsuccessful rollback.
+EVIDENCE: commit 78e1428794e1a9651452747e5a767420b88fba26,
+https://github.com/gavin02031/cordial-switched/commit/78e1428794e1a9651452747e5a767420b88fba26
+In switch/source/horizon_real_link.c, probe_guest_data_mapping(), after
+svcMapProcessCodeMemory succeeds, failure of svcSetProcessMemoryPermission
+(back to RW) or svcUnmapProcessCodeMemory leaves the code reservation tracked
+but unconditionally calls free(code_src). The source page may still be mapped
+into process code memory, so returning it to malloc can violate source-alias
+lifetime assumptions and make subsequent allocator use unsafe.
+BLOCKER: Probe cleanup does not preserve both ends of a live code-memory alias.
+PROPOSED FOR FLINT: On any failed rollback after a successful map, retain
+both the source allocation and destination reservation for process lifetime,
+record map/setperm/unmap outcomes and retained source state, and refuse reuse
+or a second probe until cleanup is proven safe. On successful unmap, release
+both. Do not treat a retained reservation alone as sufficient cleanup.
+SUCCESS: Fault-injection tests for RX permission failure, RW restoration
+failure and unmap failure show no free/reuse of an aliased source page;
+normal successful rollback frees both resources. Confirm with a single
+aggregate hardware diagnostic, not per-import testing.
+UNKNOWNS: No observed rollback failure or guest execution on hardware;
+this is a source-level ownership risk, not proof of a crash.
