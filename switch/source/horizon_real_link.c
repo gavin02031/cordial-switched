@@ -1256,9 +1256,19 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                 const EngineExecutionDecision candidate = engine_execution_decide(
                     true, true, true, &probe, &entry, &plan,
                     (uint64_t)(uintptr_t)reservation.mapped,
-                    vm_ready, env_ready, activity_ready);
+                    vm_ready, env_ready, activity_ready,
+                    false /* constructors_run: pre-constructor gate */);
                 log_line(log, "experimental_jni_onload_preflight=%s", candidate.reason);
-                if (!candidate.eligible) {
+                // The constructor run itself lives behind this gate, so an
+                // ELF whose ONLY blocker is unrun constructors must proceed:
+                // refusing here would strand every init-array ELF forever
+                // (observed on hardware: preflight=elf_constructors_not_run
+                // with constructor_plan_executed=no). Any other refusal
+                // skips the whole path as before.
+                const bool constructors_pending_only =
+                    !candidate.eligible && candidate.reason &&
+                    strcmp(candidate.reason, "elf_constructors_not_run") == 0;
+                if (!candidate.eligible && !constructors_pending_only) {
                     log_line(log, "experimental_jni_onload_called=no");
                 } else if (!constructors_verified) {
                     log_line(log, "experimental_jni_onload_blocker=constructor_plan_invalid");
@@ -1391,6 +1401,21 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 constructor_marker_cleared);
                         log_line(log, "constructors_ok_for_jni_onload=%s",
                                  constructors_ok ? "yes" : "no");
+                        // The entry decision after constructors re-evaluates
+                        // every rule, including the ones the pre-constructor
+                        // gate never reached (runtime readiness, memory plan,
+                        // RX target). Its target is the one JNI_OnLoad uses.
+                        EngineExecutionDecision entry_decision = candidate;
+                        if (constructors_ok && constructors.call_count) {
+                            entry_decision = engine_execution_decide(
+                                true, true, true, &probe, &entry, &plan,
+                                (uint64_t)(uintptr_t)reservation.mapped,
+                                vm_ready, env_ready, activity_ready,
+                                true /* constructors_run */);
+                            log_line(log,
+                                     "experimental_jni_onload_decision_after_constructors=%s",
+                                     entry_decision.reason);
+                        }
                         int32_t version = 0;
                         bool onload_called = false;
                         bool onload_reported = false;
@@ -1398,6 +1423,10 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             log_line(log, "blocker=constructors_incomplete");
                             detail(result,
                                    "Engine blocked: constructors did not complete durably.");
+                        } else if (!entry_decision.eligible) {
+                            log_line(log, "blocker=post_constructor_entry_refused");
+                            detail(result,
+                                   "Engine blocked: entry refused after constructors.");
                         } else if (!engine_run_journal_begin(ENGINE_REPORT_DIR,
                                                       "jni_onload", result->log_path)) {
                             log_line(log, "blocker=crash_journal_not_durable");
@@ -1412,7 +1441,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 detail(result, "Entered Roblox JNI_OnLoad; inspect link report and restart.");
                                 engine_entry_started = true;
                                 onload_called = true;
-                                version = engine_execution_call_jni_onload(candidate.target, vm);
+                                version = engine_execution_call_jni_onload(entry_decision.target, vm);
                                 log_line(log, "event=real_engine_jni_onload_returned");
                                 log_line(log, "engine_jni_onload_return=0x%08X", (unsigned)version);
                                 onload_reported = engine_run_journal_finish_report(

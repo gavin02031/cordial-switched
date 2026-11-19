@@ -26,35 +26,43 @@ int main(void)
     entry.has_jni_onload = true;
     entry.jni_onload_virtual_address = 0x1100;
 
-#define DECIDE(requested, linked, mapped, vm, env, activity) \
+#define DECIDE(requested, linked, mapped, vm, env, activity, ran) \
     engine_execution_decide(requested, linked, mapped, &probe, &entry, &plan, \
-                            0x200000, vm, env, activity)
-    EngineExecutionDecision result = DECIDE(false, true, true, true, true, true);
+                            0x200000, vm, env, activity, ran)
+    EngineExecutionDecision result = DECIDE(false, true, true, true, true, true, true);
     assert(!result.eligible && !strcmp(result.reason, "not_requested"));
-    result = DECIDE(true, false, true, true, true, true);
+    result = DECIDE(true, false, true, true, true, true, true);
     assert(!result.eligible &&
            !strcmp(result.reason, "unresolved_imports_or_relocations"));
-    result = DECIDE(true, true, false, true, true, true);
+    result = DECIDE(true, true, false, true, true, true, true);
     assert(!result.eligible && !strcmp(result.reason, "engine_not_mapped_rx"));
 
     probe.has_tls_segment = true;
-    result = DECIDE(true, true, true, true, true, true);
+    result = DECIDE(true, true, true, true, true, true, true);
     assert(!result.eligible &&
            !strcmp(result.reason, "android_thread_tls_not_installed"));
     probe.has_tls_segment = false;
     entry.has_init_array = true;
-    result = DECIDE(true, true, true, true, true, true);
+    // Pre-constructor gate: constructors are the only blocker...
+    result = DECIDE(true, true, true, true, true, true, false);
     assert(!result.eligible && !strcmp(result.reason, "elf_constructors_not_run"));
+    // ...and the post-constructor decision must clear it while still
+    // enforcing the rules below it, in order.
+    result = DECIDE(true, true, true, false, true, true, true);
+    assert(!result.eligible &&
+           !strcmp(result.reason, "jni_game_activity_runtime_incomplete"));
+    result = DECIDE(true, true, true, true, true, true, true);
+    assert(result.eligible && result.target == 0x200100);
     entry.has_init_array = false;
-    result = DECIDE(true, true, true, false, true, true);
+    result = DECIDE(true, true, true, false, true, true, true);
     assert(!result.eligible &&
            !strcmp(result.reason, "jni_game_activity_runtime_incomplete"));
 
     entry.jni_onload_virtual_address = 0x2100;
-    result = DECIDE(true, true, true, true, true, true);
+    result = DECIDE(true, true, true, true, true, true, true);
     assert(!result.eligible && !strcmp(result.reason, "jni_onload_not_in_rx_pages"));
     entry.jni_onload_virtual_address = 0x1100;
-    result = DECIDE(true, true, true, true, true, true);
+    result = DECIDE(true, true, true, true, true, true, true);
     assert(result.eligible && result.target == 0x200100);
     uintptr_t activity_target = 0;
     assert(engine_execution_rx_target(&plan, 0x200000, 0x1180,
@@ -68,7 +76,7 @@ int main(void)
                                        &activity_target));
     assert(activity_target == 0x200180);
     entry.jni_onload_virtual_address = 0x1101;
-    result = DECIDE(true, true, true, true, true, true);
+    result = DECIDE(true, true, true, true, true, true, true);
     assert(!result.eligible && !strcmp(result.reason, "jni_onload_not_in_rx_pages"));
     entry.jni_onload_virtual_address = 0x1100;
     assert(!engine_execution_rx_target(&plan, 0x200000, 0x2100,

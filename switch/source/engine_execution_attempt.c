@@ -38,7 +38,8 @@ EngineExecutionDecision engine_execution_decide(
     bool explicitly_requested, bool strict_linked, bool mapped,
     const EngineProbeResult *probe, const EngineEntryProbe *entry,
     const EngineMemoryPlan *plan, uint64_t runtime_base,
-    bool java_vm_ready, bool java_environment_ready, bool activity_ready)
+    bool java_vm_ready, bool java_environment_ready, bool activity_ready,
+    bool constructors_run)
 {
     if (!explicitly_requested) return blocked("not_requested");
     if (!strict_linked) return blocked("unresolved_imports_or_relocations");
@@ -48,7 +49,11 @@ EngineExecutionDecision engine_execution_decide(
         return blocked("jni_onload_export_unknown_or_missing");
     if (probe->has_tls_segment)
         return blocked("android_thread_tls_not_installed");
-    if (entry->has_init || entry->has_init_array)
+    // DT_INIT/DT_INIT_ARRAY must run before entry, but a pre-constructor
+    // caller needs this exact refusal to know constructors are the only
+    // remaining blocker; checks below it are re-evaluated on the post-
+    // constructor call with constructors_run=true.
+    if ((entry->has_init || entry->has_init_array) && !constructors_run)
         return blocked("elf_constructors_not_run");
     if (!java_vm_ready || !java_environment_ready || !activity_ready)
         return blocked("jni_game_activity_runtime_incomplete");

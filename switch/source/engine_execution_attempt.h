@@ -16,13 +16,17 @@ typedef struct {
 
 // A callable JNI_OnLoad needs much more than a discovered ELF export: every
 // relocation must already be bound, the code actually mapped RX, and JNI must
-// belong to this thread. Reject PT_TLS/constructors until their Android
-// lifecycle is installed; skipping them would execute an invalid programme.
+// belong to this thread. Reject PT_TLS until its Android lifecycle is
+// installed, and reject entry while DT_INIT/DT_INIT_ARRAY remain unrun:
+// skipping constructors would execute an invalid programme. Callers pass
+// constructors_run=false for the pre-constructor gate and true for the
+// post-constructor entry decision, which re-evaluates every rule.
 EngineExecutionDecision engine_execution_decide(
     bool explicitly_requested, bool strict_linked, bool mapped,
     const EngineProbeResult *probe, const EngineEntryProbe *entry,
     const EngineMemoryPlan *plan, uint64_t runtime_base,
-    bool java_vm_ready, bool java_environment_ready, bool activity_ready);
+    bool java_vm_ready, bool java_environment_ready, bool activity_ready,
+    bool constructors_run);
 
 // Resolve another verified export in the *same* already mapped code image.
 // The final mapping must remain alive for the entire guest call.

@@ -79,6 +79,13 @@ stays private.
     proof.
   - `constructor_run_completed=`, `constructor_run_next_index=`,
     `constructors_ok_for_jni_onload=`.
+  - `experimental_jni_onload_preflight=` - the pre-constructor gate. On any
+    ELF with an init array this reads `elf_constructors_not_run` by design;
+    that reason alone no longer stops the run (it once did, stranding the
+    constructor phase - fixed after the first hardware attempt showed it).
+    `experimental_jni_onload_decision_after_constructors=` is the full
+    entry re-check; `blocker=post_constructor_entry_refused` means that
+    re-check, not the constructors, refused entry.
   - `event=entering_real_engine_jni_onload` - only appears if every
     constructor finished; then `engine_jni_onload_return=0x00010006` is a
     clean return.
