@@ -504,12 +504,19 @@ static void probe_guest_data_mapping(FILE *log)
     log_line(log, "guest_mapping_probe_zero=%d read_only=%d data=%d none=%d rw=%d released=%d",
              contents, read_only, preserved, inaccessible, writable, released);
 
-    // The mirror alias above cannot carry FlagCanReprotect (kernel 0x0000d401
-    // = InvalidCurrentMemory, switchbrew svcSetMemoryPermission), so a plain
-    // heap page is probed as the candidate backing that may accept
-    // reprotection. Raw kernel answers only; no outcome is assumed.
+    // Working explanation for the mirror-alias failures above, labelled
+    // INFERRED: the region queries as type 0xb (MappedMemory) with attr 0x0
+    // and perm stays RW while the kernel returns 0x0000d401
+    // (InvalidCurrentMemory). switchbrew documents svcSetMemoryPermission as
+    // requiring the region's CanReprotect state bit, but that bit is not
+    // observable from userspace, so a svcMapMemory alias lacking it fits
+    // every observation without being directly proven. A plain heap page is
+    // probed below as a candidate backing that may accept reprotection; raw
+    // kernel answers only, no outcome assumed.
     unsigned char *heap = memalign(4096, 4096);
-    if (heap) {
+    if (!heap) {
+        log_line(log, "guest_heap_protect=alloc_failed");
+    } else {
         heap[0] = 1;
         Result heap_rc = svcSetMemoryPermission(heap, 4096, Perm_R);
         bool heap_q = R_SUCCEEDED(svcQueryMemory(&info, &page_info,
@@ -518,15 +525,30 @@ static void probe_guest_data_mapping(FILE *log)
                  "guest_heap_protect_read_only=0x%08x query=%d perm=0x%x type=0x%x attr=0x%x",
                  (unsigned)heap_rc, heap_q, heap_q ? info.perm : 0,
                  heap_q ? info.type : 0, heap_q ? info.attr : 0);
+        // Attempt the RW restore on every path. Only hand the page back to
+        // the allocator when it is provably writable again: the read-only
+        // attempt failed and changed nothing, the restore succeeded, or a
+        // fresh query confirms RW. Otherwise retain the page rather than
+        // let the allocator hand out a read-only page.
         Result heap_back = svcSetMemoryPermission(heap, 4096, Perm_Rw);
-        log_line(log, "guest_heap_protect_restore_rw=0x%08x",
-                 (unsigned)heap_back);
-        free(heap);
-    } else {
-        log_line(log, "guest_heap_protect=alloc_failed");
+        bool heap_q2 = R_SUCCEEDED(svcQueryMemory(&info, &page_info,
+                                                  (u64)(uintptr_t)heap));
+        bool safe_to_free = R_FAILED(heap_rc) || R_SUCCEEDED(heap_back) ||
+                            (heap_q2 && info.perm == Perm_Rw);
+        log_line(log,
+                 "guest_heap_protect_restore_rw=0x%08x query=%d perm=0x%x freed=%d",
+                 (unsigned)heap_back, heap_q2, heap_q2 ? info.perm : 0,
+                 safe_to_free);
+        if (safe_to_free) {
+            free(heap);
+        } else {
+            log_line(log, "guest_heap_protect_page_retained=1");
+        }
     }
-    // Whether the privileged code-memory syscalls the RX path needs are even
-    // offered to this process decides the executable mapping strategy.
+    // envIsSyscallHinted only reports that this process may attempt these
+    // privileged code-memory syscalls; it says nothing about whether the
+    // calls are granted or would succeed. The RX path's actual svc results
+    // remain the only capability evidence.
     log_line(log, "guest_code_memory_syscalls_hinted=map:%d unmap:%d setperm:%d",
              envIsSyscallHinted(0x77) ? 1 : 0, envIsSyscallHinted(0x78) ? 1 : 0,
              envIsSyscallHinted(0x73) ? 1 : 0);

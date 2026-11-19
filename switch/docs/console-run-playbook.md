@@ -112,15 +112,22 @@ is the expected steady state.
     Roblox startup strictly requires is unobserved guest behavior.
   - `asset_manifest_present/valid/declared/observed/counts_match=` - the
     SD asset-copy check described above.
-  - `guest_heap_protect_read_only=0x...` / `guest_heap_protect_restore_rw=` -
-    whether a plain heap page accepts svcSetMemoryPermission, the candidate
-    backing that could let the guest mprotect provider work. The mirror
-    alias already failed with kernel 0x0000d401 (InvalidCurrentMemory: the
-    region lacks the FlagCanReprotect state, per switchbrew's
-    svcSetMemoryPermission documentation), so it cannot be that backing.
+  - `guest_heap_protect_read_only=0x...` / `guest_heap_protect_restore_rw=`
+    - whether a plain heap page accepts svcSetMemoryPermission, the
+    candidate backing that could let the guest mprotect provider work. The
+    mirror alias already failed with kernel 0x0000d401
+    (InvalidCurrentMemory) while querying as type 0xb (MappedMemory), attr
+    0x0, perm still RW. INFERRED, not proven: switchbrew documents that
+    svcSetMemoryPermission requires the region's CanReprotect state bit,
+    which userspace cannot query, so a svcMapMemory alias lacking it fits
+    every observation. `freed=` records whether the page was returned to
+    the allocator (only when provably writable again); `page_retained=1`
+    means it was deliberately leaked instead.
   - `guest_code_memory_syscalls_hinted=map:.. unmap:.. setperm:..` -
-    whether this process is offered the privileged code-memory syscalls
-    the executable (RX) mapping path needs.
+    envIsSyscallHinted for the privileged code-memory syscalls the
+    executable (RX) path needs. A hint means the process may attempt the
+    call, not that it is granted or will succeed; the path's actual svc
+    results remain the only capability evidence.
 - `crash-NN.txt` - archived marker from a run that died mid-step, with the
   phase (`constructors` or `jni_onload`) it died in. The app recovers this
   automatically on the next launch; a fresh process re-running constructors
