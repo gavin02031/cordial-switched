@@ -251,6 +251,10 @@ static void log_line(FILE *out, const char *format, ...)
     va_end(args);
     fputc('\n', out);
     fflush(out);
+    // fsync too: after a fatal, FatFs only shows what reached the
+    // directory entry, and fflush alone leaves a crash's last lines
+    // invisible. Diagnostics exist to survive crashes.
+    fsync(fileno(out));
 }
 static void log_engine_export(FILE *log, const char *name,
                               const EngineEntryProbe *entry,

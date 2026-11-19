@@ -152,6 +152,21 @@ static void exclusive_graphics_snapshot(FILE *trace, unsigned sample)
     fsync(fileno(trace));
 }
 
+// Append one durable crash-breadcrumb line. Independent of the numbered
+// reports so a fatal before report creation still leaves evidence.
+static void diag_marker(const char *event)
+{
+    if (mkdir(ENGINE_REPORT_DIR, 0777) != 0 && errno != EEXIST)
+        return;
+    FILE *marker = fopen(ENGINE_REPORT_DIR "/diag-progress.txt", "a");
+    if (!marker)
+        return;
+    fprintf(marker, "%s\n", event);
+    fflush(marker);
+    fsync(fileno(marker));
+    fclose(marker);
+}
+
 static int exclusive_engine_launch(void)
 {
     // This function is reached ONLY after SDL has destroyed its renderer,
@@ -432,6 +447,10 @@ int main(void)
                 horizon_loader_smoke_run(&state.loader_smoke);
         }
         if (state.page == UI_LOADER && (pressed & HidNpadButton_StickL)) {
+            // Crash forensics: durable breadcrumbs that survive a fatal
+            // even before the numbered report exists. fsync each line so
+            // the FAT directory entry is updated immediately.
+            diag_marker("l3_press");
 #ifdef MORROW_HAS_JNIVM
             // Register a genuine Java reference to the host-owned window,
             // but do not create another EGL context while SDL is drawing.
@@ -442,12 +461,14 @@ int main(void)
                     ENGINE_REPORT_DIR "/assets");
                 morrow_jni_runtime_configuration();
             }
+            diag_marker("jni_preamble_done");
 #endif
             const u64 held = padGetButtons(&pad);
             horizon_real_link_run(&state.real_link,
                 (held & HidNpadButton_ZL) && (held & HidNpadButton_ZR) ? 3u :
                 (held & HidNpadButton_ZL) ? 1u :
                 (held & HidNpadButton_ZR) ? 2u : 0u);
+            diag_marker("real_link_returned");
         }
 
         HidTouchScreenState touch = {0};

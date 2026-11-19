@@ -79,6 +79,11 @@ is the expected steady state.
 ## Where the evidence lands (SD card)
 
 `sdmc:/switch/cordial-switched/`
+- `diag-progress.txt` - durable crash breadcrumbs (`l3_press`,
+  `jni_preamble_done`, `real_link_returned`), one per line, fsync'd at
+  write. If a run fatals with no `link-NN.txt` at all, the last line here
+  localizes the stage. Absent or old timestamps mean the press never
+  reached the handler.
 - `link-NN.txt` - the full link report. The lines that matter:
   - `guest_main_tls_ready=` - this ELF has no TLS segment; expect `no`.
   - `guest_tpidr_bridge=` - expect `not_needed_no_tls_template`.
