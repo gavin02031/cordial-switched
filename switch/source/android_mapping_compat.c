@@ -21,6 +21,7 @@ static uint32_t last_kernel_result;
 
 typedef struct {
     unsigned char *storage;
+    size_t size;
     size_t pieces;
 } Backing;
 #endif
@@ -81,9 +82,12 @@ static int release_pages(Region *region, size_t offset, size_t size)
 {
     void *target = (unsigned char *)region->base + offset;
 #ifdef __SWITCH__
-    void *source = region->backing->storage + region->backing_offset + offset;
-    if (R_FAILED(svcUnmapMemory(target, source, size))) return reject(EBUSY);
-    return 0;
+    // Heap pages cannot be unmapped individually, but they can be fenced:
+    // the Normal state carries FlagCanReprotect, so released subranges
+    // become inaccessible until the whole backing returns to the heap.
+    Result rc = svcSetMemoryPermission(target, size, Perm_None);
+    last_kernel_result = rc;
+    return R_SUCCEEDED(rc) ? 0 : reject(EBUSY);
 #else
     return munmap(target, size);
 #endif
@@ -93,8 +97,16 @@ static void drop_piece(Region *region)
 {
 #ifdef __SWITCH__
     if (--region->backing->pieces == 0) {
-        free(region->backing->storage);
-        free(region->backing);
+        // newlib's free writes its bookkeeping into the block, so the whole
+        // backing must be writable again first. A failed restore leaks the
+        // allocation rather than crash the allocator on a fenced page.
+        Result rc = svcSetMemoryPermission(region->backing->storage,
+                                           region->backing->size, Perm_Rw);
+        last_kernel_result = rc;
+        if (R_SUCCEEDED(rc)) {
+            free(region->backing->storage);
+            free(region->backing);
+        }
     }
 #endif
     free(region);
@@ -122,20 +134,16 @@ static int allocate_pages(Region *region)
     if (!region->backing) return reject(ENOMEM);
     region->backing->storage = memalign(PAGE_BYTES, region->size);
     if (!region->backing->storage) { free(region->backing); return reject(ENOMEM); }
+    region->backing->size = region->size;
     region->backing->pieces = 1;
     memset(region->backing->storage, 0, region->size);
-    // As with libnx thread stacks, the alias is the accessible address.
-    // Never touch or release the backing allocation while it is borrowed.
-    virtmemLock();
-    region->base = virtmemFindStack(region->size, PAGE_BYTES);
-    bool mapped = region->base &&
-        R_SUCCEEDED(svcMapMemory(region->base, region->backing->storage, region->size));
-    virtmemUnlock();
-    if (!mapped) {
-        free(region->backing->storage);
-        free(region->backing);
-        return reject(ENOMEM);
-    }
+    // The guest uses the heap pages directly. svcMapMemory aliases were
+    // tried first, but the kernel maps them with state Stack (no
+    // FlagCanReprotect), so every svcSetMemoryPermission on them failed
+    // with 0x0000d401 (Atmosphere KPageTableBase::MapMemory /
+    // SetMemoryPermission). The heap's Normal state carries
+    // FlagCanReprotect, so protection changes work on these pages.
+    region->base = region->backing->storage;
 #else
     region->base = mmap(NULL, region->size, PROT_READ | PROT_WRITE,
                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

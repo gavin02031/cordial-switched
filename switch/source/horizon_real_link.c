@@ -504,15 +504,15 @@ static void probe_guest_data_mapping(FILE *log)
     log_line(log, "guest_mapping_probe_zero=%d read_only=%d data=%d none=%d rw=%d released=%d",
              contents, read_only, preserved, inaccessible, writable, released);
 
-    // Working explanation for the mirror-alias failures above, labelled
-    // INFERRED: the region queries as type 0xb (MappedMemory) with attr 0x0
-    // and perm stays RW while the kernel returns 0x0000d401
-    // (InvalidCurrentMemory). switchbrew documents svcSetMemoryPermission as
-    // requiring the region's CanReprotect state bit, but that bit is not
-    // observable from userspace, so a svcMapMemory alias lacking it fits
-    // every observation without being directly proven. A plain heap page is
-    // probed below as a candidate backing that may accept reprotection; raw
-    // kernel answers only, no outcome assumed.
+    // The mirror-alias failures above are source-grounded: Atmosphere's
+    // KPageTableBase::MapMemory hardcodes the destination to UserReadWrite
+    // with memory state Stack, and KMemoryState_Stack lacks the
+    // FlagCanReprotect bit that KPageTableBase::SetMemoryPermission
+    // requires, so every reprotect returns 0x0000d401. This matches the
+    // observed type 0xb (Stack), attr 0x0 and unchanged RW perm. The heap's
+    // Normal state does carry FlagCanReprotect, so a plain heap page is
+    // probed below as the backing the mapping provider now uses; raw
+    // kernel answers confirm it on this unit.
     unsigned char *heap = memalign(4096, 4096);
     if (!heap) {
         log_line(log, "guest_heap_protect=alloc_failed");
