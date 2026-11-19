@@ -615,10 +615,13 @@ static void probe_guest_data_mapping(FILE *log)
         virtmemLock();
         virtmemRemoveReservation(span);
         virtmemUnlock();
+        free(code_src);
     } else {
-        log_line(log, "guest_code_mapping_reservation_retained=1");
+        // Keep both ends of the possibly-live alias: the reservation stays
+        // tracked and the source page is never returned to the allocator.
+        log_line(log,
+                 "guest_code_mapping_reservation_retained=1 source_retained=1");
     }
-    free(code_src);
 }
 
 typedef struct {
