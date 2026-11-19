@@ -83,6 +83,14 @@ stays private.
     constructor finished; then `engine_jni_onload_return=0x00010006` is a
     clean return.
   - `blocker=...` - the named refusal if it stops.
+  - `jni_surface_bound=`, `jni_configuration_bound=`,
+    `jni_game_activity_ready=`, `jni_system_locale_bound=`,
+    `jni_asset_configuration_bound=`, `asset_manager_bound=` (exclusive
+    engine path only) - the JNI precondition snapshot recorded before any
+    gate can stop the run. These are evidence, not gates: which of them
+    Roblox startup strictly requires is unobserved guest behavior.
+  - `asset_manifest_present/valid/declared/observed/counts_match=` - the
+    SD asset-copy check described above.
 - `crash-NN.txt` - archived marker from a run that died mid-step, with the
   phase (`constructors` or `jni_onload`) it died in. The app recovers this
   automatically on the next launch; a fresh process re-running constructors

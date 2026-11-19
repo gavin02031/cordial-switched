@@ -179,6 +179,20 @@ static int exclusive_engine_launch(void)
     if (onload.log_path[0]) {
         FILE *asset_note = fopen(onload.log_path, "a");
         if (asset_note) {
+            // JNI precondition snapshot. Today these bindings are verified
+            // only by their getters; which of them Roblox startup strictly
+            // requires is unobserved guest behavior, so this is evidence,
+            // not a gate. A failed bind was previously invisible here.
+            fprintf(asset_note, "jni_surface_bound=%s\n",
+                    morrow_jni_runtime_surface_bound() ? "yes" : "no");
+            fprintf(asset_note, "jni_configuration_bound=%s\n",
+                    morrow_jni_runtime_configuration_bound() ? "yes" : "no");
+            fprintf(asset_note, "jni_game_activity_ready=%s\n",
+                    morrow_jni_runtime_game_activity_ready() ? "yes" : "no");
+            fprintf(asset_note, "jni_system_locale_bound=%s\n",
+                    morrow_jni_runtime_system_locale_bound() ? "yes" : "no");
+            fprintf(asset_note, "jni_asset_configuration_bound=%s\n",
+                    morrow_jni_runtime_asset_configuration_bound() ? "yes" : "no");
             fprintf(asset_note, "asset_manager_bound=%s\n",
                     asset_binding ? "yes" : "no");
             fprintf(asset_note, "asset_manifest_present=%s\n",
