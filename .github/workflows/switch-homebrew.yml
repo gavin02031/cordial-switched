@@ -84,6 +84,12 @@ jobs:
             switch/tests/engine_run_journal_test.c switch/source/engine_run_journal.c \
             -o /tmp/morrow-engine-journal-test
           /tmp/morrow-engine-journal-test
+      - name: Test APK asset manifest verification
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_asset_manifest_test.c switch/source/engine_asset_manifest.c \
+            -o /tmp/morrow-asset-manifest-test
+          /tmp/morrow-asset-manifest-test
       - name: Test non-executable ARM64 segment staging
         run: |
           # Provider list lives in switch/source/PROVIDER_SOURCES.txt (shared

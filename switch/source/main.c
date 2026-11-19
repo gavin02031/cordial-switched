@@ -10,6 +10,7 @@
 
 #include "ui.h"
 #include "ui_navigation.h"
+#include "engine_asset_manifest.h"
 #include "engine_boot_log.h"
 #include "engine_run_journal.h"
 #include "horizon_loader_smoke.h"
@@ -161,11 +162,42 @@ static int exclusive_engine_launch(void)
         return failure_screen("Exclusive engine launch: real JNI VM unavailable.");
     morrow_jni_runtime_bind_horizon_surface(
         nwindowGetDefault(), UI_WIDTH, UI_HEIGHT);
-    morrow_jni_runtime_bind_asset_manager(ENGINE_REPORT_DIR "/assets");
+    void *asset_binding =
+        morrow_jni_runtime_bind_asset_manager(ENGINE_REPORT_DIR "/assets");
     morrow_jni_runtime_configuration();
+
+    // Record the asset-prep state in the onload report before any gate can
+    // stop the run: binding or manifest failures here are operator-visible
+    // findings about the SD copy, not guest behavior. The check compares
+    // file and byte counts only; content identity is not proven on device.
+    EngineAssetManifestReport asset_manifest;
+    const bool asset_manifest_ok = engine_asset_manifest_verify(
+        ENGINE_REPORT_DIR "/assets", &asset_manifest);
 
     RealLinkResult onload = {0};
     horizon_real_link_run(&onload, 1u);
+    if (onload.log_path[0]) {
+        FILE *asset_note = fopen(onload.log_path, "a");
+        if (asset_note) {
+            fprintf(asset_note, "asset_manager_bound=%s\n",
+                    asset_binding ? "yes" : "no");
+            fprintf(asset_note, "asset_manifest_present=%s\n",
+                    asset_manifest.manifest_present ? "yes" : "no");
+            fprintf(asset_note, "asset_manifest_valid=%s\n",
+                    asset_manifest.manifest_valid ? "yes" : "no");
+            fprintf(asset_note,
+                    "asset_manifest_declared=%llu_files_%llu_bytes\n",
+                    asset_manifest.declared_files,
+                    asset_manifest.declared_bytes);
+            fprintf(asset_note,
+                    "asset_manifest_observed=%llu_files_%llu_bytes\n",
+                    asset_manifest.observed_files,
+                    asset_manifest.observed_bytes);
+            fprintf(asset_note, "asset_manifest_counts_match=%s\n",
+                    asset_manifest_ok ? "yes" : "no");
+            fclose(asset_note);
+        }
+    }
     if (!horizon_real_link_jni_onload_ready()) {
         // A reason and log path were saved before leaving the SDL preview.
         // No guest EGL entry has been attempted by this path yet.

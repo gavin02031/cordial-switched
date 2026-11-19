@@ -23,6 +23,7 @@ import zipfile
 
 ASSET_PREFIX = "assets/"
 MANIFEST_NAME = "asset-manifest.json"
+MANIFEST_TEXT_NAME = "asset-manifest.txt"
 
 
 class ExtractError(Exception):
@@ -132,6 +133,14 @@ def run(apk_path, output_root, list_only=False):
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2, sort_keys=True)
             handle.write("\n")
+        # Line-based twin the on-device C verifier parses; the JSON stays the
+        # human/host-readable record.
+        text_path = os.path.join(output_root, MANIFEST_TEXT_NAME)
+        with open(text_path, "w", encoding="utf-8") as handle:
+            handle.write("format %d\n" % manifest["format"])
+            handle.write("file_count %d\n" % manifest["file_count"])
+            handle.write("total_bytes %d\n" % manifest["total_bytes"])
+            handle.write("combined_sha256 %s\n" % manifest["combined_sha256"])
     return manifest
 
 

@@ -46,6 +46,13 @@ class ExtractApkAssetsTest(unittest.TestCase):
         with open(os.path.join(self.out, tool.MANIFEST_NAME), encoding="utf-8") as handle:
             on_disk = json.load(handle)
         self.assertEqual(on_disk["combined_sha256"], manifest["combined_sha256"])
+        text_path = os.path.join(self.out, tool.MANIFEST_TEXT_NAME)
+        with open(text_path, encoding="utf-8") as handle:
+            fields = dict(line.split() for line in handle.read().splitlines())
+        self.assertEqual(fields["format"], "1")
+        self.assertEqual(fields["file_count"], "2")
+        self.assertEqual(fields["total_bytes"], str(manifest["total_bytes"]))
+        self.assertEqual(fields["combined_sha256"], manifest["combined_sha256"])
         entry = next(f for f in on_disk["files"] if f["path"] == "ui/b.png")
         self.assertEqual(entry["sha256"], hashlib.sha256(b"png-bytes").hexdigest())
 
@@ -62,6 +69,11 @@ class ExtractApkAssetsTest(unittest.TestCase):
         second_out = os.path.join(self.workdir, "assets2")
         second = tool.run(other, second_out)["combined_sha256"]
         self.assertEqual(first, second)
+
+    def test_text_manifest_absent_in_list_mode(self):
+        make_apk(self.apk, [("assets/x.bin", b"x")])
+        tool.run(self.apk, self.out, list_only=True)
+        self.assertFalse(os.path.exists(os.path.join(self.out, tool.MANIFEST_TEXT_NAME)))
 
     def test_list_mode_writes_nothing(self):
         make_apk(self.apk, [("assets/x.bin", b"x")])

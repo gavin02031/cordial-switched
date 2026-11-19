@@ -47,9 +47,15 @@ Prepare them ahead of that stage on a computer, never in the repository:
 
 The tool extracts only the APK's top-level `assets/` tree, rejects entries
 that would escape it, and writes `asset-manifest.json` with per-file SHA-256
-and a combined hash so the SD copy can be verified later. It reports whether
-classes.dex is present for information only; dex content is never extracted
-because the classpath is not installed on Horizon. The APK stays private.
+and a combined hash (host-side verification) plus an `asset-manifest.txt`
+twin. On the next engine-launch attempt the runtime compares the SD tree's
+file count and total bytes against that manifest and records
+`asset_manifest_*` lines in the onload report: a missing manifest means the
+tool never ran, a counts mismatch means a partial or stale copy. On-device
+comparison covers counts and bytes only, not content identity. The tool
+reports whether classes.dex is present for information only; dex content is
+never extracted because the classpath is not installed on Horizon. The APK
+stays private.
 
 ## What the run will do, in order
 
