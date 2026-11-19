@@ -211,3 +211,26 @@ normal successful rollback frees both resources. Confirm with a single
 aggregate hardware diagnostic, not per-import testing.
 UNKNOWNS: No observed rollback failure or guest execution on hardware;
 this is a source-level ownership risk, not proof of a crash.
+
+
+2026-11-19 12:23 America/Chicago — [MEDIUM][OBSERVED SOURCE / HARDWARE EFFECT UNKNOWN]
+Crash breadcrumb records lack a per-attempt identity despite playbook timestamp guidance.
+EVIDENCE: commit 619b4b4cb39cdd68fbedf5537a1d5d1126b939fc
+https://github.com/gavin02031/cordial-switched/commit/619b4b4cb39cdd68fbedf5537a1d5d1126b939fc
+In switch/source/main.c, diag_marker() appends only event strings to
+ENGINE_REPORT_DIR/diag-progress.txt, without timestamp, boot/run ID, or
+attempt ID. switch/docs/console-run-playbook.md says old timestamps can
+identify a press that never reached the handler, but records have no
+embedded timestamps. Across multiple L3 attempts, the last event alone
+cannot reliably associate a crash with a specific run or link report.
+BLOCKER: Ambiguous pre-report crash attribution can misdirect investigation
+of guest mapping, JNI preamble, and constructor readiness.
+PROPOSED FOR FLINT: Include a monotonically scoped attempt ID and a
+hardware-derived time/tick or boot identifier on each breadcrumb; record
+matching identity in link-NN.txt when opened. Preserve append-only history
+and report write/fsync failures rather than assuming durability.
+SUCCESS: Two consecutive attempts, including a simulated abort before
+link-report creation, can be unambiguously separated by the collected
+breadcrumb records and correlated with any numbered report.
+UNKNOWNS: No new hardware crash log was inspected; this is an observable
+forensics limitation, not evidence that guest execution failed.
