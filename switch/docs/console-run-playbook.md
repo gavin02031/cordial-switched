@@ -37,6 +37,20 @@ feat/switch-horizon-smoke-test, plus libroblox.so at the path the engine
 probes (ENGINE_LIBRARY_PATH). Copy the .nro onto the SD card and launch
 through the Homebrew Menu as before.
 
+Assets are NOT required for the diagnostic run (the Loader page path never
+binds an asset directory). They become required when the exclusive engine
+path runs JNI startup, which binds `sdmc:/switch/cordial-switched/assets`.
+Prepare them ahead of that stage on a computer, never in the repository:
+
+    python3 switch/tools/extract_apk_assets.py /path/to/Roblox.apk \
+        /Volumes/SWITCHSD/switch/cordial-switched/assets
+
+The tool extracts only the APK's top-level `assets/` tree, rejects entries
+that would escape it, and writes `asset-manifest.json` with per-file SHA-256
+and a combined hash so the SD copy can be verified later. It reports whether
+classes.dex is present for information only; dex content is never extracted
+because the classpath is not installed on Horizon. The APK stays private.
+
 ## What the run will do, in order
 
 1. Probe and audit libroblox.so, map it, bind the 576 imports.
