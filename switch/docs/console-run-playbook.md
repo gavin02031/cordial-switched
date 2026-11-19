@@ -131,14 +131,21 @@ is the expected steady state.
     (link-36), matching nx-hbloader's NPDM whitelist. A hint means the
     process may attempt the call, not that it is granted or will succeed;
     the path's actual svc results remain the only capability evidence.
-  - `guest_code_mapping_map=0x... rx=0x... query=.. perm=0x.. type=0x..
-    content_match=.. rollback=0x...` - the granted-capability test for
-    those hinted syscalls: one private test page is mapped into the code
-    region, set RX, queried and compared against its source. No code is
-    executed. `guest_code_mapping_probe=reservation_failed` or
+  - `guest_code_mapping_map=0x...` / `guest_code_mapping_rx=0x...` /
+    `guest_code_mapping_query=.. perm=0x.. type=0x.. content_match=..` /
+    `guest_code_mapping_rollback=0x...` - the granted-capability test for
+    those hinted syscalls, logged per step so a fatal localizes the
+    failing stage: one private test page is mapped into the code region,
+    set RX, queried and verified against its known pattern. No code is
+    executed. The kernel marks the source page NotMapped+Locked while it
+    is mapped (KPageTableBase::MapCodeMemory), so only the destination is
+    read; an earlier build crashed by reading the source at this point.
+    `guest_code_mapping_probe=reservation_failed` or
     `process_handle_unavailable` mean the test could not start;
-    `reservation_retained=1` means rollback failed and the reservation is
-    deliberately kept tracked instead of lost.
+    `reservation_retained=1 source_retained=1` means rollback failed and
+    both ends of the possibly-live alias are deliberately kept;
+    `source_retained=1 query=.. perm=..` alone means the unmap succeeded
+    but the source did not query as heap RW afterwards.
 - `crash-NN.txt` - archived marker from a run that died mid-step, with the
   phase (`constructors` or `jni_onload`) it died in. The app recovers this
   automatically on the next launch; a fresh process re-running constructors

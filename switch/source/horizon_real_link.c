@@ -579,8 +579,9 @@ static void probe_guest_data_mapping(FILE *log)
     const Handle self = envGetOwnProcessHandle();
     Result map_rc = svcMapProcessCodeMemory(self, (u64)(uintptr_t)span,
                                             (u64)(uintptr_t)code_src, 4096);
+    // Per-step lines: a fatal between lines localizes the failing stage.
+    log_line(log, "guest_code_mapping_map=0x%08x", (unsigned)map_rc);
     if (R_FAILED(map_rc)) {
-        log_line(log, "guest_code_mapping_map=0x%08x", (unsigned)map_rc);
         virtmemLock();
         virtmemRemoveReservation(span);
         virtmemUnlock();
@@ -589,6 +590,7 @@ static void probe_guest_data_mapping(FILE *log)
     }
     Result rx_rc = svcSetProcessMemoryPermission(self, (u64)(uintptr_t)span,
                                                  4096, Perm_Rx);
+    log_line(log, "guest_code_mapping_rx=0x%08x", (unsigned)rx_rc);
     bool rx_query = false, content_match = false;
     unsigned rx_perm = 0, rx_type = 0;
     if (R_SUCCEEDED(rx_rc)) {
@@ -597,8 +599,18 @@ static void probe_guest_data_mapping(FILE *log)
                                               (u64)(uintptr_t)span));
         rx_perm = rx_query ? info.perm : 0;
         rx_type = rx_query ? info.type : 0;
-        content_match = memcmp(span, code_src, 4096) == 0;
+        // The kernel marks the SOURCE pages NotMapped+Locked while they are
+        // mapped as code (KPageTableBase::MapCodeMemory), so reading
+        // code_src here would fault. Verify against the destination only,
+        // regenerating the known pattern locally.
+        const unsigned char *dst = (const unsigned char *)span;
+        content_match = true;
+        for (size_t i = 0; i < 4096; i++) {
+            if (dst[i] != (unsigned char)(i ^ 0x5a)) { content_match = false; break; }
+        }
     }
+    log_line(log, "guest_code_mapping_query=%d perm=0x%x type=0x%x content_match=%d",
+             rx_query, rx_perm, rx_type, content_match);
     // Roll back: writable again, then unmap the code pages. A rollback
     // failure retains the reservation rather than losing track of it.
     Result back_rc = svcSetProcessMemoryPermission(self, (u64)(uintptr_t)span,
@@ -607,15 +619,21 @@ static void probe_guest_data_mapping(FILE *log)
         ? svcUnmapProcessCodeMemory(self, (u64)(uintptr_t)span,
                                     (u64)(uintptr_t)code_src, 4096)
         : back_rc;
-    log_line(log,
-             "guest_code_mapping_map=0x%08x rx=0x%08x query=%d perm=0x%x type=0x%x content_match=%d rollback=0x%08x",
-             (unsigned)map_rc, (unsigned)rx_rc, rx_query, rx_perm, rx_type,
-             content_match, (unsigned)unmap_rc);
+    log_line(log, "guest_code_mapping_rollback=0x%08x", (unsigned)unmap_rc);
     if (R_SUCCEEDED(unmap_rc)) {
         virtmemLock();
         virtmemRemoveReservation(span);
         virtmemUnlock();
-        free(code_src);
+        // The unmap should have returned the source to heap RW; verify
+        // before handing the page back to the allocator.
+        bool src_q = R_SUCCEEDED(svcQueryMemory(&info, &page_info,
+                                                (u64)(uintptr_t)code_src));
+        if (src_q && info.perm == Perm_Rw) {
+            free(code_src);
+        } else {
+            log_line(log, "guest_code_mapping_source_retained=1 query=%d perm=0x%x",
+                     src_q, src_q ? info.perm : 0);
+        }
     } else {
         // Keep both ends of the possibly-live alias: the reservation stays
         // tracked and the source page is never returned to the allocator.

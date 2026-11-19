@@ -71,6 +71,10 @@ bool horizon_code_memory_map_reserved(const EngineMemoryPlan *plan,
 
     const Handle process = envGetOwnProcessHandle();
     armDCacheFlush(aligned_source, plan->image_bytes);
+    // The kernel marks the source pages NotMapped+Locked for as long as
+    // they are mapped as code (KPageTableBase::MapCodeMemory): nothing may
+    // read or write aligned_source again until the matching unmap returns
+    // it to heap RW.
     Result rc = svcMapProcessCodeMemory(process, (uint64_t)mapping->mapped,
                                         (uint64_t)aligned_source, plan->image_bytes);
     if (R_FAILED(rc)) {
