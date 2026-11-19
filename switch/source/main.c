@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <SDL.h>
@@ -134,6 +135,24 @@ static int failure_screen(const char *reason)
     return 1;
 }
 
+// Append one durable crash-breadcrumb line. Independent of the numbered
+// reports so a fatal before report creation still leaves evidence. Each
+// line carries epoch seconds and the boot tick so breadcrumbs correlate
+// with the numbered report's own timestamps across repeated attempts.
+static void diag_marker(const char *event)
+{
+    if (mkdir(ENGINE_REPORT_DIR, 0777) != 0 && errno != EEXIST)
+        return;
+    FILE *marker = fopen(ENGINE_REPORT_DIR "/diag-progress.txt", "a");
+    if (!marker)
+        return;
+    fprintf(marker, "%ld.%llu %s\n", (long)time(NULL),
+            (unsigned long long)armGetSystemTick(), event);
+    fflush(marker);
+    fsync(fileno(marker));
+    fclose(marker);
+}
+
 #ifdef MORROW_HAS_JNIVM
 static void exclusive_graphics_snapshot(FILE *trace, unsigned sample)
 {
@@ -150,21 +169,6 @@ static void exclusive_graphics_snapshot(FILE *trace, unsigned sample)
             (unsigned long long)graphics.swap_succeeded);
     fflush(trace);
     fsync(fileno(trace));
-}
-
-// Append one durable crash-breadcrumb line. Independent of the numbered
-// reports so a fatal before report creation still leaves evidence.
-static void diag_marker(const char *event)
-{
-    if (mkdir(ENGINE_REPORT_DIR, 0777) != 0 && errno != EEXIST)
-        return;
-    FILE *marker = fopen(ENGINE_REPORT_DIR "/diag-progress.txt", "a");
-    if (!marker)
-        return;
-    fprintf(marker, "%s\n", event);
-    fflush(marker);
-    fsync(fileno(marker));
-    fclose(marker);
 }
 
 static int exclusive_engine_launch(void)

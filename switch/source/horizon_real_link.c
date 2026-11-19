@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "android_log_compat.h"
@@ -700,6 +701,8 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     }
     log_line(log, "# Morrow native engine entry readiness attempt");
     log_line(log, "morrow_build_version=%s", MORROW_BUILD_VERSION);
+    log_line(log, "attempt_epoch=%ld attempt_tick=%llu", (long)time(NULL),
+             (unsigned long long)armGetSystemTick());
     if (action == 0) {
         probe_guest_data_mapping(log);
 #ifdef MORROW_HAS_STACK_GUARDS
