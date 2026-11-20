@@ -230,7 +230,11 @@ static void *guest_mmap(void *hint, size_t length, int protection, int flags,
     size_t size = page_bytes(length);
     bool file = flags == 2; // MAP_PRIVATE without MAP_ANONYMOUS
     if (!size || offset < 0 || offset % PAGE_BYTES || (!file && offset)) { errno = EINVAL; return FAILED_ADDRESS; }
-    if ((!file && (flags != PRIVATE_ANONYMOUS || fd != -1)) || !allowed(protection)) {
+    // Linux/Android ignore fd when MAP_ANONYMOUS is set. In particular,
+    // libroblox's early allocator passes fd=0 for its PROT_NONE arena;
+    // rejecting that valid call makes its error logger recursively enter
+    // the allocator initializer and spin on the still-pending guard.
+    if ((!file && flags != PRIVATE_ANONYMOUS) || !allowed(protection)) {
         errno = ENOTSUP;
         return FAILED_ADDRESS;
     }

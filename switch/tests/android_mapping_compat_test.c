@@ -64,6 +64,15 @@ int main(void)
     assert(map_data(NULL, 4096, 7, 0x22, -1, 0) == FAILED);
     assert(map_data(NULL, 4096, 3, 0x32, -1, 0) == FAILED);
     assert(map_data(NULL, 4096, 3, 2, -1, 0) == FAILED);
+    // The guest's allocator reserves anonymous pages with fd=0, not -1.
+    // Linux ignores fd for MAP_ANONYMOUS, and the following mprotect must
+    // succeed; otherwise its initialization error path recursively allocates.
+    unsigned char *arena = map_data(NULL, 0x7b2000, 0, 0x22, 0, 0);
+    assert(arena != FAILED && (uintptr_t)arena % 4096 == 0);
+    assert(protect_data(arena, 0x7b2000, 3) == 0);
+    arena[0] = 0x5a;
+    arena[0x7b1fff] = 0xa5;
+    assert(unmap_data(arena, 0x7b2000) == 0);
     unsigned char *p = map_data(NULL, 4096, 0, 0x22, -1, 0);
     assert(p != FAILED);
     struct rlimit limit = {0, 0};
