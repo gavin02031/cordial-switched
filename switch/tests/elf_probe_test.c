@@ -1,0 +1,373 @@
+#include "elf_probe.h"
+
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+enum { IMAGE_BYTES = 2048 };
+
+static void put16(unsigned char *p, uint16_t value)
+{
+    p[0] = (unsigned char)value;
+    p[1] = (unsigned char)(value >> 8);
+}
+
+static void put32(unsigned char *p, uint32_t value)
+{
+    put16(p, (uint16_t)value);
+    put16(p + 2, (uint16_t)(value >> 16));
+}
+
+static void put64(unsigned char *p, uint64_t value)
+{
+    put32(p, (uint32_t)value);
+    put32(p + 4, (uint32_t)(value >> 32));
+}
+
+static void make_valid_elf(unsigned char *bytes)
+{
+    memset(bytes, 0, IMAGE_BYTES);
+    memcpy(bytes, "\x7f" "ELF", 4);
+    bytes[4] = 2;  // ELFCLASS64
+    bytes[5] = 1;  // Little endian
+    bytes[6] = 1;  // Current ELF version
+    put16(bytes + 16, 3);   // ET_DYN
+    put16(bytes + 18, 183); // EM_AARCH64
+    put32(bytes + 20, 1);
+    put64(bytes + 32, 64);  // Program headers begin after ELF header
+    put16(bytes + 52, 64);
+    put16(bytes + 54, 56);
+    put16(bytes + 56, 2);
+
+    unsigned char *load = bytes + 64;
+    put32(load, 1);         // PT_LOAD
+    put32(load + 4, 5);     // R-X permissions
+    put64(load + 8, 0);
+    put64(load + 16, 0x1000);
+    put64(load + 32, IMAGE_BYTES);
+    put64(load + 40, IMAGE_BYTES + 0x100);
+    put64(load + 48, 0x1000);
+
+    unsigned char *dyn = bytes + 64 + 56;
+    put32(dyn, 2);          // PT_DYNAMIC
+    put64(dyn + 8, 0x180);
+    put64(dyn + 16, 0x1180);
+    put64(dyn + 32, 5 * 16);
+    put64(dyn + 40, 5 * 16);
+    put64(dyn + 48, 8);
+
+    unsigned char *entries = bytes + 0x180;
+    put64(entries, 5);      // DT_STRTAB
+    put64(entries + 8, 0x1300);
+    put64(entries + 16, 10); // DT_STRSZ
+    put64(entries + 24, 32);
+    put64(entries + 32, 1);  // DT_NEEDED
+    put64(entries + 40, 1);
+    put64(entries + 48, 1);
+    put64(entries + 56, 11);
+    memcpy(bytes + 0x300, "\0liblog.so\0libc.so\0", 20);
+}
+
+static void put_dynamic(unsigned char *p, unsigned index, uint64_t tag, uint64_t value)
+{
+    put64(p + index * 16, tag);
+    put64(p + index * 16 + 8, value);
+}
+
+static void make_auditable_elf(unsigned char *bytes)
+{
+    make_valid_elf(bytes);
+    unsigned char *dynamic_ph = bytes + 64 + 56;
+    put64(dynamic_ph + 32, 15 * 16);
+    put64(dynamic_ph + 40, 15 * 16);
+    unsigned char *entries = bytes + 0x180;
+    put_dynamic(entries, 4, 8, 48);                // DT_RELASZ
+    put_dynamic(entries, 5, 9, 24);                // DT_RELAENT
+    put_dynamic(entries, 6, 2, 72);                // DT_PLTRELSZ
+    put_dynamic(entries, 7, 20, 7);                // DT_PLTREL = DT_RELA
+    put_dynamic(entries, 8, 35, 16);               // DT_RELRSZ
+    put_dynamic(entries, 9, 0x60000012, 128);      // DT_ANDROID_RELASZ
+    put_dynamic(entries, 10, 0x6ffffff0, 0x1340); // DT_VERSYM
+    put_dynamic(entries, 11, 6, 0x1350);          // DT_SYMTAB
+    put_dynamic(entries, 12, 11, 24);             // DT_SYMENT
+    put_dynamic(entries, 13, 23, 0x1380);        // DT_JMPREL
+    put_dynamic(entries, 14, 0, 0);
+    put_dynamic(entries, 1, 10, 40);             // More dynstr bytes for import
+    memcpy(bytes + 0x314, "eglSwapBuffers", 15);
+    put16(bytes + 0x342, 2);                     // Symbol #1 needs version 2
+    put32(bytes + 0x368, 20);                    // Symbol #1 st_name
+    put64(bytes + 0x388, ((uint64_t)1 << 32) | 1026);
+    put64(bytes + 0x3a0, ((uint64_t)1 << 32) | 1026);
+    put64(bytes + 0x3b8, 1027);                  // Relative PLT record
+}
+
+static EngineProbeResult inspect(const unsigned char *bytes, size_t size)
+{
+    FILE *file = tmpfile();
+    assert(file);
+    assert(fwrite(bytes, 1, size, file) == size);
+    EngineProbeResult result;
+    engine_probe_stream(file, &result);
+    fclose(file);
+    return result;
+}
+
+int main(void)
+{
+    unsigned char bytes[IMAGE_BYTES];
+    make_valid_elf(bytes);
+
+    EngineProbeResult result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.file_bytes == IMAGE_BYTES);
+    assert(result.max_segment_alignment == 0x1000);
+    assert(result.virtual_image_bytes == IMAGE_BYTES + 0x100);
+    assert(result.load_segments == 1);
+    assert(result.load[0].virtual_address == 0x1000);
+    assert(result.load[0].memory_bytes == IMAGE_BYTES + 0x100);
+    assert(result.load[0].flags == 5); // RX layout is retained for the mapper.
+    assert(result.executable_segments == 1);
+    assert(result.writable_segments == 0);
+    assert(result.needed_count == 2);
+    assert(strcmp(result.needed[0], "liblog.so") == 0);
+    assert(strcmp(result.needed[1], "libc.so") == 0);
+    assert(!result.has_tls_segment);
+
+    // AArch64 ELF PT_TLS describes the initialization image and per-thread
+    // memory size. The diagnostic must report it without allocating TLS.
+    make_valid_elf(bytes);
+    put16(bytes + 56, 3);
+    unsigned char *tls = bytes + 64 + 2 * 56;
+    put32(tls, 7); // PT_TLS
+    put64(tls + 8, 0x380);
+    put64(tls + 16, 0x1380);
+    put64(tls + 32, 32);
+    put64(tls + 40, 80);
+    put64(tls + 48, 16);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.has_tls_segment);
+    assert(result.tls_initial_image_bytes == 32);
+    assert(result.tls_memory_bytes == 80);
+    assert(result.tls_alignment == 16);
+
+    put64(tls + 40, 16); // PT_TLS initializer exceeds its memory size.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 40, 80);
+    put64(tls + 48, 24); // Not a power of two.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 48, 16);
+    put64(tls + 16, 0x3000); // Not backed by any PT_LOAD.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 16, 0x1380);
+    put16(bytes + 56, 4);
+    unsigned char *second_tls = bytes + 64 + 3 * 56;
+    memcpy(second_tls, tls, 56); // Ambiguous second initializer.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put16(bytes + 56, 3);
+    tls = bytes + 64 + 2 * 56;
+    put32(tls, 7);
+    put64(tls + 16, 0x1380);
+    put64(tls + 40, 64); // Zero-filled TLS needs no file initializer.
+    put64(tls + 48, 16);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.has_tls_segment && result.tls_initial_image_bytes == 0);
+    assert(result.tls_memory_bytes == 64);
+
+    // A valid initializer is not enough if its zero-filled TLS tail
+    // extends beyond the PT_LOAD memory mapping.
+    make_valid_elf(bytes);
+    put16(bytes + 56, 3);
+    tls = bytes + 64 + 2 * 56;
+    put32(tls, 7);
+    put64(tls + 8, 0x780);
+    put64(tls + 16, 0x1780);
+    put64(tls + 32, 16);
+    put64(tls + 40, 0x181); // Load ends at 0x1900; TLS ends at 0x1901.
+    put64(tls + 48, 16);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+    put64(tls + 40, 0x180); // Exactly reaches the load end.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    put64(tls + 32, 0); // Zero-initialized TLS still needs mapped memory.
+    put64(tls + 16, 0x1900);
+    put64(tls + 40, 1);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_auditable_elf(bytes);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.rela_records == 2);
+    assert(result.plt_records == 3);
+    assert(result.plt_imports == 2);
+    assert(result.plt_versioned_imports == 2);
+    assert(result.captured_import_names == 2);
+    assert(strcmp(result.import_names[0], "eglSwapBuffers") == 0);
+    assert(result.plt_log_compat_imports == 0);
+    assert(result.relr_words == 2);
+    assert(result.android_packed_bytes == 128);
+    assert(result.has_symbol_versions);
+    assert(!result.has_unsupported_plt_format);
+
+    make_auditable_elf(bytes);
+    memcpy(bytes + 0x314, "__android_log_write", 20);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.plt_log_compat_imports == 0); // Version 2 is not implemented.
+
+    put16(bytes + 0x342, 1); // Same symbol, unversioned, is a real provider.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.plt_log_compat_imports == 2); // Two PLT entries, one symbol.
+
+    make_auditable_elf(bytes);
+    FILE *source = tmpfile();
+    FILE *manifest = tmpfile();
+    assert(source && manifest);
+    assert(fwrite(bytes, 1, sizeof(bytes), source) == sizeof(bytes));
+    engine_probe_stream_manifest(source, &result, manifest);
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    rewind(manifest);
+    char output[512] = {0};
+    assert(fread(output, 1, sizeof(output) - 1, manifest) > 0);
+    assert(strstr(output, "1\t2\teglSwapBuffers\n"));
+    fclose(source);
+    fclose(manifest);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 6, 2, 13 * 24);
+    for (unsigned i = 0; i < 13; i++)
+        put64(bytes + 0x380 + i * 24 + 8, ((uint64_t)1 << 32) | 1026);
+    source = tmpfile();
+    manifest = tmpfile();
+    assert(source && manifest);
+    assert(fwrite(bytes, 1, sizeof(bytes), source) == sizeof(bytes));
+    engine_probe_stream_manifest(source, &result, manifest);
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.plt_imports == 13);
+    assert(result.captured_import_names == ENGINE_PROBE_MAX_IMPORT_NAMES);
+    rewind(manifest);
+    char full[1024] = {0};
+    assert(fread(full, 1, sizeof(full) - 1, manifest) > 0);
+    unsigned exported = 0;
+    for (const char *p = full; (p = strstr(p, "eglSwapBuffers\n")); p++)
+        exported++;
+    assert(exported == 13); // Export is not capped to the on-screen dozen.
+    fclose(source);
+    fclose(manifest);
+
+    make_auditable_elf(bytes);
+    bytes[0x317] = '\n'; // Untrusted names cannot insert report lines.
+    source = tmpfile();
+    manifest = tmpfile();
+    assert(source && manifest);
+    assert(fwrite(bytes, 1, sizeof(bytes), source) == sizeof(bytes));
+    engine_probe_stream_manifest(source, &result, manifest);
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(strchr(result.import_names[0], '?'));
+    rewind(manifest);
+    memset(full, 0, sizeof(full));
+    assert(fread(full, 1, sizeof(full) - 1, manifest) > 0);
+    assert(strstr(full, "egl?wapBuffers"));
+    fclose(source);
+    fclose(manifest);
+
+    make_auditable_elf(bytes);
+    put64(bytes + 0x388, ((uint64_t)50 << 32) | 1026);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_auditable_elf(bytes);
+    put32(bytes + 0x368, 999); // Import string offset is outside DT_STRSZ.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 10, 0x6ffffff0, 0x9000);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 12, 11, 16); // Invalid Elf64_Sym entry size.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    unsigned char *dynamic_ph = bytes + 64 + 56;
+    put64(dynamic_ph + 32, 14 * 16);
+    put64(dynamic_ph + 40, 14 * 16);
+    for (unsigned i = 2; i < 13; i++)
+        put_dynamic(bytes + 0x180, i, 1, 1); // Eleven DT_NEEDED records.
+    put_dynamic(bytes + 0x180, 13, 0, 0);
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.needed_count == 11);
+    assert(strcmp(result.needed[10], "liblog.so") == 0);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 7, 20, 17); // DT_PLTREL = DT_REL, not RELA.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.has_unsupported_plt_format);
+
+    make_auditable_elf(bytes);
+    put_dynamic(bytes + 0x180, 5, 9, 16); // Malformed AArch64 RELA entry size.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INSPECTED);
+    assert(result.has_unsupported_plt_format);
+
+    result = inspect(bytes, 40);
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put16(bytes + 18, 62); // EM_X86_64 must not be treated as native ARM64.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_WRONG_ARCH);
+
+    make_valid_elf(bytes);
+    bytes[4] = 1; // ELFCLASS32
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put64(bytes + 64 + 32, IMAGE_BYTES + 1); // PT_LOAD past EOF
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put64(bytes + 0x180 + 40, 99); // DT_NEEDED out of range
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put64(bytes + 64 + 48, 0x1800); // Non-power-of-two alignment
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put64(bytes + 64 + 16, UINT64_MAX - 0x20); // PT_LOAD virtual range wraps.
+    put64(bytes + 64 + 48, 1); // Alignment unconstrained for this test.
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    make_valid_elf(bytes);
+    put64(bytes + 0x180 + 64, 1); // No DT_NULL terminator
+    result = inspect(bytes, sizeof(bytes));
+    assert(result.status == ENGINE_PROBE_INVALID_ELF);
+
+    engine_probe_file("/a/file/that/does/not/exist", &result);
+    assert(result.status == ENGINE_PROBE_NOT_FOUND);
+
+    puts("elf_probe_test: 29 checks passed");
+    return 0;
+}

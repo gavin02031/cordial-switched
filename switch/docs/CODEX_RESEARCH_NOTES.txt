@@ -1,0 +1,277 @@
+MORROW - CODEX HOURLY RESEARCH & DEVELOPMENT SUGGESTIONS
+========================================================
+
+Role agreement (2026-11-18): Flint (Instinct) owns ALL implementation,
+tests, build integration, releases and the active development PR. Codex
+does research and code review hourly. This text file is the sole repository
+file Codex may update. Findings are suggestions, NOT changes to program
+behaviour or hardware-verified fixes. If there is no substantive new
+evidence, make no file change and no commit.
+
+Handoff: switch/docs/FLINT_DEVELOPMENT_HANDOFF.md
+Active branch: feat/switch-horizon-smoke-test
+Starting source baseline: 1153d906243240e58716d2cce1f31d01bd081ad7
+
+Each new substantive entry should give:
+  Date (America/Chicago), priority and status (OBSERVED / INFERRED)
+  Exact evidence (logs, source functions, CI or link)
+  Proposed fix or investigation for Flint
+  Acceptance test and remaining unknowns
+Do not embed proprietary engine code, binaries, URLs or private logs.
+
+BASELINE RESEARCH QUEUE - 2026-11-18 (existing evidence, not new hardware)
+--------------------------------------------------------------------------
+
+[CRITICAL][OBSERVED IN v0.99.4 / CURRENT STATUS UNKNOWN]
+Milestone A: strict final-base relocation failed on geteuid@LIBC. The
+read-only audit observed 629 lookups, 562 resolved, 67 missing (2 weak),
+and 65 missing REQUIRED relocation sites. The 0.99.6 process adapter now
+resolves geteuid by name but returns ENOSYS on Horizon, which may still
+block a caller. Current unresolved import keys are UNKNOWN.
+Files: switch/source/horizon_real_link.c (horizon_real_link_run),
+switch/source/engine_stage.c, switch/source/android_import_resolver.c,
+switch/tools/export_horizon_providers.py, switch/tools/audit_android_elf.py.
+SUGGESTION TO FLINT: Obtain one complete target-observed provider inventory
+and compare all version/provider-qualified imports offline. Separate
+distinct missing ABI keys from relocation-site counts. Implement needed
+adapters by subsystem with real error and success semantics, not blind stubs.
+ACCEPTANCE: strict full required relocation audit passes with complete
+provider list and no unsupported relocations; record a new Switch report.
+EVIDENCE: switch/docs/playability-milestones.md (v0.99.4 hardware section)
+
+[HIGH][OBSERVED IN v0.99.4 / CAUSE UNKNOWN]
+The hardware guest mapping probe reported zero=1, read_only=0, data=0,
+none=0, rw=0, released=1. Permission changes were not confirmed.
+Files: switch/source/android_mapping_compat.c (protect_pages,
+guest_mprotect), switch/source/horizon_real_link.c
+(probe_guest_data_mapping), switch/source/horizon_code_memory.c.
+SUGGESTION TO FLINT: Log precise return codes and queried MemoryInfo for
+each permission transition; distinguish a failed protection operation
+from a successful operation whose queried permissions disagree. Keep the
+probe on Morrow-owned pages and avoid crashing the Switch intentionally.
+ACCEPTANCE: repeatable console evidence for RW->R->None->RW transitions
+or a specific kernel restriction with a safe alternative.
+EVIDENCE: latest v0.99.4 console report supplied to development chat.
+
+[HIGH][OBSERVED SOURCE GATE / LIVE CONSTRUCTOR EXECUTION UNKNOWN]
+The current source validates DT_INIT_ARRAY targets but does not execute
+the observed 2,505 guest entries. engine_execution_decide refuses real
+JNI_OnLoad whenever constructors remain unrun.
+Files: switch/source/engine_constructor_plan.c
+(engine_constructor_plan_prepare),
+switch/source/engine_constructor_run.c (engine_constructor_run_once),
+switch/source/engine_execution_attempt.c (engine_execution_decide),
+switch/source/engine_run_journal.c.
+SUGGESTION TO FLINT: Establish dependency and guest TLS/thread context,
+pin executable mapping, then journal the live constructor sequence with
+durable before/after markers and fail-closed crash recovery.
+ACCEPTANCE: hardware evidence of constructor begin/return order with
+no skipped required entries; only then attempt real JNI_OnLoad.
+EVIDENCE: current source and switch/docs/playability-milestones.md.
+
+[HIGH][STATIC FINDING / RUNTIME REACHABILITY UNKNOWN]
+Private offline ARM64 audit found 16 svc #0 candidates in named .text;
+seven directly followed loads of Linux futex/getpid/gettid numbers. The
+libnx exception handler records diagnostic registers but does not
+resume, emulate or intercept arbitrary guest SVC instructions.
+Files: switch/source/horizon_exception_log.c,
+switch/source/engine_exception_format.c.
+SUGGESTION TO FLINT: Treat the static candidates as investigation targets,
+not proof of reached syscalls. First establish a reliable target trace of
+real guest execution and document how the kernel dispatches exceptions
+from dynamically mapped code before proposing an ABI-correct solution.
+ACCEPTANCE: verified console evidence distinguishing executed Linux SVC
+from static data or unreachable instruction candidates.
+EVIDENCE: switch/docs/playability-milestones.md.
+
+
+2026-11-18 01:42 America/Chicago — [HIGH][OBSERVED SOURCE / RUNTIME IMPACT INFERRED]
+Provider-export output pair can be inconsistent after a failed write.
+EVIDENCE: switch/tools/export_horizon_providers.py, main():
+args.output.write_text(...) precedes args.evidence_output.write_text(...),
+with no staged write, rollback, or cross-file identity check. The exporter
+otherwise validates the resolver inventory before writing. Source at
+https://github.com/gavin02031/cordial-switched/blob/5c8ee3613782cbcff589d0159a2d217339f4cb52/switch/tools/export_horizon_providers.py
+BLOCKER: If the evidence write fails, a new provider manifest can remain
+beside an old evidence JSON (or no evidence). The offline ABI audit could
+then be interpreted as having stronger provenance than its files establish.
+PROPOSED FOR FLINT: Stage both outputs in their destination directories,
+fsync/close before replacing final paths, and include a canonical manifest
+SHA-256 in evidence for pair verification. Handle failure cleanup without
+claiming two-path replacement is globally atomic; require downstream audit
+or operator to verify the hash and build/report identity before treating the
+manifest as Milestone A evidence. Avoid uploading private report content.
+SUCCESS: Synthetic failure-injection test of second-output write leaves
+no apparently valid mismatched pair; tampered/stale manifest is rejected;
+normal exporter tests and Horizon CI remain green.
+UNKNOWNS: No observed export write failure or stale pair on Switch; this
+is a source-level integrity risk, not evidence of a current missing import.
+
+
+2026-11-18 02:26 America/Chicago — [CRITICAL][OBSERVED SOURCE / HARDWARE IMPACT UNVERIFIED]
+JNI_OnLoad is reachable after failed or incomplete constructor execution.
+EVIDENCE: Flint's constructor integration commits f2edd6f975a65ffb2926ad1e0acade184abcc1e8 and ca5c87a5bba778a27748fc9383534714c678ae61; source:
+https://github.com/gavin02031/cordial-switched/blob/undefined/switch/source/horizon_real_link.c
+In horizon_real_link_run(), the result of engine_constructor_run_once()
+is stored in constructors_done and logged, but the subsequent
+engine_run_journal_begin("jni_onload") and engine_execution_call_jni_onload()
+are not conditioned on constructors_done. Even when guest_main_tls_ready=no,
+constructor journaling fails, a constructor callback fails, or clearing its
+crash marker fails, control can still enter JNI_OnLoad. The boolean
+constructors_ran is also true after a partial run (next_index != 0),
+so it cannot prove completed initialization.
+BLOCKER: Milestone B's complete DT_INIT/DT_INIT_ARRAY sequence and durable
+constructor journal are not enforced before Milestone C.
+PROPOSED FOR FLINT: Fail closed around the entire JNI_OnLoad journal/call
+path unless constructors_done, constructor crash marker cleared durably,
+and guest TLS/bridge state are all true. Track started/completed/durable
+states separately; preserve partial-run diagnostics without promoting
+them to readiness. Refuse further engine entry after a partial run.
+SUCCESS: Synthetic negative tests for failed begin/completed callbacks,
+missing TLS, partial index, and failed marker clear all assert zero
+JNI_OnLoad invocations; only full successful constructor completion and
+durable journal permit entry. Verify on Switch after Milestone A.
+UNKNOWNS: No hardware execution of the new constructor path observed;
+this is a source-level control-flow gap, not proof of a crash.
+
+2026-11-18 03:31 America/Chicago — [HIGH][OBSERVED CI FAILURE / FIX INFERRED]
+New virtual-epoll integration breaks a standalone eventfd test link.
+EVIDENCE: branch head 1ccf18ce6b9277f21e740d18a4e057a77679086d
+("Implement epoll over Morrow-virtual descriptors"); Horizon preview
+https://github.com/gavin02031/cordial-switched/actions/runs/44275831354
+build, arm64-jump, JNI provider and JNI crossbuild jobs succeeded, but
+elf-probe-tests failed. In the android_eventfd_compat_test build,
+switch/source/android_libc_compat.c guest_read, guest_write and guest_close
+reference android_epoll_is_virtual and android_epoll_close, while that test's
+link line includes android_eventfd_compat.c and android_libc_compat.c but
+not android_epoll_compat.c. The linker reports undefined references and
+exits 1. The separate epoll test itself passed.
+BLOCKER: The new libc-to-epoll dependency is absent from at least one
+standalone test link, so the preview workflow is red despite a successful
+NRO build. This is not a Roblox runtime failure.
+PROPOSED FOR FLINT: Update the eventfd test target's link inputs to
+include the epoll implementation and any actual transitive dependencies;
+audit other standalone targets linking android_libc_compat.c for the same
+new requirement. Prefer one explicit shared source-list definition to
+prevent target drift, without weakening -Werror or removing the test.
+SUCCESS: eventfd and epoll host tests both link and pass in CI; all five
+Horizon preview jobs green on the new commit, including the NRO build.
+UNKNOWNS: No runtime Switch test of virtual epoll was observed; supported
+virtual-fd subset and EPOLLET semantics remain documented limitations.
+
+NEXT ENTRY:
+Use a new dated section only when a verified finding improves this queue.
+
+2026-11-18 04:02 America/Chicago — [HIGH][OBSERVED CI FAILURE / FIX INFERRED]
+Host provider coverage fails to link after virtual-fd readiness was factored out.
+EVIDENCE: feature head 89a99c9fabf5e5ab28151506b11ca8f95838ea08; Horizon preview
+https://github.com/gavin02031/cordial-switched/actions/runs/44280985026
+has successful NRO build, arm64-jump and JNI jobs but failed elf-probe-tests.
+Job 134721304282: test_host_provider_reports_exact_versions_and_weak_misses
+raises CalledProcessError in switch/tools/audit_android_elf.py,
+host_provider_coverage() at the cc -shared -Wl,-z,defs invocation.
+Undefined android_virtual_is_virtual, android_virtual_readiness_edges and
+android_virtual_next_expiry_ms are called by android_epoll_compat.c and
+android_looper_compat.c. Their implementations live in
+switch/source/android_virtual_fd.c, which does not match the current
+source.glob('android_*_compat.c') selection and is not explicitly appended.
+BLOCKER: The host provider shared-library test cannot link, so import
+coverage regression tests are blocked; this does not demonstrate a missing
+Horizon ABI symbol or engine runtime failure.
+PROPOSED FOR FLINT: Add android_virtual_fd.c to the explicit host-provider
+source list in host_provider_coverage(), preserving -Wl,-z,defs. Audit the
+other standalone link commands for the same dependency and prefer a common
+source manifest where practical. Keep real virtual-fd semantics tests.
+SUCCESS: The host-provider test links with no undefined references, all
+Python ELF tests pass, and all five Horizon preview jobs succeed on the
+new commit. NRO build alone is insufficient.
+UNKNOWNS: No fresh target-observed complete import inventory or guest
+execution proof. The separate upstream workflow is not a Horizon test.
+
+
+2026-11-19 11:44 America/Chicago — [HIGH][OBSERVED SOURCE / HARDWARE IMPACT UNKNOWN]
+Private RX code-memory probe can free its source page after unsuccessful rollback.
+EVIDENCE: commit 78e1428794e1a9651452747e5a767420b88fba26,
+https://github.com/gavin02031/cordial-switched/commit/78e1428794e1a9651452747e5a767420b88fba26
+In switch/source/horizon_real_link.c, probe_guest_data_mapping(), after
+svcMapProcessCodeMemory succeeds, failure of svcSetProcessMemoryPermission
+(back to RW) or svcUnmapProcessCodeMemory leaves the code reservation tracked
+but unconditionally calls free(code_src). The source page may still be mapped
+into process code memory, so returning it to malloc can violate source-alias
+lifetime assumptions and make subsequent allocator use unsafe.
+BLOCKER: Probe cleanup does not preserve both ends of a live code-memory alias.
+PROPOSED FOR FLINT: On any failed rollback after a successful map, retain
+both the source allocation and destination reservation for process lifetime,
+record map/setperm/unmap outcomes and retained source state, and refuse reuse
+or a second probe until cleanup is proven safe. On successful unmap, release
+both. Do not treat a retained reservation alone as sufficient cleanup.
+SUCCESS: Fault-injection tests for RX permission failure, RW restoration
+failure and unmap failure show no free/reuse of an aliased source page;
+normal successful rollback frees both resources. Confirm with a single
+aggregate hardware diagnostic, not per-import testing.
+UNKNOWNS: No observed rollback failure or guest execution on hardware;
+this is a source-level ownership risk, not proof of a crash.
+
+
+2026-11-19 12:23 America/Chicago — [MEDIUM][OBSERVED SOURCE / HARDWARE EFFECT UNKNOWN]
+Crash breadcrumb records lack a per-attempt identity despite playbook timestamp guidance.
+EVIDENCE: commit 619b4b4cb39cdd68fbedf5537a1d5d1126b939fc
+https://github.com/gavin02031/cordial-switched/commit/619b4b4cb39cdd68fbedf5537a1d5d1126b939fc
+In switch/source/main.c, diag_marker() appends only event strings to
+ENGINE_REPORT_DIR/diag-progress.txt, without timestamp, boot/run ID, or
+attempt ID. switch/docs/console-run-playbook.md says old timestamps can
+identify a press that never reached the handler, but records have no
+embedded timestamps. Across multiple L3 attempts, the last event alone
+cannot reliably associate a crash with a specific run or link report.
+BLOCKER: Ambiguous pre-report crash attribution can misdirect investigation
+of guest mapping, JNI preamble, and constructor readiness.
+PROPOSED FOR FLINT: Include a monotonically scoped attempt ID and a
+hardware-derived time/tick or boot identifier on each breadcrumb; record
+matching identity in link-NN.txt when opened. Preserve append-only history
+and report write/fsync failures rather than assuming durability.
+SUCCESS: Two consecutive attempts, including a simulated abort before
+link-report creation, can be unambiguously separated by the collected
+breadcrumb records and correlated with any numbered report.
+UNKNOWNS: No new hardware crash log was inspected; this is an observable
+forensics limitation, not evidence that guest execution failed.
+
+
+2026-11-19 21:01 America/Chicago — [CRITICAL][OBSERVED SOURCE BUG / HARDWARE CAUSALITY INFERRED]
+L3-only code-memory probe passes an address-space slice as a reservation object.
+EVIDENCE: Branch e53143e6bb20665ddeae345b1514ddaf5b190f5e,
+switch/source/horizon_real_link.c:probe_guest_data_mapping():
+  void *span = virtmemFindCodeMemory(4096, 4096);
+  void *rsv = span ? virtmemAddReservation(span, 4096) : NULL;
+The map-failed and rollback-succeeded cleanup branches both call
+virtmemRemoveReservation(span), not virtmemRemoveReservation(rsv).
+The libnx API explicitly returns a *reservation object* from Add and expects
+that object at Remove; span is the virtual address being reserved. libnx's
+virtmemRemoveReservation dereferences rv->next / rv->prev and frees rv, so
+passing span can access unmapped/mapped guest-code memory as an unrelated
+VirtmemReservation and fault or corrupt the reservation list. This probe is
+on the default L3 diagnostic path (action == 0), without any guest execution.
+In contrast, switch/source/horizon_code_memory.c and
+switch/source/horizon_stack_guard.inc pass their stored reservation objects.
+Primary sources:
+  https://switchbrew.github.io/libnx/virtmem_8h.html
+  https://raw.githubusercontent.com/switchbrew/libnx/master/nx/source/kernel/virtmem.c
+BLOCKER: A successful find+reserve followed by either map failure or
+successful rollback calls Remove with the wrong pointer. The application
+can crash even when the RX probe has correctly failed or fully rolled back.
+PROPOSED FOR FLINT: Change BOTH probe cleanup calls to
+virtmemRemoveReservation(rsv), keeping the virtmem mutex locked as already
+implemented. Preserve the existing retention of both the source page and
+reservation when rollback fails. Audit the remaining Add/Remove pairs; they
+appear correct in the reviewed source. Keep the code-memory probe diagnostic
+and non-executing rather than bypassing it to hide the crash.
+SUCCESS: A host test with mock libnx reservations makes the map-failure and
+successful-map/unmap paths each remove the exact object returned by Add,
+never the address slice, while rollback-failure removes neither. Build all
+five Horizon preview jobs, install that artifact, run only L3 on the Loader
+without ZL/ZR, then compare new diag-progress.txt and link-NN.txt. Check
+guest_code_mapping_map/rx/query/rollback and the final real_link_returned
+breadcrumb. A clean L3 report would confirm this crash path is cleared,
+not that any guest constructor or Roblox frame executed.
+UNKNOWNS: No post-change console report is available; this definite API
+misuse is a strong crash candidate but does not establish that it caused
+the user's particular "software closed" fatal without an L3 breadcrumb.

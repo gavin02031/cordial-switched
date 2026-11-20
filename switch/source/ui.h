@@ -1,0 +1,63 @@
+#ifndef CORDIAL_SWITCH_UI_H
+#define CORDIAL_SWITCH_UI_H
+
+#include <stdbool.h>
+
+#include <SDL.h>
+
+#include "elf_probe.h"
+#include "engine_stage.h"
+#include "jit_probe.h"
+#include "horizon_loader_smoke.h"
+#include "horizon_real_link.h"
+#include "ui_logs.h"
+
+#define UI_WIDTH 1280
+#define UI_HEIGHT 720
+
+typedef enum {
+    UI_HOME = 0,
+    UI_BROWSE,
+    UI_FRIENDS,
+    UI_AVATAR,
+    UI_SETTINGS,
+    UI_ENGINE,
+    UI_LOADER,
+    UI_LOGS,
+    UI_PAGE_COUNT
+} UiPage;
+
+typedef struct {
+    UiPage page;
+    bool animations;
+    unsigned loader_view; // Profile, required libraries, imported symbols.
+    unsigned browse_tab;
+    unsigned settings_tab;
+    unsigned log_scroll;
+    MorrowLogs logs;
+    bool report_attempted;
+    bool report_saved;
+    char report_path[112];
+    bool stage_attempted;
+    EngineStageStatus stage_status;
+    char stage_detail[120];
+    bool boot_log_attempted;
+    bool boot_log_saved;
+    char boot_log_path[112];
+    LoaderSmokeResult loader_smoke;
+    RealLinkResult real_link;
+    char recovered_crash_path[112];
+    bool accelerated;
+    bool vsync;
+    double fps;
+    double frame_ms;
+    char renderer_name[48];
+    EngineProbeResult engine;
+    JitProbeResult jit;
+} UiState;
+
+bool ui_init(SDL_Renderer *renderer);
+void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds);
+void ui_shutdown(void);
+
+#endif

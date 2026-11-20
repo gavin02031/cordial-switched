@@ -1,0 +1,116 @@
+diff --git a/src/jnivm/internal/method.cpp b/src/jnivm/internal/method.cpp
+index a9fe678..bdcde27 100644
+--- a/src/jnivm/internal/method.cpp
++++ b/src/jnivm/internal/method.cpp
+@@ -29,7 +29,9 @@ jmethodID jnivm::GetMethodID(JNIEnv *env, jclass cl, const char *str0, const cha
+             auto ccl =
+                     std::find_if(cur->methods.begin(), cur->methods.end(),
+                                             [&sname, &ssig](std::shared_ptr<Method> &namesp) {
+-                                                return namesp->_static == isStatic && AllowNative == (bool)namesp->native && namesp->name == sname && namesp->signature == ssig;
++                                                return namesp->_static == isStatic &&
++                                                       (!AllowNative || namesp->native) &&
++                                                       namesp->name == sname && namesp->signature == ssig;
+                                             });
+             if (ccl != cur->methods.end()) {
+                 next = *ccl;
+@@ -353,4 +355,4 @@ DeclareTemplate(jlong);
+ DeclareTemplate(jfloat);
+ DeclareTemplate(jdouble);
+ DeclareTemplate(jchar);
+-#undef DeclareTemplate
+\ No newline at end of file
++#undef DeclareTemplate
+diff --git a/src/jnivm/vm.cpp b/src/jnivm/vm.cpp
+index b27b9d2..f63611e 100644
+--- a/src/jnivm/vm.cpp
++++ b/src/jnivm/vm.cpp
+@@ -9,6 +9,7 @@
+ #include <locale>
+ #include <sstream>
+ #include <climits>
++#include <algorithm>
+ #include "internal/log.h"
+ #include <jnivm/weak.h>
+ #include <stdexcept>
+@@ -253,28 +254,53 @@ jboolean IsInstanceOf(JNIEnv *env, jobject jo, jclass cl) {
+ 
+ #include "internal/array.hpp"
+ 
+-jint RegisterNatives(JNIEnv *env, jclass c, const JNINativeMethod *method, jint i) {
+-	auto&& clazz = JNITypes<std::shared_ptr<jnivm::Class>>::JNICast(ENV::FromJNIEnv(env), c);
+-	if(!clazz) {
+-		LOG("JNIVM", "RegisterNatives failed, class is nullptr");
+-	} else {
+-		std::lock_guard<std::mutex> lock(clazz->mtx);
+-		while(i--) {
+-			clazz->natives[method->name] = method->fnPtr;
+-#ifdef JNI_TRACE
+-			std::stringstream ss;
+-			ss << "Class \"" << clazz->nativeprefix << "\" registred native method: " << method->name << " signature: " << method->signature;
+-			LOG("JNIVM", "%s", ss.str().data());
+-#endif
+-			auto m = std::make_shared<Method>();
+-			m->name = method->name;
+-			m->signature = method->signature;
+-			m->native = method->fnPtr;
+-			clazz->methods.push_back(m);
+-			method++;
+-		}
++// The embedded VM has no general foreign-function marshaller yet. Supply only
++// the one verified integer ABI; an unsupported registration must fail rather
++// than leave a method that silently returns zero when Java calls it.
++class RegisteredIntNative final : public jnivm::MethodHandle {
++	void *callback;
++public:
++	explicit RegisteredIntNative(void *fn) : callback(fn) {}
++	jint StaticInvoke(ENV *runtime, Class *clazz, const jvalue *args,
++	                  jnivm::impl::MethodHandleBase<jint>) override {
++		auto owner = std::static_pointer_cast<Class>(clazz->shared_from_this());
++		jclass ref = JNITypes<std::shared_ptr<Class>>::ToJNIType(runtime, owner);
++		if (!ref) throw std::runtime_error("Cannot reference registered native class");
++		jint value = reinterpret_cast<jint (*)(JNIEnv *, jclass, jint)>(callback)(
++		    runtime->GetJNIEnv(), ref, args[0].i);
++		runtime->GetJNIEnv()->DeleteLocalRef(ref);
++		return value;
+ 	}
+-	return 0;
++	jint InstanceInvoke(ENV *runtime, jobject object, const jvalue *args,
++	                    jnivm::impl::MethodHandleBase<jint>) override {
++		return reinterpret_cast<jint (*)(JNIEnv *, jobject, jint)>(callback)(
++		    runtime->GetJNIEnv(), object, args[0].i);
++	}
++};
++
++jint RegisterNatives(JNIEnv *env, jclass c, const JNINativeMethod *methods, jint count) {
++	auto clazz = JNITypes<std::shared_ptr<jnivm::Class>>::JNICast(ENV::FromJNIEnv(env), c);
++	if (!clazz || count < 0 || (count && !methods)) return JNI_ERR;
++	std::lock_guard<std::mutex> lock(clazz->mtx);
++	std::vector<std::shared_ptr<Method>> targets;
++	for (jint n = 0; n < count; ++n) {
++		const JNINativeMethod &candidate = methods[n];
++		if (!candidate.name || !candidate.signature || !candidate.fnPtr ||
++		    std::string(candidate.signature) != "(I)I") return JNI_ERR;
++		auto it = std::find_if(clazz->methods.begin(), clazz->methods.end(),
++		    [&candidate](const std::shared_ptr<Method> &declared) {
++		        return !declared->native && declared->name == candidate.name &&
++		               declared->signature == candidate.signature;
++		    });
++		if (it == clazz->methods.end()) return JNI_ERR;
++		targets.push_back(*it);
++	}
++	for (jint n = 0; n < count; ++n) {
++		targets[n]->native = methods[n].fnPtr;
++		targets[n]->nativehandle = std::make_shared<RegisteredIntNative>(methods[n].fnPtr);
++		clazz->natives[methods[n].name] = methods[n].fnPtr;
++	}
++	return JNI_OK;
+ };
+ jint UnregisterNatives(JNIEnv *env, jclass c) {
+ 	auto&& clazz = JNITypes<std::shared_ptr<jnivm::Class>>::JNICast(ENV::FromJNIEnv(env), c);
+@@ -578,4 +604,4 @@ jnivm::VM *jnivm::VM::FromJavaVM(JavaVM *vm) {
+ }
+ 
+ template JNINativeInterface jnivm::VM::GetNativeInterfaceTemplate<true>();
+-template JNINativeInterface jnivm::VM::GetNativeInterfaceTemplate<false>();
+\ No newline at end of file
++template JNINativeInterface jnivm::VM::GetNativeInterfaceTemplate<false>();

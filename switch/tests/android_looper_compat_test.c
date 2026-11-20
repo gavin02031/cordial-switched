@@ -1,0 +1,189 @@
+#define _POSIX_C_SOURCE 200809L
+#include <assert.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "android_eventfd_compat.h"
+#include "android_looper_compat.h"
+
+typedef void *(*Prepare)(int);
+typedef void *(*ForThread)(void);
+typedef void (*Ref)(void *);
+typedef int (*Callback)(int, int, void *);
+typedef int (*AddFd)(void *, int, int, int, Callback, void *);
+typedef int (*RemoveFd)(void *, int);
+typedef int (*PollOnce)(int, int *, int *, void **);
+
+static Prepare prepare;
+static ForThread for_thread;
+static Ref acquire;
+static Ref release;
+static AddFd add_fd;
+static RemoveFd remove_fd;
+static PollOnce poll_once;
+static unsigned callbacks;
+
+static void function(const char *symbol, void *output)
+{
+    uint64_t address = 0;
+    assert(android_looper_compat_resolve(symbol, NULL, NULL, &address));
+    assert(address);
+    memcpy(output, &address, sizeof(address));
+}
+
+static int on_fd(int fd, int events, void *data)
+{
+    assert(events & 1);
+    assert(data == &callbacks);
+    char ch;
+    assert(read(fd, &ch, 1) == 1);
+    callbacks++;
+    return 0; // Android callbacks returning zero auto-unregister.
+}
+
+static int on_eventfd(int fd, int events, void *data)
+{
+    assert(events & 1);
+    uint64_t value;
+    assert(android_eventfd_read(fd, &value, 8) == 8);
+    assert(data == &callbacks);
+    callbacks++;
+    return 0;
+}
+
+static void *thread_test(void *unused)
+{
+    (void)unused;
+    assert(for_thread() == NULL);
+    assert(poll_once(0, NULL, NULL, NULL) == -4);
+    void *looper = prepare(0);
+    assert(looper && for_thread() == looper);
+    int fds[2];
+    assert(pipe(fds) == 0);
+    assert(add_fd(looper, fds[0], 55, 1, NULL, NULL) == -1);
+    assert(add_fd(looper, fds[0], 55, 1, on_fd, &callbacks) == 1);
+    assert(remove_fd(looper, fds[0]) == 1);
+    close(fds[0]); close(fds[1]);
+    return NULL; // pthread_key destructor drops implicit thread ownership.
+}
+
+int main(void)
+{
+    function("ALooper_prepare", &prepare);
+    function("ALooper_forThread", &for_thread);
+    function("ALooper_acquire", &acquire);
+    function("ALooper_release", &release);
+    function("ALooper_addFd", &add_fd);
+    function("ALooper_removeFd", &remove_fd);
+    function("ALooper_pollOnce", &poll_once);
+    uint64_t bad = 0;
+    assert(!android_looper_compat_resolve("ALooper_pollOnce", "LIBC", "libc.so", &bad));
+    assert(!android_looper_compat_resolve("ALooper_fake", NULL, NULL, &bad));
+    assert(for_thread() == NULL);
+    assert(poll_once(0, NULL, NULL, NULL) == -4);
+
+    void *looper = prepare(1);
+    assert(looper && for_thread() == looper);
+    assert(prepare(1) == looper);
+    acquire(looper);
+    release(looper);
+    assert(poll_once(0, NULL, NULL, NULL) == -3);
+    assert(add_fd(looper, -1, 42, 1, NULL, NULL) == -1);
+    // AOSP applies no mask validation: an ERROR/HANGUP-only mask is
+    // accepted (the wait maps only INPUT/OUTPUT; ERR/HUP always report).
+    assert(add_fd(looper, 0, 42, 8, NULL, NULL) == 1);
+    assert(remove_fd(looper, 0) == 1);
+
+    int a[2], b[2], c[2];
+    assert(pipe(a) == 0 && pipe(b) == 0 && pipe(c) == 0);
+    assert(add_fd(looper, a[0], 0, 1, on_fd, &callbacks) == 1);
+    assert(add_fd(looper, b[0], 0, 1, on_fd, &callbacks) == 1);
+    assert(write(a[1], "a", 1) == 1 && write(b[1], "b", 1) == 1);
+    assert(poll_once(0, NULL, NULL, NULL) == -2);
+    assert(callbacks == 2); // Both callbacks in one ready batch.
+    assert(remove_fd(looper, a[0]) == 0 && remove_fd(looper, b[0]) == 0);
+
+    assert(add_fd(looper, c[0], 77, 1, NULL, &callbacks) == 1);
+    assert(write(c[1], "x", 1) == 1);
+    int result_fd = -1, result_events = -1;
+    void *result_data = NULL;
+    assert(poll_once(25, &result_fd, &result_events, &result_data) == 77);
+    assert(result_fd == c[0] && (result_events & 1));
+    assert(result_data == &callbacks);
+    assert(remove_fd(looper, c[0]) == 1);
+    assert(poll_once(0, NULL, NULL, NULL) == -3);
+
+    // No registered fds + infinite timeout would block until ALooper_wake,
+    // which is not bound: the wait refuses instead of wedging forever.
+    assert(poll_once(-1, NULL, NULL, NULL) == -4);
+    // No registered fds + bounded timeout is a pure sleep, then timeout.
+    assert(poll_once(5, NULL, NULL, NULL) == -3);
+
+    // Morrow-virtual fds (eventfd) work through the readiness path on
+    // every platform; host poll would only POLLNVAL them.
+    int vfd = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    assert(vfd >= 0);
+    assert(add_fd(looper, vfd, 88, 1, NULL, &callbacks) == 1);
+    assert(poll_once(0, NULL, NULL, NULL) == -3); // nothing written yet
+    uint64_t one = 1;
+    assert(android_eventfd_write(vfd, &one, 8) == 8);
+    int v_fd = -1, v_events = -1;
+    void *v_data = NULL;
+    assert(poll_once(25, &v_fd, &v_events, &v_data) == 88);
+    assert(v_fd == vfd && (v_events & 1) && v_data == &callbacks);
+    // Drained: back to timeout.
+    assert(android_eventfd_read(vfd, &one, 8) == 8);
+    assert(poll_once(0, NULL, NULL, NULL) == -3);
+    // Mixing virtual and host fds in one looper refuses, journaled.
+    assert(pipe(a) == 0);
+    assert(add_fd(looper, a[0], 90, 1, on_fd, &callbacks) == 1);
+    assert(poll_once(0, NULL, NULL, NULL) == -4);
+    assert(remove_fd(looper, a[0]) == 1);
+    assert(remove_fd(looper, vfd) == 1);
+    assert(android_eventfd_close(vfd) == 0);
+
+    // AOSP ordering: a batch with both a callback fd and an ident fd
+    // runs the callback AND returns the ident (queued ident responses
+    // outrank POLL_CALLBACK). Two ready ident fds are returned one per
+    // call, the second from the queue even after everything drains.
+    // All-virtual registrations: host+virtual mixing stays refused.
+    int vfd2 = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    int vfd3 = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    int vfd4 = android_eventfd_create(0, ANDROID_EFD_NONBLOCK);
+    assert(vfd2 >= 0 && vfd3 >= 0 && vfd4 >= 0);
+    assert(add_fd(looper, vfd4, 0, 1, on_eventfd, &callbacks) == 1);
+    assert(add_fd(looper, vfd2, 91, 1, NULL, NULL) == 1);
+    assert(add_fd(looper, vfd3, 92, 1, NULL, NULL) == 1);
+    const unsigned before = callbacks;
+    assert(android_eventfd_write(vfd4, &one, 8) == 8);
+    assert(android_eventfd_write(vfd2, &one, 8) == 8);
+    assert(android_eventfd_write(vfd3, &one, 8) == 8);
+    int r_fd = -1, r_events = -1;
+    void *r_data = NULL;
+    const int first = poll_once(25, &r_fd, &r_events, &r_data);
+    assert(first == 91 || first == 92); // ident outranks POLL_CALLBACK
+    assert(callbacks == before + 1);    // callback still ran, same call
+    const int second = poll_once(0, &r_fd, &r_events, &r_data);
+    assert(second == 91 || second == 92);
+    assert(second != first);            // the queued sibling response
+    // Drain everything: the queue is empty, so timeout resumes.
+    assert(android_eventfd_read(vfd2, &one, 8) == 8);
+    assert(android_eventfd_read(vfd3, &one, 8) == 8);
+    assert(poll_once(0, NULL, NULL, NULL) == -3);
+    assert(remove_fd(looper, vfd4) == 0); // callback auto-unregistered
+    assert(remove_fd(looper, vfd2) == 1 && remove_fd(looper, vfd3) == 1);
+    assert(android_eventfd_close(vfd2) == 0);
+    assert(android_eventfd_close(vfd3) == 0);
+    assert(android_eventfd_close(vfd4) == 0);
+
+    close(a[0]); close(a[1]); close(b[0]); close(b[1]);
+    close(c[0]); close(c[1]);
+    pthread_t thread;
+    assert(pthread_create(&thread, NULL, thread_test, NULL) == 0);
+    assert(pthread_join(thread, NULL) == 0);
+    assert(for_thread() == looper);
+    puts("android_looper_compat_test: all assertions passed");
+}
