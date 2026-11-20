@@ -58,6 +58,41 @@ once-function. Re-entry through ANY ensure-site - for example an
 allocation inside an error or logging callback during init - deadlocks
 the claiming thread on its own claim.
 
+## The link2 helper and the re-entry source (2026-11-20 follow-up)
+
+link2 (0x26dce4c) is a thread-local-arena getter, not just a chain link:
+
+- It has its OWN once-guard at 0x677bf80 (same ldar/CAS/spin/publish
+  protocol). The first claim registers a TLS key into 0x677bf84 via
+  PLT 0x6162b10 (destructor 0x26ef28c) - a pthread_key_create shape -
+  then publishes. Error strings at these sites are internal tags
+  ("1d8ccea-PAL.Linux,141", "1d8ccea-Kernel,2228").
+- It then reads the TLS slot via PLT 0x6162b80 (pthread_getspecific
+  shape) and calls the once-function 0x26dcfdc ONLY when the slot is
+  empty (cbz x0 -> BL at 0x26dcf38). So the global-arena ensure runs on
+  a thread's first arena use.
+
+The four function-pointer init args passed to arena-reserve:
+
+- 0x26e588c and 0x26e5c94 each call link2(0) (BL to 0x26dce4c) near
+  entry, then operate on the returned arena (0x26e588c also has an
+  error-handler blr with tag "1d8ccea-Kernel,1041"; 0x26e5c94 iterates
+  a slot array with stride 0x1900). Both therefore re-enter the guard
+  chain on a thread with no TLS arena.
+- 0x26e5dcc dispatches on its fourth argument over the arena struct.
+- 0x26e6358 is a leaf comparator (no re-entry possible).
+
+This confirms the re-entry source for hypothesis (b): any allocation
+through these entry points ON THE THREAD CURRENTLY HOLDING THE GUARD
+re-enters the once-function (its TLS slot is by construction empty on
+first use), the CAS returns 1, and the thread spins forever. The
+reviewed init path itself (arena-reserve's success branch: leaf
+atomic-add, slot-loop stores) makes no such call, so the re-entry would
+have to come from the runtime-set error handler (blr x8 with tag
+"1d8ccea-Manager,23", global fn ptr at 0x67396d8, may be null) or a
+concurrent path; which handler is registered at runtime is external
+state, not static.
+
 ## Reconciling the external claim patterns (conditional)
 
 Within a single fresh process: if ctors 0-2 completed without touching
