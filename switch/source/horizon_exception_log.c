@@ -8,6 +8,10 @@
 
 #include "engine_exception_format.h"
 
+#ifndef MORROW_BUILD_VERSION
+#define MORROW_BUILD_VERSION "development"
+#endif
+
 // libnx normally provides a 1 KiB exception stack. A larger aligned stack
 // gives the diagnostic formatter and best-effort filesystem path more room.
 __attribute__((aligned(16))) u8 __nx_exception_stack[0x8000];
@@ -22,10 +26,12 @@ void __libnx_exception_handler(ThreadExceptionDump *context)
     if (!context || handling) return;
     handling = 1;
 
-    char message[256];
+    char message[384];
     if (!engine_exception_format(message, sizeof(message), context->error_desc,
                                  context->pc.x, context->cpu_gprs[8].x,
-                                 context->esr, context->far.x))
+                                 context->esr, context->far.x,
+                                 MORROW_BUILD_VERSION, armGetSystemTick(),
+                                 (u64)(uintptr_t)&__libnx_exception_handler))
         return;
 
     // Debugger-visible fallback even when FAT/SD services are unavailable.

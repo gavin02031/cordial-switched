@@ -8,6 +8,7 @@
 // Returns false on truncation or invalid arguments.
 int engine_exception_format(char *buffer, size_t capacity, uint32_t description,
                             uint64_t pc, uint64_t x8, uint32_t esr,
-                            uint64_t far);
+                            uint64_t far, const char *build_id,
+                            uint64_t system_tick, uint64_t handler_pc);
 
 #endif

@@ -554,3 +554,9 @@ jobs:
             switch/cordial-switched.nro
             switch/AOSP-NOTICE.txt
           if-no-files-found: error
+      - name: Upload JNI debug symbols for exception correlation
+        uses: actions/upload-artifact@v4
+        with:
+          name: morrow-switch-jni-debug-symbols
+          path: switch/cordial-switched.elf
+          if-no-files-found: error

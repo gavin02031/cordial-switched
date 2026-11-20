@@ -180,6 +180,16 @@ is the expected steady state.
   `constructor_watchdog_started=` and `constructor_crash_marker_created=`
   fields before drawing a conclusion. This is diagnostic only: it does not
   skip constructors, terminate the guest, or claim JNI_OnLoad completed.
+- `exception-last.txt` - best-effort userland fault context. Starting with
+  the next diagnostic build, the exception records its own build ID, system
+  tick and runtime address of `__libnx_exception_handler`. Match the build
+  ID and tick against the numbered link report before attributing a fault:
+  this file is only replaced on an exception and can belong to an earlier
+  run. The handler address is an ASLR anchor for the separate
+  `morrow-switch-jni-debug-symbols` CI artifact (`cordial-switched.elf`);
+  comparing the fault PC with the handler address can distinguish a host
+  code location from a guest code-mapping address. An exception may still
+  bypass userland entirely and produce no fresh file.
 - `system_property_read name=... result=empty` lines in the diagnostic log:
   the exact "what device is this?" questions the game asked, ready to drop
   into the presented-property table.
@@ -187,8 +197,8 @@ is the expected steady state.
 ## What to send back
 
 The whole `sdmc:/switch/cordial-switched/` folder (or the newest link-NN.txt,
-constructor-watchdog.txt, and any crash-NN.txt). No interpretation needed -
-the report is the data.
+constructor-watchdog.txt, exception-last.txt, and any crash-NN.txt). No
+interpretation needed - the report is the data.
 
 ## Honest expectations
 
