@@ -53,6 +53,13 @@ jobs:
             switch/source/engine_constructor_run.c \
             -o /tmp/morrow-constructor-run-test
           /tmp/morrow-constructor-run-test
+      - name: Test independently durable early constructor breadcrumbs
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_early_trace_test.c \
+            switch/source/engine_early_trace.c \
+            -o /tmp/morrow-early-trace-test
+          /tmp/morrow-early-trace-test
       - name: Test guest TPIDR bridge model and constructor run order
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

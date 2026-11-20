@@ -50,6 +50,7 @@
 #include "engine_entry_probe.h"
 #include "engine_constructor_plan.h"
 #include "engine_constructor_run.h"
+#include "engine_early_trace.h"
 #include "engine_execution_attempt.h"
 #include "engine_run_journal.h"
 #include "engine_memory_plan.h"
@@ -945,13 +946,23 @@ static bool constructor_begin(size_t index, uintptr_t target, void *context)
              (unsigned long long)target);
     // Durability is the attribution: a crash after this line leaves the
     // constructor's index as the report's last durable marker.
-    return fflush(ctx->log) == 0 && fsync(fileno(ctx->log)) == 0;
+    if (fflush(ctx->log) != 0 || fsync(fileno(ctx->log)) != 0) return false;
+    // Keep a second, short breadcrumb in the file the hardware tester can
+    // retrieve even when the latest numbered report is missing. Only the
+    // first eight constructors and powers of two are duplicated: fsyncing
+    // 2,505 extra lines would itself distort engine initialization.
+    if (index < 8 || (index && !(index & (index - 1))))
+        engine_early_trace_append(ENGINE_REPORT_DIR, "ctor_enter",
+                                  index, target, 0);
+    return true;
 }
 
 static bool constructor_completed(size_t index, uintptr_t target, void *context)
 {
     ConstructorRunContext *ctx = context;
-    (void)target;
+    if (index < 8 || (index && !(index & (index - 1))))
+        engine_early_trace_append(ENGINE_REPORT_DIR, "ctor_return",
+                                  index, target, 0);
     atomic_store_explicit(&ctx->active_index, SIZE_MAX, memory_order_release);
     log_line(ctx->log, "constructor_completed_%03zu=yes", index);
     return true;

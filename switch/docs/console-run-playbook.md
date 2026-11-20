@@ -214,6 +214,20 @@ is the expected steady state.
   can read them without taking a mutex that the stalled guest might own.
   An interrupted/optimized frame chain may be partial; a worker using a
   different creation route will not appear in these bridge counters.
+  The first run after accepting an ignored anonymous mmap file descriptor
+  (link-56) started the watchdog but died before its first three-second
+  sample. The next diagnostic also appends short, durable
+  trace_event=ctor_enter / ctor_return records for constructors 0-7 and
+  later powers of two, and arena_mmap_*, arena_protect_* or arena_unmap_*
+  events for the engine's observed 0x7b2000-byte anonymous allocator
+  arena. These records carry the build ID and three hexadecimal arguments
+  (a, b, c) and live in the same constructor-watchdog.txt file. The
+  mmap entry arguments are length/flags/fd; success is
+  base/length/kernel result. For mprotect, the entry arguments are
+  base/length/protection and the return arguments are return
+  code/errno/kernel result. For constructors, the arguments are
+  index/guest target/zero. A last entry without its corresponding return
+  narrows an early fatal but is not proof of where the fault occurred.
 - `exception-last.txt` - best-effort userland fault context. Starting with
   the next diagnostic build, the exception records its own build ID, system
   tick and runtime address of `__libnx_exception_handler`. Match the build

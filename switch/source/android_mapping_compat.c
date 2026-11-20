@@ -1,11 +1,13 @@
 #define _GNU_SOURCE
 #include "android_mapping_compat.h"
+#include "engine_early_trace.h"
 
 #include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 #ifdef __SWITCH__
 #include <malloc.h>
@@ -18,6 +20,19 @@ enum { PAGE_BYTES = 4096, PRIVATE_ANONYMOUS = 0x22 };
 #define FAILED_ADDRESS ((void *)(intptr_t)-1)
 #ifdef __SWITCH__
 static uint32_t last_kernel_result;
+static atomic_uintptr_t traced_arena;
+
+// The first allocator arena uses anonymous PROT_NONE mmap with fd=0.
+// A console run crashed before the watchdog could sample after the fd fix;
+// keep only this arena's transitions in an independently durable trace.
+// Restore errno so diagnostic I/O cannot change the guest-visible result.
+static void trace_arena_event(const char *event, uint64_t a, uint64_t b,
+                              uint64_t c)
+{
+    const int saved_errno = errno;
+    engine_early_trace_append("sdmc:/switch/cordial-switched", event, a, b, c);
+    errno = saved_errno;
+}
 
 typedef struct {
     unsigned char *storage;
@@ -226,24 +241,50 @@ static int copy_file_pages(Region *region, int fd, int64_t offset)
 static void *guest_mmap(void *hint, size_t length, int protection, int flags,
                         int fd, int64_t offset)
 {
+#ifdef __SWITCH__
+    const bool trace = !hint && length == 0x7b2000 && protection == 0 &&
+                       flags == PRIVATE_ANONYMOUS && fd == 0 && offset == 0;
+    if (trace)
+        trace_arena_event("arena_mmap_enter", length, (unsigned)flags,
+                          (unsigned)fd);
+#endif
     (void)hint; // A non-fixed hint may be ignored.
     size_t size = page_bytes(length);
     bool file = flags == 2; // MAP_PRIVATE without MAP_ANONYMOUS
-    if (!size || offset < 0 || offset % PAGE_BYTES || (!file && offset)) { errno = EINVAL; return FAILED_ADDRESS; }
+    if (!size || offset < 0 || offset % PAGE_BYTES || (!file && offset)) {
+        errno = EINVAL;
+#ifdef __SWITCH__
+        if (trace) trace_arena_event("arena_mmap_reject", errno, 0, 0);
+#endif
+        return FAILED_ADDRESS;
+    }
     // Linux/Android ignore fd when MAP_ANONYMOUS is set. In particular,
     // libroblox's early allocator passes fd=0 for its PROT_NONE arena;
     // rejecting that valid call makes its error logger recursively enter
     // the allocator initializer and spin on the still-pending guard.
     if ((!file && flags != PRIVATE_ANONYMOUS) || !allowed(protection)) {
         errno = ENOTSUP;
+#ifdef __SWITCH__
+        if (trace) trace_arena_event("arena_mmap_reject", errno, 0, 0);
+#endif
         return FAILED_ADDRESS;
     }
     retry_rollbacks();
     Region *region = new_region(size);
-    if (!region) return FAILED_ADDRESS;
+    if (!region) {
+#ifdef __SWITCH__
+        if (trace) trace_arena_event("arena_mmap_alloc_error", errno, 0, 0);
+#endif
+        return FAILED_ADDRESS;
+    }
     region->private_file = file;
     if ((file && copy_file_pages(region, fd, offset)) ||
         (protection != 3 && protect_pages(region->base, size, protection))) {
+#ifdef __SWITCH__
+        if (trace)
+            trace_arena_event("arena_mmap_protect_error", errno,
+                              last_kernel_result, (uintptr_t)region->base);
+#endif
         pthread_mutex_lock(&lock);
         discard_private(region);
         pthread_mutex_unlock(&lock);
@@ -255,12 +296,28 @@ static void *guest_mmap(void *hint, size_t length, int protection, int flags,
     regions = region;
     void *base = region->base;
     pthread_mutex_unlock(&lock);
+#ifdef __SWITCH__
+    if (trace) {
+        atomic_store_explicit(&traced_arena, (uintptr_t)base,
+                              memory_order_relaxed);
+        trace_arena_event("arena_mmap_ok", (uintptr_t)base, size,
+                          last_kernel_result);
+    }
+#endif
     return base;
 }
 
 static int guest_mprotect(void *base, size_t length, int protection)
 {
     size_t size = page_bytes(length);
+#ifdef __SWITCH__
+    const bool trace = (uintptr_t)base &&
+        (uintptr_t)base == atomic_load_explicit(&traced_arena,
+                                                memory_order_relaxed);
+    if (trace)
+        trace_arena_event("arena_protect_enter", (uintptr_t)base, size,
+                          (unsigned)protection);
+#endif
     uintptr_t start = (uintptr_t)base;
     if (!size || start % PAGE_BYTES) return reject(EINVAL);
     if (!allowed(protection)) return reject(ENOTSUP);
@@ -273,6 +330,12 @@ static int guest_mprotect(void *base, size_t length, int protection)
         else if (r->protection != protection) r->protection = -1;
     }
     pthread_mutex_unlock(&lock);
+#ifdef __SWITCH__
+    if (trace)
+        trace_arena_event("arena_protect_return",
+                          (uint32_t)result, result ? (unsigned)errno : 0,
+                          last_kernel_result);
+#endif
     return result;
 }
 
@@ -315,11 +378,26 @@ static int remove_range(Region **slot, void *base, size_t size)
 static int guest_munmap(void *base, size_t length)
 {
     size_t size = page_bytes(length);
+#ifdef __SWITCH__
+    const bool trace = (uintptr_t)base &&
+        (uintptr_t)base == atomic_load_explicit(&traced_arena,
+                                                memory_order_relaxed);
+    if (trace)
+        trace_arena_event("arena_unmap_enter", (uintptr_t)base, size, 0);
+#endif
     if (!size || (uintptr_t)base % PAGE_BYTES) return reject(EINVAL);
     pthread_mutex_lock(&lock);
     Region **slot = find_range(base, size);
     int result = slot ? remove_range(slot, base, size) : reject(EINVAL);
     pthread_mutex_unlock(&lock);
+#ifdef __SWITCH__
+    if (trace) {
+        trace_arena_event("arena_unmap_return", (uint32_t)result,
+                          result ? (unsigned)errno : 0, last_kernel_result);
+        if (!result)
+            atomic_store_explicit(&traced_arena, 0, memory_order_relaxed);
+    }
+#endif
     return result;
 }
 
