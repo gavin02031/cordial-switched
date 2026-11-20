@@ -167,9 +167,14 @@ is the expected steady state.
   `constructor_begin_003` with the UI black and PLUS unresponsive. The next
   build creates a `watchdog_started=yes` record before entering guest code;
   if a constructor stays active for approximately 3, 10, 30, or another
-  30-second interval, a separate libnx thread records its index and elapsed
-  time. A heartbeat proves the host process and monitoring thread were still
-  running; it does not identify why the constructor stopped returning. No
+  30-second interval, a separate libnx thread records its index, elapsed
+  time and `guest_call_active` flag. A value of 1 means the guest call was
+  entered and has not yet returned; 0 means the main thread is before the
+  call or has returned and may be stalled in report synchronisation. The
+  existing `constructor_begin_NNN` marker alone cannot distinguish those
+  cases because it is written before a final fsync. A heartbeat proves the
+  host process and monitoring thread were still running; it does not by
+  itself identify why the call stopped returning. No
   heartbeat can mean a fatal, watcher startup failure, SD write failure or a
   blocked monitor, so compare the numbered report's
   `constructor_watchdog_started=` and `constructor_crash_marker_created=`

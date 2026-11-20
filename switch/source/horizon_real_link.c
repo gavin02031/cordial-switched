@@ -665,6 +665,7 @@ typedef struct {
     FILE *log;
     char report_path[112];
     atomic_size_t active_index;
+    atomic_bool guest_call_active;
     atomic_bool stop_watchdog;
 } ConstructorRunContext;
 
@@ -687,9 +688,12 @@ static void constructor_watchdog_record(const ConstructorRunContext *ctx,
                    (long)time(NULL), (unsigned long long)armGetSystemTick(),
                    ctx->report_path)
         : snprintf(line, sizeof(line),
-                   "%ld.%llu link_report=%.95s active_constructor=%zu approx_seconds=%u\n",
+                   "%ld.%llu link_report=%.95s active_constructor=%zu guest_call_active=%d approx_seconds=%u\n",
                    (long)time(NULL), (unsigned long long)armGetSystemTick(),
-                   ctx->report_path, index, elapsed);
+                   ctx->report_path, index,
+                   atomic_load_explicit(&ctx->guest_call_active,
+                                        memory_order_acquire) ? 1 : 0,
+                   elapsed);
     if (n > 0 && (size_t)n < sizeof(line)) {
         size_t written = 0;
         while (written < (size_t)n) {
@@ -743,6 +747,7 @@ static bool constructor_run_gate(void *context)
 static bool constructor_begin(size_t index, uintptr_t target, void *context)
 {
     ConstructorRunContext *ctx = context;
+    atomic_store_explicit(&ctx->guest_call_active, false, memory_order_release);
     atomic_store_explicit(&ctx->active_index, index, memory_order_release);
     log_line(ctx->log, "constructor_begin_%03zu=0x%016llX", index,
              (unsigned long long)target);
@@ -762,8 +767,12 @@ static bool constructor_completed(size_t index, uintptr_t target, void *context)
 
 static void constructor_call(uintptr_t target, void *context)
 {
-    (void)context;
+    ConstructorRunContext *ctx = context;
+    // The begin marker is written before its final fsync. If that sync
+    // stalls, the watchdog must not misreport it as a hung guest function.
+    atomic_store_explicit(&ctx->guest_call_active, true, memory_order_release);
     engine_execution_call_constructor(target);
+    atomic_store_explicit(&ctx->guest_call_active, false, memory_order_release);
 }
 
 void horizon_real_link_run(RealLinkResult *result, unsigned action)
@@ -1621,6 +1630,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             snprintf(ctx.report_path, sizeof(ctx.report_path),
                                      "%s", result->log_path);
                             atomic_init(&ctx.active_index, SIZE_MAX);
+                            atomic_init(&ctx.guest_call_active, false);
                             atomic_init(&ctx.stop_watchdog, false);
                             Thread watchdog = {0};
                             const Result watchdog_create = threadCreate(
