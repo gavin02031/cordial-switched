@@ -147,6 +147,18 @@ direct BRANCH from them reaches the region - the link is a CALL); its
 containing function. The remaining link - who calls through the table
 pointer - is the same open question as for the getpid wrapper stub.
 
+Table-caller investigation (2026-11-20): three code sites reference
+table slots: 0x5a7a01c (slot 0x66226b0), 0x5a79f2c (slot 0x66227a0,
+tagged |4 and stored into a stack struct passed with the rodata string
+"Replicator"), and 0x5a7a374 (slot 0x66227b8, passed with fn 0x5a7a784
+to a bind helper). All three build registration/delegate objects from
+the slot ADDRESSES; the actual calls happen later through runtime
+dispatch on those objects and are statically unbounded. INFERRED: this
+matches a reflection/member-registration pattern (the "Replicator"
+string is a class name in rodata); the registration is real data in the
+binary, but whether and when the registered delegates fire is runtime
+behavior.
+
 Post-protection constructor path (static): the ctor-3 chain function at
 0x26e63a8 (arena reserve) mmap's 0x7b2000 bytes PROT_NONE/ANON
 (BL 0x61633f0 at 0x26e640c), then mprotects it PROT_READ|PROT_WRITE
@@ -155,9 +167,17 @@ through the error-string path (blr x8 at 0x26e6464). On success it calls
 0x2747d70(size, struct) at 0x26e643c, stores the arena base into the
 owner struct, then runs a slot-initialization loop (stride 0x7b180)
 whose first writes into the arena memory are the stores at
-0x26e649c-0x26e64a0 (str xzr,[x27,#0x118]; stp xzr,x8,[x27]). These
-stores are statically the first guest dereferences of the arena after the
-permission change. This static picture is consistent with - but does not
+0x26e649c-0x26e64a0 (str xzr,[x27,#0x118]; stp xzr,x8,[x27]). The
+intervening call was checked: 0x2747d70 is a leaf atomic fetch-add
+helper (LSE ldadd with an ldxr/stxr fallback, selected by a global
+feature byte at 0x677ddb8); it writes only [x19] and makes no calls,
+and the arena base exists only in register x25 until it is stored at
+0x26e6478 - after the call. So no code between the successful mprotect
+and the slot loop can access the arena through passed or global state,
+and the 0x26e649c-0x26e64a0 stores are the first guest dereferences of
+the arena on this reviewed success path. Scope limit: this covers the
+fall-through path of 0x26e63a8 only, not other threads that might learn
+the base concurrently. This static picture is consistent with - but does not
 confirm - the external link-58 claim pattern (mprotect success, then
 silence); the actual first fault site remains hardware-evidence
 territory and the link-58 file itself is not in our possession.
