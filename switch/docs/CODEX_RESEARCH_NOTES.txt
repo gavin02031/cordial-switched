@@ -234,3 +234,44 @@ link-report creation, can be unambiguously separated by the collected
 breadcrumb records and correlated with any numbered report.
 UNKNOWNS: No new hardware crash log was inspected; this is an observable
 forensics limitation, not evidence that guest execution failed.
+
+
+2026-11-19 21:01 America/Chicago — [CRITICAL][OBSERVED SOURCE BUG / HARDWARE CAUSALITY INFERRED]
+L3-only code-memory probe passes an address-space slice as a reservation object.
+EVIDENCE: Branch e53143e6bb20665ddeae345b1514ddaf5b190f5e,
+switch/source/horizon_real_link.c:probe_guest_data_mapping():
+  void *span = virtmemFindCodeMemory(4096, 4096);
+  void *rsv = span ? virtmemAddReservation(span, 4096) : NULL;
+The map-failed and rollback-succeeded cleanup branches both call
+virtmemRemoveReservation(span), not virtmemRemoveReservation(rsv).
+The libnx API explicitly returns a *reservation object* from Add and expects
+that object at Remove; span is the virtual address being reserved. libnx's
+virtmemRemoveReservation dereferences rv->next / rv->prev and frees rv, so
+passing span can access unmapped/mapped guest-code memory as an unrelated
+VirtmemReservation and fault or corrupt the reservation list. This probe is
+on the default L3 diagnostic path (action == 0), without any guest execution.
+In contrast, switch/source/horizon_code_memory.c and
+switch/source/horizon_stack_guard.inc pass their stored reservation objects.
+Primary sources:
+  https://switchbrew.github.io/libnx/virtmem_8h.html
+  https://raw.githubusercontent.com/switchbrew/libnx/master/nx/source/kernel/virtmem.c
+BLOCKER: A successful find+reserve followed by either map failure or
+successful rollback calls Remove with the wrong pointer. The application
+can crash even when the RX probe has correctly failed or fully rolled back.
+PROPOSED FOR FLINT: Change BOTH probe cleanup calls to
+virtmemRemoveReservation(rsv), keeping the virtmem mutex locked as already
+implemented. Preserve the existing retention of both the source page and
+reservation when rollback fails. Audit the remaining Add/Remove pairs; they
+appear correct in the reviewed source. Keep the code-memory probe diagnostic
+and non-executing rather than bypassing it to hide the crash.
+SUCCESS: A host test with mock libnx reservations makes the map-failure and
+successful-map/unmap paths each remove the exact object returned by Add,
+never the address slice, while rollback-failure removes neither. Build all
+five Horizon preview jobs, install that artifact, run only L3 on the Loader
+without ZL/ZR, then compare new diag-progress.txt and link-NN.txt. Check
+guest_code_mapping_map/rx/query/rollback and the final real_link_returned
+breadcrumb. A clean L3 report would confirm this crash path is cleared,
+not that any guest constructor or Roblox frame executed.
+UNKNOWNS: No post-change console report is available; this definite API
+misuse is a strong crash candidate but does not establish that it caused
+the user's particular "software closed" fatal without an L3 breadcrumb.
