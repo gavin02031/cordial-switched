@@ -589,7 +589,7 @@ static void probe_guest_data_mapping(FILE *log)
     log_line(log, "guest_code_mapping_map=0x%08x", (unsigned)map_rc);
     if (R_FAILED(map_rc)) {
         virtmemLock();
-        virtmemRemoveReservation(span);
+        virtmemRemoveReservation(rsv);
         virtmemUnlock();
         free(code_src);
         return;
@@ -628,7 +628,7 @@ static void probe_guest_data_mapping(FILE *log)
     log_line(log, "guest_code_mapping_rollback=0x%08x", (unsigned)unmap_rc);
     if (R_SUCCEEDED(unmap_rc)) {
         virtmemLock();
-        virtmemRemoveReservation(span);
+        virtmemRemoveReservation(rsv);
         virtmemUnlock();
         // The unmap should have returned the source to heap RW; verify
         // before handing the page back to the allocator.
