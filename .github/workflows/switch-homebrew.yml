@@ -26,6 +26,12 @@ jobs:
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/ui_navigation_test.c -o /tmp/morrow-ui-navigation-test
           /tmp/morrow-ui-navigation-test
+      - name: Test bounded and read-only SD log viewer
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/ui_logs_test.c switch/source/ui_logs.c \
+            -o /tmp/morrow-ui-logs-test
+          /tmp/morrow-ui-logs-test
       - name: Test read-only ARM64 ELF inspector
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

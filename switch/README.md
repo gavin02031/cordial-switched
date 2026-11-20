@@ -3,13 +3,17 @@
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
 Cordial's existing Linux binaries. The current v0.99.3 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
-SDL2_ttf, Home and Library pages, a live UI frame-rate monitor and a development
-roadmap, an ARM64 ELF inspection screen, and a read-only Loader readiness page.
+SDL2_ttf. Its lavender glass-style UI now includes **Home, Browse, Friends,
+Avatar, Settings, Engine, Link and Logs**. Settings has Account, Controls,
+Graphics (live UI FPS and animation toggle), Audio, Network, System and
+Diagnostics tabs. The Engine and Link pages retain ARM64 inspection and
+on-device test controls. Logs reads the latest bounded tail of diagnostic
+`.txt` files from the SD card without changing them.
 It reads handheld controls and
-touchscreen input. The Morrow UI prototype now has a dedicated Home and
-Library page, with a native logo, featured engine tile, honest readiness
-status and touch/controller navigation. The Library **does not yet fetch
-experiences or launch games**: those require real Roblox authentication and
+touchscreen input. Home cards open the engine inspector, linker tests, settings
+and logs. Browse shows explicitly labelled sample imagery, Friends is empty,
+and Avatar displays an offline mannequin. None invent a live Roblox session.
+Browse **does not yet fetch experiences or launch games**: those require real Roblox authentication and
 engine startup. Development `.nro` packages still use the Cordial Switched
 name until a playable Morrow v1.0 is proven. **It does not
 currently run Roblox, connect to Roblox servers or sign in to any Roblox
@@ -18,15 +22,15 @@ account.**
 The renderer requests GPU acceleration and VSync, then falls back to an
 accelerated renderer without VSync or a software renderer if necessary. Static
 backgrounds and text are cached instead of rasterised every frame. The
-performance page reports the actual renderer, the measured UI frame rate and
+Settings > Graphics reports the actual renderer, the measured UI frame rate and
 average frame time; 60 FPS is a **target**, not a measured hardware result or
 a promise about eventual game performance. The current layout targets the
 Switch Lite's 1280x720 handheld display.
 
 ### Which UI is ours?
 
-Morrow's launcher is native Horizon software. Its Home, Library, future
-account navigation, settings and controller-focused overlays can have a
+Morrow's launcher is native Horizon software. Its Home, Browse, Friends,
+Avatar, Settings and controller-focused overlays can have a
 completely original design; they do not need to imitate the Android app
 shell. Once supported, gameplay itself would still run through Roblox's
 Android engine, with compatibility services behind the scenes. An experience
@@ -572,13 +576,19 @@ Copy `switch/cordial-switched.nro` to `sdmc:/switch/cordial-switched.nro`,
 launch it from the Homebrew Menu on a Switch with working homebrew support,
 then check:
 
-1. The Overview page renders correctly, including fonts, colours and cards.
-2. **A/B**, **left/right** or **L/R** switch Home, Library, Performance,
-   Roadmap, Engine, and Loader.
-3. Tapping navigation items switches pages; on Performance, **X** or the toggle
-   turns the ambient movement on and off.
-4. Check the Performance page after a few seconds. Report the renderer type,
+1. The Home page renders correctly, including fonts, pastel colours and cards.
+2. **L/R** cycle the eight pages; **D-pad up/down** move through pages except
+   in Settings (categories) and Logs (file selection). **B** returns Home or
+   Settings from a diagnostic page. **A** opens Browse from Home.
+3. Tapping the left rail or a Home card switches pages. Browse tabs, Settings
+   categories, Diagnostics shortcuts and individual log filenames are touchable.
+   On Settings > Graphics, **X** or the toggle changes ambient animation.
+4. Check Settings > Graphics after a few seconds. Report the renderer type,
    average UI frame rate and any stutters; do not treat it as Roblox FPS.
+   Settings > Diagnostics opens Link or Logs; the log viewer displays recent
+   `.txt` report files in read-only form with a 32 KiB input limit and a
+   48-line tail. On Logs, D-pad up/down selects files, left/right scrolls the
+   tail, and **X/Y** rescans the report directory. It does not launch Roblox.
 5. On the Engine tab, press **X** (or tap **X: TEST JIT**) to try the optional
    isolated executable-memory check described below. It does **not** require
    a Roblox library, and it does **not** launch Roblox.

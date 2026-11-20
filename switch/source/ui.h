@@ -10,18 +10,20 @@
 #include "jit_probe.h"
 #include "horizon_loader_smoke.h"
 #include "horizon_real_link.h"
+#include "ui_logs.h"
 
 #define UI_WIDTH 1280
 #define UI_HEIGHT 720
 
 typedef enum {
-    UI_OVERVIEW = 0,
-    UI_LIBRARY,
-    UI_ACCOUNT,
-    UI_PERFORMANCE,
-    UI_ROADMAP,
+    UI_HOME = 0,
+    UI_BROWSE,
+    UI_FRIENDS,
+    UI_AVATAR,
+    UI_SETTINGS,
     UI_ENGINE,
     UI_LOADER,
+    UI_LOGS,
     UI_PAGE_COUNT
 } UiPage;
 
@@ -29,6 +31,10 @@ typedef struct {
     UiPage page;
     bool animations;
     unsigned loader_view; // Profile, required libraries, imported symbols.
+    unsigned browse_tab;
+    unsigned settings_tab;
+    unsigned log_scroll;
+    MorrowLogs logs;
     bool report_attempted;
     bool report_saved;
     char report_path[112];

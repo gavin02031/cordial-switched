@@ -12,7 +12,7 @@
 #include "ui_navigation.h"
 
 enum { FONT_SMALL, FONT_BODY, FONT_MEDIUM, FONT_TITLE, FONT_HERO, FONT_TOTAL };
-enum { MAX_LABELS = 192 };
+enum { MAX_LABELS = 320 };
 
 typedef struct {
     char label[112];
@@ -23,7 +23,7 @@ typedef struct {
 } Label;
 
 typedef struct {
-    char label[64];
+    char label[128];
     SDL_Texture *texture;
     int width;
     int height;
@@ -36,16 +36,17 @@ static unsigned label_count;
 static SDL_Texture *background;
 static DynamicLabel fps_label;
 static DynamicLabel time_label;
+static DynamicLabel log_labels[13];
 static bool pl_started;
 static bool ttf_started;
 
-static const SDL_Color WHITE = {243, 246, 255, 255};
-static const SDL_Color MUTED = {153, 164, 190, 255};
-static const SDL_Color LAVENDER = {185, 165, 255, 255};
-static const SDL_Color MINT = {126, 234, 194, 255};
-static const SDL_Color PINK = {255, 161, 196, 255};
-static const SDL_Color PANEL = {24, 29, 51, 246};
-static const SDL_Color PANEL_LIGHT = {32, 38, 65, 250};
+static const SDL_Color WHITE = {255, 255, 255, 255};
+static const SDL_Color MUTED = {214, 213, 242, 255};
+static const SDL_Color LAVENDER = {230, 188, 255, 255};
+static const SDL_Color MINT = {157, 255, 199, 255};
+static const SDL_Color PINK = {255, 189, 226, 255};
+static const SDL_Color PANEL = {69, 62, 129, 211};
+static const SDL_Color PANEL_LIGHT = {107, 91, 172, 217};
 
 static void fill(SDL_Renderer *renderer, int x, int y, int w, int h, SDL_Color colour)
 {
@@ -166,9 +167,10 @@ static void build_background(SDL_Renderer *renderer)
             const float blue = fmaxf(0.0f, 1.0f -
                 ((nx - 0.46f) * (nx - 0.46f) * 4.0f +
                  (ny - 1.08f) * (ny - 1.08f) * 4.5f));
-            const Uint8 r = (Uint8)(10 + 17 * ny + 27 * violet + 7 * blue);
-            const Uint8 g = (Uint8)(13 + 11 * ny + 9 * violet + 18 * blue);
-            const Uint8 b = (Uint8)(29 + 21 * ny + 29 * violet + 31 * blue);
+            const float wave = 0.5f + 0.5f * sinf(nx * 11.0f - ny * 7.0f);
+            const Uint8 r = (Uint8)(71 + 47 * ny + 54 * violet + 12 * wave);
+            const Uint8 g = (Uint8)(73 + 24 * ny + 31 * violet + 16 * blue);
+            const Uint8 b = (Uint8)(145 + 18 * ny + 25 * violet + 33 * blue);
             pixels[y * W + x] = SDL_MapRGBA(format, r, g, b, 255);
         }
     }
@@ -222,6 +224,10 @@ void ui_shutdown(void)
     label_count = 0;
     SDL_DestroyTexture(fps_label.texture);
     SDL_DestroyTexture(time_label.texture);
+    for (unsigned i = 0; i < sizeof(log_labels) / sizeof(log_labels[0]); ++i) {
+        SDL_DestroyTexture(log_labels[i].texture);
+        memset(&log_labels[i], 0, sizeof(log_labels[i]));
+    }
     memset(&fps_label, 0, sizeof(fps_label));
     memset(&time_label, 0, sizeof(time_label));
     SDL_DestroyTexture(background);
@@ -251,248 +257,279 @@ static void badge(SDL_Renderer *renderer, int x, int y, int w, const char *text,
 
 static void sidebar(SDL_Renderer *renderer, const UiState *state)
 {
-    panel(renderer, 28, 27, 246, 665, (SDL_Color){17, 23, 44, 246});
-    rounded(renderer, 48, 49, 54, 54, 14, LAVENDER);
-    // Morrow's logo is drawn natively. No Roblox or third-party icon assets
-    // need to ship in the homebrew binary.
-    label(renderer, 59, 58, FONT_TITLE, (SDL_Color){22, 16, 48, 255}, "M");
-    label(renderer, 111, 52, FONT_MEDIUM, WHITE, "MORROW");
-    label(renderer, 112, 81, FONT_SMALL, LAVENDER, "SWITCH NATIVE");
+    rounded(renderer, 15, 16, 124, 673, 24, (SDL_Color){65, 60, 119, 199});
+    rounded(renderer, 25, 35, 105, 80, 20, (SDL_Color){100, 89, 166, 166});
+    rounded(renderer, 57, 49, 39, 39, 9, WHITE);
+    rounded(renderer, 68, 60, 17, 17, 3, (SDL_Color){87, 78, 156, 255});
+    label(renderer, 43, 91, FONT_SMALL, WHITE, "Morrow");
 
-    label(renderer, 49, 155, FONT_SMALL, MUTED, "YOUR SPACE");
-    const char *items[] = {"Home", "Library", "Accounts", "Performance",
-                           "Roadmap", "Engine", "Loader"};
-    _Static_assert(sizeof(items) / sizeof(items[0]) == UI_PAGE_COUNT,
-                   "Every native page needs a sidebar entry");
+    const char *names[] = {"Home", "Browse", "Friends", "Avatar",
+                           "Settings", "Engine", "Link", "Logs"};
+    const char *glyphs[] = {"H", "?", "+", "@", "*", "E", "L", "#"};
+    _Static_assert(sizeof(names) / sizeof(names[0]) == UI_PAGE_COUNT,
+                   "A rail row is needed for every page");
     for (unsigned i = 0; i < UI_PAGE_COUNT; i++) {
         const int y = MORROW_RAIL_TOP + (int)i * MORROW_RAIL_STEP;
         const bool active = state->page == (UiPage)i;
         if (active) {
-            rounded(renderer, 44, y, 214, MORROW_RAIL_ROW_HEIGHT, 13,
-                    (SDL_Color){59, 49, 91, 255});
-            rounded(renderer, 45, y + 8, 4, 29, 2, LAVENDER);
+            rounded(renderer, 21, y, 113, MORROW_RAIL_ROW_HEIGHT, 15,
+                    (SDL_Color){244, 160, 240, 109});
+            rounded(renderer, 25, y + 3, 104, MORROW_RAIL_ROW_HEIGHT - 6, 13,
+                    (SDL_Color){162, 102, 221, 224});
         }
-        rounded(renderer, 63, y + 15, 15, 15, 5,
-                active ? LAVENDER : (SDL_Color){83, 94, 123, 255});
-        label(renderer, 91, y + 7, FONT_BODY, active ? WHITE : MUTED, items[i]);
+        rounded(renderer, 33, y + 7, 37, 36, 11,
+                active ? (SDL_Color){248, 191, 251, 255}
+                       : (SDL_Color){147, 140, 199, 155});
+        label(renderer, 44, y + 12, FONT_SMALL,
+              active ? (SDL_Color){72, 55, 135, 255} : WHITE, glyphs[i]);
+        label(renderer, 76, y + 15, FONT_SMALL, WHITE, names[i]);
     }
-
-    fill(renderer, 49, 571, 200, 1, (SDL_Color){144, 150, 204, 38});
-    label(renderer, 49, 593, FONT_SMALL, MUTED, "ROBLOX STATUS");
-    rounded(renderer, 48, 625, 180, 34, 10, (SDL_Color){66, 43, 63, 235});
-    rounded(renderer, 59, 636, 9, 9, 4, PINK);
-    label(renderer, 77, 631, FONT_SMALL, PINK, "NOT PLAYABLE");
+    label(renderer, 35, 636, FONT_SMALL, MINT, "OFFLINE");
+    label(renderer, 35, 659, FONT_SMALL, MUTED, "PREVIEW");
 }
 
 static void topbar(SDL_Renderer *renderer, const char *title, const char *subtitle)
 {
-    label(renderer, 310, 42, FONT_TITLE, WHITE, title);
-    label(renderer, 312, 92, FONT_SMALL, MUTED, subtitle);
-    badge(renderer, 1042, 47, 184, "MORROW  /  PREVIEW", (SDL_Color){54, 46, 83, 220},
-          LAVENDER);
+    label(renderer, 180, 32, FONT_TITLE, WHITE, title);
+    label(renderer, 183, 79, FONT_SMALL, MUTED, subtitle);
+    badge(renderer, 1062, 40, 165, "OFFLINE PREVIEW",
+          (SDL_Color){112, 81, 166, 210}, WHITE);
 }
 
-static void stat_card(SDL_Renderer *renderer, int x, const char *name,
-                      const char *value, SDL_Color accent)
+static void scenic_tile(SDL_Renderer *renderer, int x, int y, int w, int h, unsigned theme)
 {
-    panel(renderer, x, 475, 291, 158, PANEL);
-    rounded(renderer, x + 21, 496, 31, 5, 2, accent);
-    label(renderer, x + 22, 515, FONT_SMALL, MUTED, name);
-    label(renderer, x + 22, 546, FONT_TITLE, WHITE, value);
-    label(renderer, x + 22, 601, FONT_SMALL, accent, "Horizon homebrew");
+    // Original vector decoration: no game thumbnails or third-party assets.
+    const SDL_Color sky[] = {{123, 180, 239, 255}, {231, 151, 202, 255},
+                             {139, 116, 220, 255}, {132, 207, 186, 255}};
+    const SDL_Color land[] = {{106, 191, 148, 255}, {176, 115, 191, 255},
+                              {121, 90, 175, 255}, {97, 160, 177, 255}};
+    theme %= 4;
+    rounded(renderer, x, y, w, h, 15, sky[theme]);
+    rounded(renderer, x + w * 3 / 4, y + 13, 30, 30, 15,
+            (SDL_Color){255, 240, 194, 255});
+    rounded(renderer, x + 1, y + h * 2 / 3, w - 2, h / 3 - 1, 12, land[theme]);
+    rounded(renderer, x + w / 3, y + h / 3, w / 3, h / 2, 9,
+            (SDL_Color){241, 224, 235, 255});
+    rounded(renderer, x + w / 3 + 14, y + h / 3 + 14, 28, 35, 5,
+            (SDL_Color){146, 126, 194, 255});
+    rounded(renderer, x + w / 2 + 16, y + h / 3 + 14, 27, 35, 5,
+            (SDL_Color){146, 126, 194, 255});
+}
+
+static void action_card(SDL_Renderer *renderer, int x, const char *title,
+                        const char *detail, unsigned colour)
+{
+    panel(renderer, x, 330, 252, 180, PANEL);
+    scenic_tile(renderer, x + 9, 339, 234, 96, colour);
+    label(renderer, x + 15, 446, FONT_BODY, WHITE, title);
+    label(renderer, x + 16, 480, FONT_SMALL, MUTED, detail);
 }
 
 static void overview(SDL_Renderer *renderer, const UiState *state, double seconds)
 {
-    topbar(renderer, "Your next universe.", "A Switch-native home for your future Roblox library");
-    panel(renderer, 306, 142, 921, 304, PANEL);
+    (void)seconds;
+    topbar(renderer, "Morrow", "Roblox on Switch  /  Native Horizon preview");
+    label(renderer, 182, 131, FONT_MEDIUM, WHITE, "Friends");
+    badge(renderer, 285, 130, 160, "0 ONLINE", (SDL_Color){110, 90, 172, 215}, MINT);
+    for (int i = 0; i < 8; i++) {
+        const int x = 192 + i * 128;
+        rounded(renderer, x, 180, 70, 70, 35, (SDL_Color){234, 178, 249, 213});
+        rounded(renderer, x + 5, 185, 60, 60, 30, (SDL_Color){120, 105, 184, 255});
+        rounded(renderer, x + 24, 195, 22, 22, 11, LAVENDER);
+        rounded(renderer, x + 14, 221, 42, 19, 9, LAVENDER);
+    }
+    label(renderer, 182, 272, FONT_SMALL, MUTED,
+          "Friends and live presence appear once a verified session is available.");
+    label(renderer, 182, 302, FONT_MEDIUM, WHITE, "Continue building");
+    action_card(renderer, 180, "Engine inspector", "Inspect libroblox.so", 0);
+    action_card(renderer, 450, "Linking tests", "Real ELF diagnostics", 2);
+    action_card(renderer, 720, "Settings", "Controls and graphics", 1);
+    action_card(renderer, 990, "Log viewer", "Read latest SD reports", 3);
 
-    badge(renderer, 337, 170, 169, "BUILT FOR SWITCH LITE",
-          (SDL_Color){59, 52, 100, 255}, LAVENDER);
-    label(renderer, 337, 222, FONT_HERO, WHITE, "Make space for play.");
-    label(renderer, 340, 299, FONT_BODY, MUTED, "Your own library, controls and launcher on Horizon OS.");
-    label(renderer, 340, 331, FONT_BODY, PINK, "Roblox gameplay is still under development.");
-
-    rounded(renderer, 336, 379, 219, 43, 12, (SDL_Color){120, 105, 206, 255});
-    label(renderer, 353, 387, FONT_BODY, WHITE, "Explore library  >");
-
-    // A lightweight abstract console motif: no copyrighted Roblox imagery.
-    const int motion = state->animations ? (int)(5.0 * sin(seconds * 1.25)) : 0;
-    rounded(renderer, 991, 195 + motion, 155, 157, 24, (SDL_Color){59, 54, 111, 255});
-    rounded(renderer, 1010, 214 + motion, 117, 119, 19, (SDL_Color){178, 162, 255, 255});
-    rounded(renderer, 1031, 232 + motion, 76, 84, 11, (SDL_Color){76, 65, 134, 255});
-    rounded(renderer, 1049, 252 + motion, 39, 43, 9, MINT);
-    rounded(renderer, 947, 294 - motion, 54, 54, 12, (SDL_Color){244, 168, 201, 255});
-    rounded(renderer, 1136, 220 - motion, 28, 28, 8, MINT);
-
-    stat_card(renderer, 306, "HANDHELD DISPLAY", "1280 x 720", LAVENDER);
-    stat_card(renderer, 619, "NATIVE UI TARGET", "60 FPS", MINT);
-    stat_card(renderer, 932, "ROBLOX GAMEPLAY", "NOT READY", PINK);
+    panel(renderer, 180, 531, 1062, 100, PANEL);
+    rounded(renderer, 203, 557, 15, 15, 7,
+            state->engine.status == ENGINE_PROBE_INSPECTED ? MINT : PINK);
+    label(renderer, 235, 544, FONT_BODY, WHITE,
+          state->engine.status == ENGINE_PROBE_INSPECTED
+              ? "ARM64 engine file inspected" : "Awaiting an ARM64 engine file");
+    label(renderer, 235, 580, FONT_SMALL, MUTED,
+          "Engine startup and Roblox gameplay are not yet verified on this Switch.");
 }
 
 static void library(SDL_Renderer *renderer, const UiState *state)
 {
-    topbar(renderer, "Your library.", "A custom Morrow home. Roblox games are not available yet.");
-    panel(renderer, 306, 142, 921, 304, PANEL);
-    label(renderer, 337, 170, FONT_SMALL, LAVENDER, "FEATURED PLATFORM");
-
-    // A console-native collection layout, separate from the Android app
-    // shell. The only tile is a diagnostic platform entry, never a fake game.
-    rounded(renderer, 336, 207, 240, 213, 19, (SDL_Color){51, 51, 92, 255});
-    rounded(renderer, 356, 226, 200, 113, 15, (SDL_Color){103, 85, 173, 255});
-    rounded(renderer, 420, 246, 67, 72, 18, LAVENDER);
-    rounded(renderer, 440, 264, 27, 34, 8, (SDL_Color){76, 62, 127, 255});
-    label(renderer, 357, 355, FONT_BODY, WHITE, "Roblox / Android");
-    label(renderer, 357, 388, FONT_SMALL, PINK, "ENGINE NOT STARTED");
-
-    label(renderer, 610, 216, FONT_MEDIUM, WHITE, "Your worlds will live here.");
-    label(renderer, 612, 263, FONT_BODY, MUTED, "Morrow will use its own browsing and library UI.");
-    label(renderer, 612, 298, FONT_BODY, MUTED, "Game rendering will still come from Roblox's engine.");
-    badge(renderer, 611, 361, 247, "COMING AFTER ENGINE BOOT",
-          (SDL_Color){66, 43, 63, 235}, PINK);
-
-    panel(renderer, 306, 473, 445, 161, PANEL_LIGHT);
-    label(renderer, 333, 495, FONT_SMALL, LAVENDER, "ENGINE FILE");
-    label(renderer, 334, 529, FONT_MEDIUM, WHITE,
-          state->engine.status == ENGINE_PROBE_INSPECTED ? "File detected" : "Not found on SD");
-    label(renderer, 334, 580, FONT_SMALL, MUTED,
-          "An inspected library is not a running game.");
-
-    panel(renderer, 768, 473, 459, 161, PANEL_LIGHT);
-    label(renderer, 793, 495, FONT_SMALL, MINT, "YOUR NEXT TEST");
-    label(renderer, 794, 529, FONT_MEDIUM, WHITE, "Loader  /  L3");
-    label(renderer, 794, 580, FONT_SMALL, MUTED,
-          "Save the engine readiness report to your SD card.");
+    topbar(renderer, "Browse", "Discover games when the Roblox runtime and account service work");
+    const char *tabs[] = {"Discover", "Experiences", "People", "Groups", "Creations"};
+    for (unsigned i = 0; i < 5; i++) {
+        const int x = 181 + (int)i * 200;
+        rounded(renderer, x, 122, 189, 45, 19,
+                state->browse_tab == i ? (SDL_Color){226, 153, 244, 225} : PANEL);
+        label(renderer, x + 22, 133, FONT_SMALL, WHITE, tabs[i]);
+    }
+    const char *categories[] = {"Trending", "Popular", "Top Rated", "New", "Up & Coming"};
+    for (int i = 0; i < 5; i++) {
+        const int x = 181 + i * 200;
+        panel(renderer, x, 189, 187, 88, PANEL);
+        label(renderer, x + 24, 218, FONT_BODY, WHITE, categories[i]);
+    }
+    label(renderer, 182, 299, FONT_MEDIUM, WHITE, "Preview collections");
+    label(renderer, 182, 334, FONT_SMALL, MUTED,
+          "Artwork below is a local UI placeholder, not a live Roblox catalogue.");
+    for (int i = 0; i < 4; ++i) {
+        const int x = 182 + i * 268;
+        panel(renderer, x, 371, 248, 175, PANEL);
+        scenic_tile(renderer, x + 9, 380, 230, 109, (unsigned)i);
+        label(renderer, x + 16, 502, FONT_BODY, WHITE, "Coming soon");
+    }
+    panel(renderer, 181, 567, 1052, 67, PANEL);
+    label(renderer, 201, 585, FONT_SMALL, PINK,
+          "Browsing is offline. We will show real experiences only after engine startup and sign-in.");
 }
 
 static void accounts(SDL_Renderer *renderer)
 {
-    // The Windows account-manager concept is useful as a navigation pattern,
-    // but there is no supported Roblox session exchange yet. Showing a fake
-    // logged-in account would invite users to supply real credentials to an
-    // unverified Android runtime, so keep the entire hub read-only for now.
-    topbar(renderer, "Your account.", "Switch-native profile hub, separate from the Android app shell");
-    panel(renderer, 306, 142, 921, 290, PANEL);
-    badge(renderer, 337, 170, 174, "OFFLINE PREVIEW",
-          (SDL_Color){77, 46, 68, 255}, PINK);
-
-    rounded(renderer, 338, 225, 142, 142, 29,
-            (SDL_Color){65, 58, 116, 255});
-    rounded(renderer, 362, 248, 94, 94, 25, LAVENDER);
-    rounded(renderer, 394, 266, 30, 30, 10,
-            (SDL_Color){65, 58, 116, 255});
-    rounded(renderer, 379, 309, 61, 20, 10,
-            (SDL_Color){65, 58, 116, 255});
-
-    label(renderer, 522, 216, FONT_MEDIUM, WHITE, "No Roblox account connected");
-    label(renderer, 523, 262, FONT_BODY, MUTED,
-          "Account authentication and online games are not available yet.");
-    label(renderer, 523, 297, FONT_SMALL, MINT,
-          "No password, session cookie or access token is stored.");
-    rounded(renderer, 521, 350, 326, 49, 12,
-            (SDL_Color){52, 57, 83, 255});
-    label(renderer, 539, 360, FONT_BODY, MUTED, "SIGN-IN NOT AVAILABLE YET");
-
-    panel(renderer, 306, 456, 445, 181, PANEL_LIGHT);
-    label(renderer, 334, 479, FONT_SMALL, LAVENDER, "MULTIPLE PROFILES");
-    label(renderer, 334, 516, FONT_MEDIUM, WHITE, "Designed for switching");
-    label(renderer, 335, 565, FONT_SMALL, MUTED,
-          "Account slots will require verified sign-in.");
-    label(renderer, 335, 595, FONT_SMALL, PINK,
-          "No saved identities or imported cookies.");
-
-    panel(renderer, 768, 456, 459, 181, PANEL_LIGHT);
-    label(renderer, 795, 479, FONT_SMALL, MINT, "NEXT ENGINE MILESTONE");
-    label(renderer, 795, 516, FONT_MEDIUM, WHITE, "Roblox startup");
-    label(renderer, 796, 565, FONT_SMALL, MUTED,
-          "JNI, Android lifecycle and guest graphics.");
-    label(renderer, 796, 595, FONT_SMALL, PINK,
-          "No verified game session on Switch yet.");
+    topbar(renderer, "Friends", "Roblox friends and parties will appear after authentication");
+    badge(renderer, 184, 134, 122, "ALL (0)", PANEL_LIGHT, WHITE);
+    badge(renderer, 318, 134, 148, "ONLINE (0)", PANEL, MUTED);
+    badge(renderer, 477, 134, 158, "REQUESTS (0)", PANEL, MUTED);
+    panel(renderer, 182, 192, 1055, 433, PANEL);
+    for (int i = 0; i < 4; i++) {
+        const int x = 389 + i * 131;
+        rounded(renderer, x, 268, 82, 82, 41, (SDL_Color){217, 177, 247, 186});
+        rounded(renderer, x + 25, 283, 31, 31, 16, LAVENDER);
+        rounded(renderer, x + 14, 321, 54, 19, 9, LAVENDER);
+    }
+    label(renderer, 429, 395, FONT_TITLE, WHITE, "Your crew will be here");
+    label(renderer, 329, 464, FONT_BODY, MUTED,
+          "Morrow does not have a verified Roblox login or friends API yet.");
+    label(renderer, 432, 503, FONT_SMALL, MINT,
+          "No account credentials are collected by this preview.");
 }
 
-static void performance(SDL_Renderer *renderer, const UiState *state)
+static void mannequin(SDL_Renderer *renderer)
 {
-    topbar(renderer, "Performance lab.", "Measured UI rendering, not Roblox game performance");
-    panel(renderer, 306, 142, 558, 310, PANEL);
-    label(renderer, 336, 169, FONT_SMALL, MUTED, "LIVE UI FRAME RATE");
-
-    char formatted[64];
-    if (state->fps > 0.0)
-        snprintf(formatted, sizeof(formatted), "%.1f FPS", state->fps);
-    else
-        snprintf(formatted, sizeof(formatted), "Sampling...");
-    live_label(renderer, &fps_label, 338, 223, FONT_HERO,
-               state->fps >= 55.0 ? MINT : LAVENDER, formatted);
-
-    const double proportion = fmin(1.0, fmax(0.0, state->fps / 60.0));
-    rounded(renderer, 340, 316, 472, 12, 6, (SDL_Color){57, 64, 94, 255});
-    if (proportion > 0.025)
-        rounded(renderer, 340, 316, (int)(472 * proportion), 12, 5, MINT);
-    label(renderer, 340, 351, FONT_SMALL, MUTED, "Target: 60 Hz with VSync where supported");
-    label(renderer, 340, 380, FONT_SMALL, MUTED, "Measured after each rendered frame");
-
-    panel(renderer, 882, 142, 345, 310, PANEL);
-    label(renderer, 910, 168, FONT_SMALL, MUTED, "FRAME TIME (AVERAGE)");
-    if (state->frame_ms > 0.0)
-        snprintf(formatted, sizeof(formatted), "%.2f ms", state->frame_ms);
-    else
-        snprintf(formatted, sizeof(formatted), "Sampling...");
-    live_label(renderer, &time_label, 909, 219, FONT_TITLE, WHITE, formatted);
-    fill(renderer, 911, 282, 283, 1, (SDL_Color){160, 172, 218, 50});
-    label(renderer, 911, 305, FONT_SMALL, MUTED, "RENDERER");
-    label(renderer, 911, 334, FONT_BODY, state->accelerated ? MINT : PINK,
-          state->accelerated ? "GPU accelerated" : "Software fallback");
-    label(renderer, 911, 382, FONT_SMALL, MUTED,
-          state->vsync ? "VSync active" : "Manual 60 Hz pacing");
-    label(renderer, 911, 412, FONT_SMALL, MUTED, state->renderer_name);
-
-    panel(renderer, 306, 475, 921, 159, PANEL_LIGHT);
-    label(renderer, 337, 500, FONT_MEDIUM, WHITE, "Lightweight visuals");
-    label(renderer, 339, 542, FONT_SMALL, MUTED, "Cache fonts and backgrounds; minimise work each frame.");
-    rounded(renderer, 741, 504, 419, 77, 14,
-            state->animations ? (SDL_Color){64, 63, 110, 255}
-                              : (SDL_Color){53, 59, 79, 255});
-    label(renderer, 759, 515, FONT_BODY, WHITE, "Ambient animation");
-    label(renderer, 759, 548, FONT_SMALL, MUTED, "X or tap to toggle");
-    rounded(renderer, 1084, 526, 54, 30, 15,
-            state->animations ? MINT : (SDL_Color){91, 99, 116, 255});
-    rounded(renderer, state->animations ? 1111 : 1087, 529, 24, 24, 12, WHITE);
-}
-
-static void roadmap_row(SDL_Renderer *renderer, int step, int y, const char *name,
-                        const char *detail, bool active)
-{
-    rounded(renderer, 334, y, 864, 68, 13,
-            active ? (SDL_Color){54, 57, 98, 255}
-                   : (SDL_Color){28, 34, 59, 255});
-    rounded(renderer, 352, y + 16, 36, 36, 11,
-            active ? MINT : (SDL_Color){69, 75, 111, 255});
-    char number[8];
-    snprintf(number, sizeof(number), "%02d", step);
-    label(renderer, 359, y + 21, FONT_SMALL,
-          active ? (SDL_Color){18, 47, 48, 255} : WHITE, number);
-    label(renderer, 410, y + 8, FONT_BODY, WHITE, name);
-    label(renderer, 412, y + 39, FONT_SMALL, MUTED, detail);
-    if (active)
-        badge(renderer, 1019, y + 17, 149, "IN TESTING",
-              (SDL_Color){41, 82, 79, 255}, MINT);
+    rounded(renderer, 1025, 252, 132, 28, 14, (SDL_Color){209, 167, 253, 132});
+    rounded(renderer, 1050, 238, 82, 78, 30, (SDL_Color){209, 158, 120, 255});
+    rounded(renderer, 1052, 231, 77, 26, 10, (SDL_Color){69, 45, 78, 255});
+    rounded(renderer, 1044, 322, 95, 130, 18, (SDL_Color){242, 175, 221, 255});
+    rounded(renderer, 1012, 327, 30, 107, 12, (SDL_Color){209, 158, 120, 255});
+    rounded(renderer, 1141, 327, 30, 107, 12, (SDL_Color){209, 158, 120, 255});
+    rounded(renderer, 1050, 454, 40, 104, 12, (SDL_Color){73, 75, 135, 255});
+    rounded(renderer, 1095, 454, 40, 104, 12, (SDL_Color){73, 75, 135, 255});
+    rounded(renderer, 1044, 547, 47, 25, 11, WHITE);
+    rounded(renderer, 1094, 547, 47, 25, 11, WHITE);
+    rounded(renderer, 1039, 579, 109, 13, 6, LAVENDER);
 }
 
 static void roadmap(SDL_Renderer *renderer)
 {
-    topbar(renderer, "Our road ahead.", "Progress towards official Android Roblox on Horizon OS");
-    panel(renderer, 306, 141, 921, 498, PANEL);
-    label(renderer, 338, 158, FONT_MEDIUM, WHITE, "Engineering milestones");
-    roadmap_row(renderer, 1, 205, "Native Switch interface",
-                "720p GPU dashboard, controls and touchscreen", true);
-    roadmap_row(renderer, 2, 280, "Android ARM64 ELF loader",
-                "Port relocation, mapping and symbol resolution", false);
-    roadmap_row(renderer, 3, 355, "Compatibility services",
-                "Bionic, JNI, audio, network and graphics", false);
-    roadmap_row(renderer, 4, 430, "Roblox engine startup",
-                "Load a user-provided, signed Android engine", false);
-    roadmap_row(renderer, 5, 505, "Account and online games",
-                "Only if Roblox accepts the unofficial runtime", false);
+    topbar(renderer, "Avatar", "A native wardrobe preview; real Roblox inventory is not linked");
+    const char *tabs[] = {"Customize", "Clothing", "Accessories", "Animations", "Emotes"};
+    for (int i = 0; i < 5; i++) {
+        const int x = 181 + i * 157;
+        rounded(renderer, x, 138, 148, 38, 17,
+                i == 0 ? (SDL_Color){218, 151, 234, 226} : PANEL);
+        label(renderer, x + 13, 145, FONT_SMALL, WHITE, tabs[i]);
+    }
+    panel(renderer, 181, 192, 745, 429, PANEL);
+    label(renderer, 212, 210, FONT_SMALL, MUTED, "OUTFIT SLOTS  /  SAMPLE ONLY");
+    const SDL_Color clothing[] = {
+        {168, 153, 188, 255}, {46, 45, 65, 255}, {228, 228, 245, 255},
+        {243, 165, 202, 255}, {104, 89, 136, 255}, {133, 112, 144, 255}
+    };
+    for (int i = 0; i < 12; ++i) {
+        const int x = 205 + (i % 6) * 118;
+        const int y = 274 + (i / 6) * 147;
+        rounded(renderer, x, y, 103, 126, 12,
+                i == 0 ? (SDL_Color){222, 163, 252, 207} : PANEL_LIGHT);
+        rounded(renderer, x + 23, y + 21, 58, 83, 11, clothing[i % 6]);
+        rounded(renderer, x + 13, y + 26, 21, 61, 10, clothing[i % 6]);
+        rounded(renderer, x + 70, y + 26, 21, 61, 10, clothing[i % 6]);
+    }
+    panel(renderer, 948, 192, 290, 429, PANEL);
+    mannequin(renderer);
+    label(renderer, 989, 596, FONT_SMALL, MUTED, "Offline mannequin preview");
+}
+
+static void setting_line(SDL_Renderer *renderer, int y, const char *title,
+                         const char *detail)
+{
+    rounded(renderer, 458, y, 754, 92, 16, PANEL_LIGHT);
+    label(renderer, 479, y + 11, FONT_BODY, WHITE, title);
+    label(renderer, 479, y + 48, FONT_SMALL, MUTED, detail);
+}
+
+static void performance(SDL_Renderer *renderer, const UiState *state)
+{
+    topbar(renderer, "Settings", "Personalise Morrow and troubleshoot engine linking");
+    const char *categories[] = {"Account", "Controls", "Graphics", "Audio",
+                                "Network", "System", "Diagnostics"};
+    panel(renderer, 176, 151, 236, 470, PANEL);
+    for (unsigned i = 0; i < 7; ++i) {
+        const int y = 176 + (int)i * 60;
+        rounded(renderer, 188, y, 212, 53, 14,
+                i == state->settings_tab ? (SDL_Color){201, 137, 242, 219}
+                                         : (SDL_Color){96, 82, 158, 120});
+        label(renderer, 210, y + 12, FONT_BODY, WHITE, categories[i]);
+    }
+    panel(renderer, 432, 151, 806, 470, PANEL);
+    const int tab = (int)state->settings_tab;
+    label(renderer, 460, 173, FONT_MEDIUM, WHITE, categories[tab < 7 ? tab : 0]);
+    if (tab == 0) {
+        setting_line(renderer, 231, "Roblox account", "Not linked. Sign-in is disabled until the runtime is safe.");
+        setting_line(renderer, 341, "Privacy", "No credentials, tokens or friend data stored by Morrow.");
+        setting_line(renderer, 451, "Linked accounts", "No verified account integrations are available.");
+    } else if (tab == 1) {
+        setting_line(renderer, 231, "Nintendo Switch controls", "D-pad: navigate   |   A: select   |   B: home / back");
+        setting_line(renderer, 341, "Quick navigation", "L / R: change pages   |   Touch: select a tab or card");
+        setting_line(renderer, 451, "Engineering shortcuts", "See Diagnostics for isolated linker commands.");
+    } else if (tab == 2) {
+        char formatted[64];
+        if (state->fps > 0.0) snprintf(formatted, sizeof(formatted), "%.1f FPS", state->fps);
+        else snprintf(formatted, sizeof(formatted), "Sampling...");
+        live_label(renderer, &fps_label, 462, 243, FONT_TITLE, MINT, formatted);
+        if (state->frame_ms > 0.0)
+            snprintf(formatted, sizeof(formatted), "Frame: %.2f ms", state->frame_ms);
+        else snprintf(formatted, sizeof(formatted), "Frame: sampling...");
+        live_label(renderer, &time_label, 462, 300, FONT_BODY, WHITE, formatted);
+        label(renderer, 464, 344, FONT_SMALL, MUTED, state->renderer_name);
+        label(renderer, 464, 371, FONT_SMALL, MUTED,
+              state->accelerated ? "Accelerated UI renderer" : "Software UI renderer");
+        label(renderer, 464, 395, FONT_SMALL, MUTED,
+              state->vsync ? "VSync on" : "Manual 60 Hz frame pacing");
+        rounded(renderer, 455, 475, 721, 102, 16, PANEL_LIGHT);
+        label(renderer, 478, 492, FONT_BODY, WHITE, "Ambient animation");
+        label(renderer, 478, 529, FONT_SMALL, MUTED, "X or touch this row to toggle");
+        rounded(renderer, 1082, 506, 63, 35, 17,
+                state->animations ? MINT : (SDL_Color){102, 105, 125, 255});
+        rounded(renderer, state->animations ? 1109 : 1086, 510, 27, 27, 13, WHITE);
+    } else if (tab == 3) {
+        setting_line(renderer, 231, "Audio output", "Guest audio is not initialised. System volume applies.");
+        setting_line(renderer, 341, "Sound effects", "No fake audio controls while the engine is offline.");
+        setting_line(renderer, 451, "Compatibility", "Audio services are a future engine milestone.");
+    } else if (tab == 4) {
+        setting_line(renderer, 231, "Network", "The native UI does not connect to Roblox services.");
+        setting_line(renderer, 341, "Online status", "Offline until game startup and secure authentication.");
+        setting_line(renderer, 451, "Diagnostics", "Link logs are read directly from the SD card.");
+    } else if (tab == 5) {
+        setting_line(renderer, 231, "Display", "1280 x 720 handheld layout, capped at a 60 Hz target.");
+        setting_line(renderer, 341, "Engine file", "sdmc:/switch/cordial-switched/libroblox.so");
+        setting_line(renderer, 451, "Reports", "sdmc:/switch/cordial-switched/*.txt");
+    } else {
+        setting_line(renderer, 226, "Engine inspection", state->engine.status == ENGINE_PROBE_INSPECTED
+                     ? "ARM64 ELF found. Startup is still unverified."
+                     : "No valid ARM64 engine found at the expected SD path.");
+        setting_line(renderer, 330, "Linker and sandbox tests",
+                     "L3 linking, R3 synthetic smoke, ZL report, ZR preflight.");
+        rounded(renderer, 463, 439, 347, 79, 17,
+                (SDL_Color){182, 127, 226, 235});
+        label(renderer, 483, 456, FONT_BODY, WHITE, "Open linker tests  >");
+        rounded(renderer, 840, 439, 347, 79, 17,
+                (SDL_Color){154, 129, 216, 235});
+        label(renderer, 860, 456, FONT_BODY, WHITE, "Open SD log viewer  >");
+        label(renderer, 466, 546, FONT_SMALL, MINT,
+              "Engine and Logs also have permanent shortcuts on the left rail.");
+    }
 }
 
 static void engine(SDL_Renderer *renderer, const UiState *state)
@@ -757,6 +794,59 @@ static void loader(SDL_Renderer *renderer, const UiState *state)
     }
 }
 
+static void log_viewer(SDL_Renderer *renderer, const UiState *state)
+{
+    topbar(renderer, "Engine logs", "Live SD-card diagnostic files  /  read-only viewer");
+    panel(renderer, 178, 146, 302, 483, PANEL);
+    label(renderer, 198, 168, FONT_BODY, WHITE, "Recent reports");
+    if (!state->logs.count) {
+        label(renderer, 198, 224, FONT_SMALL, PINK,
+              state->logs.read_error ? "Cannot open report folder" : "No reports yet");
+        label(renderer, 198, 253, FONT_SMALL, MUTED, "Run a test from Link.");
+    } else {
+        const unsigned first = state->logs.selected / 8 * 8;
+        for (unsigned row = 0; row < 8 && first + row < state->logs.count; ++row) {
+            const unsigned i = first + row;
+            const int y = 213 + (int)row * 49;
+            rounded(renderer, 191, y, 272, 43, 12,
+                    i == state->logs.selected ? (SDL_Color){189, 133, 227, 255}
+                                              : (SDL_Color){100, 84, 157, 174});
+            char filename[48];
+            snprintf(filename, sizeof(filename), "%.36s", state->logs.files[i].name);
+            label(renderer, 201, y + 10, FONT_SMALL, WHITE, filename);
+        }
+    }
+    panel(renderer, 494, 146, 742, 483, PANEL);
+    if (state->logs.count) {
+        const MorrowLogFile *selected = &state->logs.files[state->logs.selected];
+        label(renderer, 518, 165, FONT_BODY, WHITE, selected->name);
+        char size[70];
+        snprintf(size, sizeof(size), "%lu bytes  /  last 32 KiB", selected->bytes);
+        label(renderer, 519, 198, FONT_SMALL, MUTED, size);
+        const unsigned visible = 13;
+        const unsigned end = state->logs.line_count > state->log_scroll
+            ? state->logs.line_count - state->log_scroll : 0;
+        const unsigned first = end > visible ? end - visible : 0;
+        for (unsigned row = 0; row < visible; ++row) {
+            const unsigned line = first + row;
+            const char *source = line < end ? state->logs.lines[line] : "";
+            char shown[96];
+            snprintf(shown, sizeof(shown), "%.88s", source);
+            live_label(renderer, &log_labels[row], 518, 242 + (int)row * 27,
+                       FONT_SMALL, row % 2 ? WHITE : MUTED, shown);
+        }
+    } else {
+        label(renderer, 526, 269, FONT_MEDIUM, WHITE, "Nothing to display yet");
+        label(renderer, 526, 328, FONT_BODY, MUTED,
+              "Diagnostics will appear here after an on-device test.");
+        label(renderer, 526, 372, FONT_SMALL, MUTED,
+              "Expected examples: link-53.txt, diag-progress.txt");
+    }
+    label(renderer, 198, 600, FONT_SMALL, MUTED, "D-pad up/down: files");
+    label(renderer, 518, 600, FONT_SMALL, MUTED,
+          "D-pad left/right: scroll history   |   X / Y: refresh directory");
+}
+
 void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 {
     SDL_SetRenderDrawColor(renderer, 10, 13, 30, 255);
@@ -768,20 +858,20 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
 
     sidebar(renderer, state);
     switch (state->page) {
-    case UI_OVERVIEW:
+    case UI_HOME:
         overview(renderer, state, seconds);
         break;
-    case UI_LIBRARY:
+    case UI_BROWSE:
         library(renderer, state);
         break;
-    case UI_ACCOUNT:
+    case UI_FRIENDS:
         accounts(renderer);
         break;
-    case UI_PERFORMANCE:
-        performance(renderer, state);
-        break;
-    case UI_ROADMAP:
+    case UI_AVATAR:
         roadmap(renderer);
+        break;
+    case UI_SETTINGS:
+        performance(renderer, state);
         break;
     case UI_ENGINE:
         engine(renderer, state);
@@ -789,13 +879,17 @@ void ui_draw(SDL_Renderer *renderer, const UiState *state, double seconds)
     case UI_LOADER:
         loader(renderer, state);
         break;
+    case UI_LOGS:
+        log_viewer(renderer, state);
+        break;
     default:
         break;
     }
 
-    label(renderer, 312, 666, FONT_SMALL, MUTED,
+    rounded(renderer, 162, 648, 1080, 44, 13, (SDL_Color){79, 65, 132, 219});
+    label(renderer, 178, 660, FONT_SMALL, WHITE,
           state->page == UI_LOADER
-              ? "L/R pages | L3 link | ZL+ZR+Minus exclusive engine | Minus GLES triangle | + exit"
-              : "L/R or A/B: pages   |   X: context action   |   Y: rescan   |   PLUS: exit");
-    label(renderer, 1050, 666, FONT_SMALL, LAVENDER, "60 Hz UI target");
+              ? "L/R pages | L3 link | ZL+ZR+Minus exclusive engine | Minus GLES | + exit"
+              : "L/R pages   |   D-pad navigate   |   A select   |   B home/back   |   + exit");
+    label(renderer, 1103, 660, FONT_SMALL, MINT, "Horizon");
 }

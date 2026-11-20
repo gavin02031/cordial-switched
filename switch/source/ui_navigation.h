@@ -4,12 +4,12 @@
 #include <stdbool.h>
 
 // Keep the SDL rail and Horizon touchscreen hit targets in lockstep. The
-// seven rows must leave the lower status card unobstructed at y=571.
+// eight icon rows must leave the lower status and footer unobstructed.
 enum {
-    MORROW_RAIL_TOP = 185,
-    MORROW_RAIL_STEP = 51,
-    MORROW_RAIL_ROW_HEIGHT = 45,
-    MORROW_RAIL_X_LIMIT = 273
+    MORROW_RAIL_TOP = 139,
+    MORROW_RAIL_STEP = 57,
+    MORROW_RAIL_ROW_HEIGHT = 51,
+    MORROW_RAIL_X_LIMIT = 140
 };
 
 static inline bool morrow_rail_hit(unsigned x, unsigned y,

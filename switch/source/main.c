@@ -307,17 +307,36 @@ static void page_back(UiState *state)
 static void handle_touch(UiState *state, unsigned x, unsigned y)
 {
     // libnx touch coordinates are in the Switch's native 1280x720 space.
-    if (x < 273) {
-        // Keep touchscreen targets aligned with the seven drawn rail rows.
+    if (x < MORROW_RAIL_X_LIMIT) {
+        // Keep touchscreen targets aligned with the eight drawn rail rows.
         unsigned index = 0;
         if (morrow_rail_hit(x, y, UI_PAGE_COUNT, &index))
             state->page = (UiPage)index;
-    } else if (state->page == UI_OVERVIEW &&
-               x >= 332 && x < 555 && y >= 375 && y < 431) {
-        state->page = UI_LIBRARY;
-    } else if (state->page == UI_PERFORMANCE &&
-               x >= 731 && x < 1176 && y >= 492 && y < 586) {
+    } else if (state->page == UI_HOME && y >= 330 && y < 506) {
+        if (x >= 178 && x < 431) state->page = UI_ENGINE;
+        else if (x >= 448 && x < 701) state->page = UI_LOADER;
+        else if (x >= 718 && x < 971) state->page = UI_SETTINGS;
+        else if (x >= 988 && x < 1230) state->page = UI_LOGS;
+    } else if (state->page == UI_BROWSE && y >= 122 && y < 170) {
+        if (x >= 181 && x < 1181)
+            state->browse_tab = (x - 181) / 200;
+    } else if (state->page == UI_SETTINGS && x >= 180 && x < 404 &&
+               y >= 176 && y < 596) {
+        state->settings_tab = (y - 176) / 60;
+    } else if (state->page == UI_SETTINGS && state->settings_tab == 6 &&
+               x >= 463 && x < 1187 && y >= 439 && y < 518) {
+        state->page = x < 830 ? UI_LOADER : UI_LOGS;
+    } else if (state->page == UI_SETTINGS && state->settings_tab == 2 &&
+               x >= 455 && x < 1176 && y >= 475 && y < 577) {
         state->animations = !state->animations;
+    } else if (state->page == UI_LOGS && x >= 180 && x < 462 &&
+               y >= 213 && y < 605) {
+        const unsigned row = (y - 213) / 49;
+        const unsigned index = (state->logs.selected / 8) * 8 + row;
+        if (index < state->logs.count) {
+            state->log_scroll = 0;
+            morrow_logs_open(&state->logs, ENGINE_REPORT_DIR, index);
+        }
     } else if (state->page == UI_ENGINE &&
                x >= 982 && x < 1186 && y >= 568 && y < 602) {
         jit_probe_run(&state->jit);
@@ -372,7 +391,7 @@ int main(void)
     hidInitializeTouchScreen();
 
     UiState state = {
-        .page = UI_OVERVIEW,
+        .page = UI_HOME,
         .animations = true,
         .accelerated = (info.flags & SDL_RENDERER_ACCELERATED) != 0,
         .vsync = (info.flags & SDL_RENDERER_PRESENTVSYNC) != 0,
@@ -382,6 +401,9 @@ int main(void)
     snprintf(state.renderer_name, sizeof(state.renderer_name), "%s",
              info.name ? info.name : "unknown");
     engine_probe_file(ENGINE_LIBRARY_PATH, &state.engine);
+    morrow_logs_scan(&state.logs, ENGINE_REPORT_DIR);
+    if (state.logs.count)
+        morrow_logs_open(&state.logs, ENGINE_REPORT_DIR, 0);
     // Recover a persisted entry marker from a previous terminated process.
     // This can indicate a crash, forced exit or power loss; it is not a stack
     // trace. The numbered report and the prior link log remain on SD.
@@ -400,6 +422,7 @@ int main(void)
 
     while (!quit && appletMainLoop()) {
         const Uint64 frame_start = SDL_GetPerformanceCounter();
+        const UiPage previous_page = state.page;
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT)
@@ -419,11 +442,46 @@ int main(void)
             run_gles_smoke = !run_exclusive_engine;
             break;
         }
-        if (pressed & (HidNpadButton_A | HidNpadButton_Right | HidNpadButton_R))
+        if (pressed & HidNpadButton_R)
             page_forward(&state);
-        if (pressed & (HidNpadButton_B | HidNpadButton_Left | HidNpadButton_L))
+        if (pressed & HidNpadButton_L)
             page_back(&state);
-        if (state.page == UI_PERFORMANCE && (pressed & HidNpadButton_X))
+        if (pressed & HidNpadButton_B)
+            state.page = state.page >= UI_ENGINE ? UI_SETTINGS : UI_HOME;
+        if (pressed & HidNpadButton_Up) {
+            if (state.page == UI_SETTINGS)
+                state.settings_tab = (state.settings_tab + 6) % 7;
+            else if (state.page == UI_LOGS && state.logs.count) {
+                state.log_scroll = 0;
+                morrow_logs_open(&state.logs, ENGINE_REPORT_DIR,
+                    (state.logs.selected + state.logs.count - 1) % state.logs.count);
+            } else page_back(&state);
+        }
+        if (pressed & HidNpadButton_Down) {
+            if (state.page == UI_SETTINGS)
+                state.settings_tab = (state.settings_tab + 1) % 7;
+            else if (state.page == UI_LOGS && state.logs.count) {
+                state.log_scroll = 0;
+                morrow_logs_open(&state.logs, ENGINE_REPORT_DIR,
+                    (state.logs.selected + 1) % state.logs.count);
+            } else page_forward(&state);
+        }
+        if (state.page == UI_BROWSE && (pressed & HidNpadButton_Right))
+            state.browse_tab = (state.browse_tab + 1) % 5;
+        if (state.page == UI_BROWSE && (pressed & HidNpadButton_Left))
+            state.browse_tab = (state.browse_tab + 4) % 5;
+        if (state.page == UI_LOGS && (pressed & HidNpadButton_Right) &&
+            state.log_scroll < MORROW_LOG_MAX_LINES)
+            ++state.log_scroll;
+        if (state.page == UI_LOGS && (pressed & HidNpadButton_Left) && state.log_scroll)
+            --state.log_scroll;
+        if (state.page == UI_HOME && (pressed & HidNpadButton_A))
+            state.page = UI_BROWSE;
+        if (state.page == UI_SETTINGS && state.settings_tab == 6 &&
+            (pressed & HidNpadButton_A))
+            state.page = UI_LOADER;
+        if (state.page == UI_SETTINGS && state.settings_tab == 2 &&
+            (pressed & HidNpadButton_X))
             state.animations = !state.animations;
         if ((state.page == UI_ENGINE || state.page == UI_LOADER) &&
             (pressed & HidNpadButton_Y)) {
@@ -431,6 +489,7 @@ int main(void)
             state.report_attempted = false;
             state.stage_attempted = false;
             state.boot_log_attempted = false;
+            morrow_logs_scan(&state.logs, ENGINE_REPORT_DIR);
         }
         if (state.page == UI_ENGINE && (pressed & HidNpadButton_X))
             jit_probe_run(&state.jit);
@@ -474,12 +533,27 @@ int main(void)
                 (held & HidNpadButton_ZR) ? 2u : 0u);
             diag_marker("real_link_returned");
         }
+        if (state.page == UI_LOGS && (pressed & (HidNpadButton_X | HidNpadButton_Y))) {
+            morrow_logs_scan(&state.logs, ENGINE_REPORT_DIR);
+            state.log_scroll = 0;
+            if (state.logs.count)
+                morrow_logs_open(&state.logs, ENGINE_REPORT_DIR, 0);
+        }
 
         HidTouchScreenState touch = {0};
         const bool touching = hidGetTouchScreenStates(&touch, 1) && touch.count > 0;
         if (touching && !was_touching)
             handle_touch(&state, touch.touches[0].x, touch.touches[0].y);
         was_touching = touching;
+
+        // Refresh when entering Logs so new linker reports are visible without
+        // repeatedly touching FAT in the render loop.
+        if (state.page == UI_LOGS && previous_page != UI_LOGS) {
+            morrow_logs_scan(&state.logs, ENGINE_REPORT_DIR);
+            state.log_scroll = 0;
+            if (state.logs.count)
+                morrow_logs_open(&state.logs, ENGINE_REPORT_DIR, 0);
+        }
 
         ui_draw(renderer, &state, (double)SDL_GetTicks() / 1000.0);
         SDL_RenderPresent(renderer);
