@@ -43,7 +43,12 @@ relocation-derived pointers.
 
 Corrected scan over all decoded APS2 RELATIVE addends (init_array resolved
 as a byproduct: 2,505 entries, ctor[3] = 0x1b2fe48, which calls directly
-into the 0x26dc68c init complex containing the mmap/spin sites):
+into the 0x26dc68c init complex containing the mmap/spin sites). The
+decoder is switch/tools/aps2_relocs.py with synthetic-stream unit tests in
+switch/tools/test_aps2_relocs.py; against the real binary it decodes
+588,786 relocations in 38,390 groups with byte-exact stream consumption
+and resolves all 2,505 init_array slots, so the correction is
+reproducible:
 
 - slot 0x61dec08 (.data.rel.ro function-pointer table) -> 0x267d0c0, the
   getpid wrapper stub (one of the 7). The "no static table references the
