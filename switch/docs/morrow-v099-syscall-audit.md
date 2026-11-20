@@ -98,12 +98,21 @@ Census, sharpened: an aligned word scan of the executable segment
 69 hits with non-zero immediates. Per-1MB regions of the svc #0 hits:
 0xc00000: 43, 0xd00000: 41, 0xe00000: 30, 0x2600000: 7, 0x5a00000: 9.
 The 0x2600000 and 0x5a00000 regions match the 16 confirmed sites exactly
-(7 stub svcs, 9 inline svcs - no extras in those regions). The remaining
-114 svc #0 hits cluster in 0xc00000-0xefffff and are UNVERIFIED: word-scan
-hits can be embedded data, and these have not been confirmed as decoded
-instructions by disassembly. The 69 non-zero-immediate hits are presumed
-data constants (their immediate values are irregular) but are likewise
-unverified. True reachable-svc total: still open.
+(7 stub svcs, 9 inline svcs - no extras in those regions).
+
+Revision 2 follow-up (2026-11-20): the census is now CLOSED. The 114
+svc #0 hits in 0xc00000-0xefffff all lie inside .gcc_except_table
+(0xc0c97c-0xeea7a8, non-code) and the tail of .rodata; the bytes around
+them do not decode as instructions (capstone terminates immediately),
+while all 16 confirmed sites lie inside .text (0x1b2fc00-0x61621d4) and
+the .text hits match the 16 confirmed addresses exactly. The 69
+non-zero-immediate hits likewise all fall in data sections (.rela.dyn,
+.rodata, .gcc_except_table). Since every svc instruction is 4-aligned and
+the word scan covers every aligned word of the executable segment, the
+scan is exhaustive: the binary contains exactly 16 raw-syscall
+instructions (7 wrapper stubs + 9 register-computed inline sites). The
+remaining open question is reachability (callers of the 9 inline sites'
+containing functions), not the existence of further sites.
 
 Implication changes: "zero references" is dead as a reachability argument.
 Any reached svc #0 still fatals under the examined kernel implementation
@@ -170,13 +179,13 @@ test console, and nothing here is hardware-observed behavior.
   forms, are not detected. (Revision 1: this gap is now confirmed real -
   9 inline register-computed sites found at 0x5a7aa34-0x5a7d060. Callers
   of their containing functions are not yet enumerated.)
-- The remaining `svc #0` pattern hits are not individually disproven;
-  Revision 2 counts 130 aligned `svc #0` word hits in total, 16 confirmed
-  as instructions, leaving 114 unverified (clustered in 0xc00000-0xefffff;
-  word-scan hits can be embedded data). The true raw-syscall count is
-  >= 16.
+- `svc #0` word-scan hits outside the 16 confirmed sites are now resolved
+  (Revision 2 follow-up): all 114 fall in .gcc_except_table/.rodata and
+  all 69 non-zero-immediate hits fall in data sections. The confirmed
+  raw-syscall instruction count is exactly 16; what remains open is
+  reachability, not enumeration.
 - 3 hits carry small non-zero immediates (12, 13, 20) that would be valid
-  Horizon ids. Near-certain data constants: an Android ELF contains no
-  Horizon-targeted code. Flagged, not resolved.
+  Horizon ids. Resolved as data (Revision 2 follow-up): they lie in
+  non-code sections like all 69 non-zero-immediate hits.
 - `brk`-encoding hits (161) not analyzed; Android uses `svc #0` for traps,
   so these are presumed data.
