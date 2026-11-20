@@ -100,19 +100,67 @@ Census, sharpened: an aligned word scan of the executable segment
 The 0x2600000 and 0x5a00000 regions match the 16 confirmed sites exactly
 (7 stub svcs, 9 inline svcs - no extras in those regions).
 
-Revision 2 follow-up (2026-11-20): the census is now CLOSED. The 114
+Revision 2 follow-up (2026-11-20): the census is now CLOSED, with its
+coverage and assumptions stated precisely in Revision 3. The 114
 svc #0 hits in 0xc00000-0xefffff all lie inside .gcc_except_table
 (0xc0c97c-0xeea7a8, non-code) and the tail of .rodata; the bytes around
-them do not decode as instructions (capstone terminates immediately),
-while all 16 confirmed sites lie inside .text (0x1b2fc00-0x61621d4) and
-the .text hits match the 16 confirmed addresses exactly. The 69
-non-zero-immediate hits likewise all fall in data sections (.rela.dyn,
-.rodata, .gcc_except_table). Since every svc instruction is 4-aligned and
-the word scan covers every aligned word of the executable segment, the
-scan is exhaustive: the binary contains exactly 16 raw-syscall
-instructions (7 wrapper stubs + 9 register-computed inline sites). The
-remaining open question is reachability (callers of the 9 inline sites'
-containing functions), not the existence of further sites.
+them do not decode as instruction streams (capstone terminates
+immediately), while all 16 confirmed sites lie inside .text
+(0x1b2fc00-0x61621d4) and the .text hits match the 16 confirmed addresses
+exactly. The 69 non-zero-immediate hits likewise all fall in data
+sections (.rela.dyn, .rodata, .gcc_except_table).
+
+## Revision 3 (2026-11-20): census scope, reachability, post-mprotect path
+
+Census coverage and assumptions (precision correction to the Revision 2
+follow-up wording): the guest's only executable MAPPING is PT_LOAD[0],
+RX across 0x0-0x61649d0, which also contains .rodata, .gcc_except_table,
+.eh_frame_hdr and .eh_frame. Section flags therefore do NOT make the
+data-section hits unexecutable: a computed control transfer landing
+exactly on one of those aligned pattern words WOULD execute svc #0. The
+scan covers every 4-aligned word of that segment (all svc encodings are
+4-aligned, so coverage of encodings is exhaustive): 199 pattern hits
+total. SHF_EXECINSTR sections are .text, malloc_hook (0x61621d4-0x6162754)
+and .plt (0x6162760-0x61649d0); the latter two contain zero svc
+encodings. The 183 data-section hits are classified as data on three
+legs: ALLOC-only section flags, failure of surrounding bytes to decode as
+instruction streams, and no relocation-derived or direct-branch
+references found. Conclusion, scoped: under ordinary control flow through
+decodable instruction streams, exactly 16 raw-syscall sites exist.
+Out-of-scope residual: corrupted/adversarial control flow into aligned
+data bytes could still hit a pattern word; that flow would fatal by many
+other mechanisms first and is not the benign-execution question.
+
+Reachability of the inline sites, resolved one link: the nine inline svc
+sites are all in ONE large function at 0x5a7a7b0 (0x360-byte frame;
+multiple return paths including the ret at 0x5a7b910; out-of-line
+continuation blocks follow it, e.g. the b.ne at 0x5a7b8f0 targeting
+0x5a7d0bc inside the same frame - Revision 2's two-function split was an
+artifact of the post-ret boundary heuristic). That function is called by
+a direct BL at 0x5a7a2e8, which sits inside the control flow of
+0x5a7a168 - one of the five relocation-derived table entries (slot
+0x66227a0). Chain: static .data.rel.ro function-pointer table -> fn
+0x5a7a168 -> BL -> fn 0x5a7a7b0 -> 9 inline raw-svc sites. Revision 2's
+literal statements stand (the five referenced bodies contain no svc; no
+direct BRANCH from them reaches the region - the link is a CALL); its
+"what references them remains unresolved" is superseded for the
+containing function. The remaining link - who calls through the table
+pointer - is the same open question as for the getpid wrapper stub.
+
+Post-protection constructor path (static): the ctor-3 chain function at
+0x26e63a8 (arena reserve) mmap's 0x7b2000 bytes PROT_NONE/ANON
+(BL 0x61633f0 at 0x26e640c), then mprotects it PROT_READ|PROT_WRITE
+(BL 0x6163400 at 0x26e6424). On mprotect failure it munmaps and exits
+through the error-string path (blr x8 at 0x26e6464). On success it calls
+0x2747d70(size, struct) at 0x26e643c, stores the arena base into the
+owner struct, then runs a slot-initialization loop (stride 0x7b180)
+whose first writes into the arena memory are the stores at
+0x26e649c-0x26e64a0 (str xzr,[x27,#0x118]; stp xzr,x8,[x27]). These
+stores are statically the first guest dereferences of the arena after the
+permission change. This static picture is consistent with - but does not
+confirm - the external link-58 claim pattern (mprotect success, then
+silence); the actual first fault site remains hardware-evidence
+territory and the link-58 file itself is not in our possession.
 
 Implication changes: "zero references" is dead as a reachability argument.
 Any reached svc #0 still fatals under the examined kernel implementation
@@ -177,8 +225,10 @@ test console, and nothing here is hardware-observed behavior.
 - Stub confirmation recognizes only `mov x8, #nr; svc #0`. Wrappers loading
   the syscall number into x8 from a register or memory, or using other
   forms, are not detected. (Revision 1: this gap is now confirmed real -
-  9 inline register-computed sites found at 0x5a7aa34-0x5a7d060. Callers
-  of their containing functions are not yet enumerated.)
+  9 inline register-computed sites found at 0x5a7aa34-0x5a7d060.
+  Revision 3: all nine are in one function at 0x5a7a7b0, reached via
+  table slot 0x66227a0 -> fn 0x5a7a168 -> BL. Who calls through the
+  table pointer itself is not yet enumerated.)
 - `svc #0` word-scan hits outside the 16 confirmed sites are now resolved
   (Revision 2 follow-up): all 114 fall in .gcc_except_table/.rodata and
   all 69 non-zero-immediate hits fall in data sections. The confirmed
