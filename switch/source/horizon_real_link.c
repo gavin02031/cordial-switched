@@ -664,10 +664,70 @@ static void probe_guest_data_mapping(FILE *log)
 typedef struct {
     FILE *log;
     char report_path[112];
+    Handle guest_thread_handle;
+    bool register_sampling_allowed;
     atomic_size_t active_index;
     atomic_bool guest_call_active;
     atomic_bool stop_watchdog;
 } ConstructorRunContext;
+
+typedef struct {
+    const char *status;
+    Result pause_result;
+    Result dump_result;
+    Result resume_result;
+    u64 pc;
+    u64 lr;
+    u64 fp;
+    u64 sp;
+} ConstructorThreadSample;
+
+// Sampling is opt-in to the kernel's own 0x32/0x33 capabilities and only
+// pauses the guest *briefly* to read its registers. Always resume before
+// touching SD/stdio: guest code may own locks needed by the filesystem.
+// Never use the snapshot to execute, alter or skip guest instructions.
+static ConstructorThreadSample constructor_watchdog_sample(
+    const ConstructorRunContext *ctx)
+{
+    ConstructorThreadSample sample = {.status = "not_available"};
+    if (!ctx->register_sampling_allowed || !ctx->guest_thread_handle)
+        return sample;
+    if (!atomic_load_explicit(&ctx->guest_call_active,
+                              memory_order_acquire)) {
+        sample.status = "guest_not_active";
+        return sample;
+    }
+
+    sample.pause_result = svcSetThreadActivity(ctx->guest_thread_handle,
+                                               ThreadActivity_Paused);
+    if (R_FAILED(sample.pause_result)) {
+        sample.status = "pause_failed";
+        return sample;
+    }
+
+    ThreadContext regs = {0};
+    sample.dump_result = svcGetThreadContext3(&regs, ctx->guest_thread_handle);
+    // The guest must not stay suspended while the watchdog writes its file.
+    sample.resume_result = svcSetThreadActivity(ctx->guest_thread_handle,
+                                                ThreadActivity_Runnable);
+    if (R_FAILED(sample.resume_result)) {
+        // Best effort: a transient kernel failure must not strand the guest.
+        sample.resume_result = svcSetThreadActivity(ctx->guest_thread_handle,
+                                                    ThreadActivity_Runnable);
+    }
+    if (R_FAILED(sample.resume_result)) {
+        sample.status = "resume_failed";
+    } else if (R_FAILED(sample.dump_result)) {
+        sample.status = "dump_failed";
+    } else {
+        sample.status = "ok";
+        sample.pc = regs.pc.x;
+        sample.lr = regs.lr;
+        sample.fp = regs.fp;
+        sample.sp = regs.sp;
+    }
+    return sample;
+}
 
 // The 0.99.6 hardware run returned from constructors 0-2 then went black
 // after constructor_begin_003. A marker on the main thread cannot tell an
@@ -678,22 +738,33 @@ typedef struct {
 static void constructor_watchdog_record(const ConstructorRunContext *ctx,
                                         size_t index, unsigned elapsed)
 {
+    const ConstructorThreadSample sample = index == SIZE_MAX
+        ? (ConstructorThreadSample){.status = "startup"}
+        : constructor_watchdog_sample(ctx);
     const int fd = open(ENGINE_REPORT_DIR "/constructor-watchdog.txt",
                         O_WRONLY | O_CREAT | O_APPEND, 0600);
     if (fd < 0) return;
-    char line[240];
+    char line[448];
     const int n = index == SIZE_MAX
         ? snprintf(line, sizeof(line),
                    "%ld.%llu link_report=%.95s watchdog_started=yes\n",
                    (long)time(NULL), (unsigned long long)armGetSystemTick(),
                    ctx->report_path)
         : snprintf(line, sizeof(line),
-                   "%ld.%llu link_report=%.95s active_constructor=%zu guest_call_active=%d approx_seconds=%u\n",
+                   "%ld.%llu link_report=%.95s active_constructor=%zu guest_call_active=%d approx_seconds=%u "
+                   "register_sample=%s pause=0x%08x dump=0x%08x resume=0x%08x "
+                   "pc=0x%016llx lr=0x%016llx fp=0x%016llx sp=0x%016llx\n",
                    (long)time(NULL), (unsigned long long)armGetSystemTick(),
                    ctx->report_path, index,
                    atomic_load_explicit(&ctx->guest_call_active,
                                         memory_order_acquire) ? 1 : 0,
-                   elapsed);
+                   elapsed, sample.status, (unsigned)sample.pause_result,
+                   (unsigned)sample.dump_result,
+                   (unsigned)sample.resume_result,
+                   (unsigned long long)sample.pc,
+                   (unsigned long long)sample.lr,
+                   (unsigned long long)sample.fp,
+                   (unsigned long long)sample.sp);
     if (n > 0 && (size_t)n < sizeof(line)) {
         size_t written = 0;
         while (written < (size_t)n) {
@@ -1629,6 +1700,14 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             ctx.log = log;
                             snprintf(ctx.report_path, sizeof(ctx.report_path),
                                      "%s", result->log_path);
+                            ctx.guest_thread_handle = threadGetCurHandle();
+                            ctx.register_sampling_allowed =
+                                envIsSyscallHinted(0x32) &&
+                                envIsSyscallHinted(0x33);
+                            log_line(log,
+                                     "constructor_register_sampling=%s thread_handle=0x%x",
+                                     ctx.register_sampling_allowed ? "available" :
+                                     "svc_not_hinted", ctx.guest_thread_handle);
                             atomic_init(&ctx.active_index, SIZE_MAX);
                             atomic_init(&ctx.guest_call_active, false);
                             atomic_init(&ctx.stop_watchdog, false);

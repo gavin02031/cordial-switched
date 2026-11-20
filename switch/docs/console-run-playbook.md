@@ -180,6 +180,18 @@ is the expected steady state.
   `constructor_watchdog_started=` and `constructor_crash_marker_created=`
   fields before drawing a conclusion. This is diagnostic only: it does not
   skip constructors, terminate the guest, or claim JNI_OnLoad completed.
+  The 2026-11-19 `link-46.txt` watchdog independently confirmed constructor
+  index 3 stayed inside guest execution for at least 270 seconds; `link-48.txt`
+  repeated the same stall for at least 10 seconds. The next build records
+  `constructor_register_sampling=` in the link report and, where Horizon
+  permits SVC 0x32/0x33, snapshots that thread's PC, LR, FP and SP at each
+  heartbeat (`register_sample=ok`). The monitor pauses the thread only long
+  enough to read registers, resumes it *before* any SD I/O, and records
+  failure codes if the syscall is unavailable. A stable PC across samples
+  suggests a tight loop or wait; a changing PC suggests forward execution.
+  The `engine_module_registered=bias_0x...` line is the address base to
+  subtract from a PC inside the mapped guest ELF. This samples execution;
+  it does not change the Roblox library or bypass a constructor.
 - `exception-last.txt` - best-effort userland fault context. Starting with
   the next diagnostic build, the exception records its own build ID, system
   tick and runtime address of `__libnx_exception_handler`. Match the build
