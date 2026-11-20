@@ -176,6 +176,11 @@ int main(void)
     assert(detach(UINT64_MAX) == EINVAL);
     assert(create(NULL, NULL, worker_start, NULL) == EINVAL);
     assert(create(&rejected, NULL, NULL, NULL) == EINVAL);
+    AndroidThreadLifecycleStats diag = {0};
+    android_thread_lifecycle_compat_stats(&diag);
+    assert(diag.create_attempts == 2);
+    assert(diag.create_successes == 0);
+    assert(diag.last_create_error == EINVAL);
 
     enum { WORKERS = 64 };
     Worker workers[WORKERS];
@@ -196,6 +201,11 @@ int main(void)
         assert(join(threads[i], NULL) == EINVAL);
         assert(detach(threads[i]) == EINVAL);
     }
+    android_thread_lifecycle_compat_stats(&diag);
+    assert(diag.create_attempts == 2 + WORKERS);
+    assert(diag.create_successes == WORKERS);
+    assert(diag.worker_entries == WORKERS);
+    assert(diag.worker_normal_returns == WORKERS);
 
     uint64_t tls_address;
     assert(android_tls_compat_resolve("pthread_key_create", "LIBC", "libc.so", &tls_address));

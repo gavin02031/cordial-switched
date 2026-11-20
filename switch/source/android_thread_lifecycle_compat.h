@@ -12,4 +12,16 @@ bool android_thread_lifecycle_compat_resolve(const char *name, const char *versi
 // Read-only diagnostic shadow; it is not the CPU's live ARM64 thread pointer.
 const void *const *android_thread_lifecycle_compat_shadow_current(void);
 
+// Lock-free, read-only diagnostic snapshot. A blocked guest constructor may
+// hold a pthread lock, so the independent watchdog must not take one.
+typedef struct {
+    uint32_t create_attempts;
+    uint32_t create_successes;
+    uint32_t worker_entries;
+    uint32_t worker_normal_returns;
+    int last_create_error;
+} AndroidThreadLifecycleStats;
+
+void android_thread_lifecycle_compat_stats(AndroidThreadLifecycleStats *out);
+
 #endif

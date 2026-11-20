@@ -18,6 +18,7 @@ extern size_t morrowStackGuardSize(void *stack);
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <string.h>
 
 #include "android_thread_attr_compat.h"
@@ -52,6 +53,36 @@ static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t identity_once = PTHREAD_ONCE_INIT;
 static pthread_key_t identity_key;
 static int identity_error;
+static atomic_uint diagnostic_create_attempts;
+static atomic_uint diagnostic_create_successes;
+static atomic_uint diagnostic_worker_entries;
+static atomic_uint diagnostic_worker_normal_returns;
+static atomic_int diagnostic_last_create_error;
+
+void android_thread_lifecycle_compat_stats(AndroidThreadLifecycleStats *out)
+{
+    if (!out) return;
+    out->create_attempts = atomic_load_explicit(&diagnostic_create_attempts,
+                                                 memory_order_relaxed);
+    out->create_successes = atomic_load_explicit(&diagnostic_create_successes,
+                                                  memory_order_relaxed);
+    out->worker_entries = atomic_load_explicit(&diagnostic_worker_entries,
+                                                memory_order_relaxed);
+    out->worker_normal_returns = atomic_load_explicit(
+        &diagnostic_worker_normal_returns, memory_order_relaxed);
+    out->last_create_error = atomic_load_explicit(
+        &diagnostic_last_create_error, memory_order_relaxed);
+}
+
+static int record_create_result(int error)
+{
+    if (!error)
+        atomic_fetch_add_explicit(&diagnostic_create_successes, 1,
+                                  memory_order_relaxed);
+    atomic_store_explicit(&diagnostic_last_create_error, error,
+                          memory_order_relaxed);
+    return error;
+}
 
 static void initialize_identity(void)
 {
@@ -94,6 +125,8 @@ const void *const *android_thread_lifecycle_compat_shadow_current(void)
 static void *native_start(void *opaque)
 {
     ThreadEntry *entry = opaque;
+    atomic_fetch_add_explicit(&diagnostic_worker_entries, 1,
+                              memory_order_relaxed);
     // A failed native TLS registration must not call Android code under an
     // incorrect pthread_self identity.
     if (pthread_setspecific(identity_key, entry) != 0)
@@ -117,6 +150,8 @@ static void *native_start(void *opaque)
     }
 #endif
     void *result = entry->start(entry->argument);
+    atomic_fetch_add_explicit(&diagnostic_worker_normal_returns, 1,
+                              memory_order_relaxed);
     android_tls_compat_cleanup_current();
     return result;
 }
@@ -124,11 +159,13 @@ static void *native_start(void *opaque)
 static int bridge_create(uint64_t *token, const void *attr,
                          void *(*start)(void *), void *argument)
 {
+    atomic_fetch_add_explicit(&diagnostic_create_attempts, 1,
+                              memory_order_relaxed);
     if (!token || !start)
-        return EINVAL;
+        return record_create_result(EINVAL);
     int result = ensure_identity();
     if (result)
-        return result;
+        return record_create_result(result);
     pthread_attr_t native_attr;
     pthread_attr_t *translated = NULL;
     bool joinable = true;
@@ -141,13 +178,13 @@ static int bridge_create(uint64_t *token, const void *attr,
 #endif
         result = android_thread_attr_compat_for_create(attr, &native_attr, &guard);
         if (result)
-            return result;
+            return record_create_result(result);
         translated = &native_attr;
         int detach_state;
         result = pthread_attr_getdetachstate(translated, &detach_state);
         if (result) {
             pthread_attr_destroy(translated);
-            return result;
+            return record_create_result(result);
         }
         joinable = detach_state == PTHREAD_CREATE_JOINABLE;
     }
@@ -156,7 +193,7 @@ static int bridge_create(uint64_t *token, const void *attr,
     if (!entry) {
         pthread_mutex_unlock(&registry_lock);
         if (translated) pthread_attr_destroy(translated);
-        return EAGAIN;
+        return record_create_result(EAGAIN);
     }
     entry->start = start;
     entry->argument = argument;
@@ -175,8 +212,7 @@ static int bridge_create(uint64_t *token, const void *attr,
     else *token = (uint64_t)(uintptr_t)entry;
     pthread_mutex_unlock(&registry_lock);
     if (translated) pthread_attr_destroy(translated);
-    if (result) return result;
-    return 0;
+    return record_create_result(result);
 }
 
 static uint64_t bridge_self(void)

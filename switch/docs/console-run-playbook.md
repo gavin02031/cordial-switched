@@ -201,6 +201,19 @@ is the expected steady state.
   that the entire range is readable and inside the pinned guest image),
   and x0-x28 register values. It reads only executable memory already
   mapped by Morrow; no guest binary modification or execution occurs.
+  Hardware `link-52.txt` confirmed the actual instructions at guest
+  `0x26DD14C` form an acquire-load loop: `ldar w8, [x19]`, `cmp w8, #2`,
+  `b.ne` back to the load. The observed x8 is 1, so an initializer/state
+  owner never publishes the completed state 2. This is a specific
+  synchronization wait, not a graphics problem; it is not yet proof of
+  recursion, a failed worker start, or which implementation owns the flag.
+  The next diagnostic records a bounded, read-only frame-pointer chain
+  (`frameN` / `returnN`) from the currently readable stack mapping, plus
+  `bridge_creates`, `bridge_success`, `bridge_starts`, `bridge_returns`
+  and `bridge_last_error`. The bridge counters are atomic so the watchdog
+  can read them without taking a mutex that the stalled guest might own.
+  An interrupted/optimized frame chain may be partial; a worker using a
+  different creation route will not appear in these bridge counters.
 - `exception-last.txt` - best-effort userland fault context. Starting with
   the next diagnostic build, the exception records its own build ID, system
   tick and runtime address of `__libnx_exception_handler`. Match the build

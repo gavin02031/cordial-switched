@@ -688,6 +688,9 @@ typedef struct {
     u32 instructions[8];
     const char *instruction_status;
     Result instruction_query_result;
+    u64 frame_addresses[8];
+    u64 saved_return_addresses[8];
+    unsigned frame_count;
 } ConstructorThreadSample;
 
 // Sampling is opt-in to the kernel's own 0x32/0x33 capabilities and only
@@ -764,6 +767,30 @@ static ConstructorThreadSample constructor_watchdog_sample(
                 }
             }
         }
+
+        // Follow only ordinary AArch64 [previous_fp, saved_lr] stack frames
+        // inside the *current* readable stack mapping. This is best effort:
+        // optimized functions may omit frame pointers, and the thread runs
+        // again before these bytes are read. Do not write into guest state.
+        MemoryInfo stack_info = {0};
+        u32 stack_page = 0;
+        if (R_SUCCEEDED(svcQueryMemory(&stack_info, &stack_page,
+                                       sample.sp)) &&
+            (stack_info.perm & Perm_R) && stack_info.size >= 16) {
+            u64 frame = sample.fp;
+            for (unsigned i = 0; i < 8; ++i) {
+                if ((frame & 15) || frame < stack_info.addr ||
+                    frame - stack_info.addr > stack_info.size - 16)
+                    break;
+                u64 pair[2];
+                memcpy(pair, (const void *)(uintptr_t)frame, sizeof(pair));
+                sample.frame_addresses[sample.frame_count] = frame;
+                sample.saved_return_addresses[sample.frame_count++] = pair[1];
+                if (pair[0] <= frame || pair[0] - frame > 0x100000)
+                    break;
+                frame = pair[0];
+            }
+        }
     }
     return sample;
 }
@@ -783,7 +810,7 @@ static void constructor_watchdog_record(const ConstructorRunContext *ctx,
     const int fd = open(ENGINE_REPORT_DIR "/constructor-watchdog.txt",
                         O_WRONLY | O_CREAT | O_APPEND, 0600);
     if (fd < 0) return;
-    char line[1600];
+    char line[2300];
     const int head = index == SIZE_MAX
         ? snprintf(line, sizeof(line),
                    "%ld.%llu link_report=%.95s watchdog_started=yes\n",
@@ -836,6 +863,24 @@ static void constructor_watchdog_record(const ConstructorRunContext *ctx,
             if (n < 0 || (size_t)n >= sizeof(line) - length) break;
             length += (size_t)n;
         }
+        for (unsigned i = 0; i < sample.frame_count; ++i) {
+            n = snprintf(line + length, sizeof(line) - length,
+                         " frame%u=0x%llx return%u=0x%llx", i,
+                         (unsigned long long)sample.frame_addresses[i], i,
+                         (unsigned long long)sample.saved_return_addresses[i]);
+            if (n < 0 || (size_t)n >= sizeof(line) - length) break;
+            length += (size_t)n;
+        }
+        AndroidThreadLifecycleStats threads = {0};
+        android_thread_lifecycle_compat_stats(&threads);
+        n = snprintf(line + length, sizeof(line) - length,
+                     " bridge_creates=%u bridge_success=%u bridge_starts=%u"
+                     " bridge_returns=%u bridge_last_error=%d",
+                     threads.create_attempts, threads.create_successes,
+                     threads.worker_entries, threads.worker_normal_returns,
+                     threads.last_create_error);
+        if (n > 0 && (size_t)n < sizeof(line) - length)
+            length += (size_t)n;
     }
     if (index != SIZE_MAX && length + 1 < sizeof(line)) {
         line[length++] = '\n';
