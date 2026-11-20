@@ -6,7 +6,7 @@
 int main(void)
 {
     unsigned page = 999;
-    const unsigned count = 7;
+    const unsigned count = 8;
     for (unsigned row = 0; row < count; row++) {
         const unsigned y = MORROW_RAIL_TOP + row * MORROW_RAIL_STEP;
         assert(morrow_rail_hit(0, y, count, &page) && page == row);
