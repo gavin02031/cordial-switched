@@ -4,7 +4,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <malloc.h>
+#include <stdatomic.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -661,7 +663,72 @@ static void probe_guest_data_mapping(FILE *log)
 
 typedef struct {
     FILE *log;
+    char report_path[112];
+    atomic_size_t active_index;
+    atomic_bool stop_watchdog;
 } ConstructorRunContext;
+
+// The 0.99.6 hardware run returned from constructors 0-2 then went black
+// after constructor_begin_003. A marker on the main thread cannot tell an
+// endless guest call from a process that died. An independent, low-frequency
+// monitor records liveness without cancelling, skipping or patching guest code.
+// Keep its output separate from the main FILE so a guest-blocked main thread
+// cannot hold the report's stdio lock while the monitor is writing.
+static void constructor_watchdog_record(const ConstructorRunContext *ctx,
+                                        size_t index, unsigned elapsed)
+{
+    const int fd = open(ENGINE_REPORT_DIR "/constructor-watchdog.txt",
+                        O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd < 0) return;
+    char line[240];
+    const int n = index == SIZE_MAX
+        ? snprintf(line, sizeof(line),
+                   "%ld.%llu link_report=%.95s watchdog_started=yes\n",
+                   (long)time(NULL), (unsigned long long)armGetSystemTick(),
+                   ctx->report_path)
+        : snprintf(line, sizeof(line),
+                   "%ld.%llu link_report=%.95s active_constructor=%zu approx_seconds=%u\n",
+                   (long)time(NULL), (unsigned long long)armGetSystemTick(),
+                   ctx->report_path, index, elapsed);
+    if (n > 0 && (size_t)n < sizeof(line)) {
+        size_t written = 0;
+        while (written < (size_t)n) {
+            const ssize_t chunk = write(fd, line + written, (size_t)n - written);
+            if (chunk < 0 && errno == EINTR) continue;
+            if (chunk <= 0) break;
+            written += (size_t)chunk;
+        }
+        if (written == (size_t)n) fsync(fd);
+    }
+    close(fd);
+}
+
+static void constructor_watchdog_thread(void *argument)
+{
+    ConstructorRunContext *ctx = argument;
+    size_t last_index = SIZE_MAX;
+    unsigned elapsed = 0;
+    while (!atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire)) {
+        svcSleepThread(1000000000LL);
+        if (atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire))
+            break;
+        const size_t index = atomic_load_explicit(&ctx->active_index,
+                                                   memory_order_acquire);
+        if (index == SIZE_MAX) {
+            last_index = SIZE_MAX;
+            elapsed = 0;
+            continue;
+        }
+        if (index != last_index) {
+            last_index = index;
+            elapsed = 0;
+        }
+        if (elapsed < UINT_MAX) elapsed++;
+        if (elapsed == 3 || elapsed == 10 || elapsed == 30 ||
+            (elapsed > 30 && elapsed % 30 == 0))
+            constructor_watchdog_record(ctx, index, elapsed);
+    }
+}
 
 // Gate proof for the constructor runner: the RX mapping is pinned for the
 // process lifetime. TLS is no part of the gate: the caller installs the
@@ -676,6 +743,7 @@ static bool constructor_run_gate(void *context)
 static bool constructor_begin(size_t index, uintptr_t target, void *context)
 {
     ConstructorRunContext *ctx = context;
+    atomic_store_explicit(&ctx->active_index, index, memory_order_release);
     log_line(ctx->log, "constructor_begin_%03zu=0x%016llX", index,
              (unsigned long long)target);
     // Durability is the attribution: a crash after this line leaves the
@@ -687,6 +755,7 @@ static bool constructor_completed(size_t index, uintptr_t target, void *context)
 {
     ConstructorRunContext *ctx = context;
     (void)target;
+    atomic_store_explicit(&ctx->active_index, SIZE_MAX, memory_order_release);
     log_line(ctx->log, "constructor_completed_%03zu=yes", index);
     return true;
 }
@@ -1528,6 +1597,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             log_line(log, "blocker=crash_journal_not_durable");
                         } else {
                             constructors_attempted = true;
+                            log_line(log, "constructor_crash_marker_created=yes");
                             if (engine_main_tls_ready) {
                                 saved_tpidr = engine_guest_tpidr_install(
                                     android_arm64_tcb_shadow_pointer(
@@ -1543,13 +1613,43 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                                 log_line(log,
                                          "guest_tpidr_bridge=not_needed_no_tls_template");
                             }
-                            ConstructorRunContext ctx = { log };
+                            // Static lifetime matters if a kernel thread
+                            // refuses to join during shutdown: it must not
+                            // keep reading a dead stack object.
+                            static ConstructorRunContext ctx;
+                            ctx.log = log;
+                            snprintf(ctx.report_path, sizeof(ctx.report_path),
+                                     "%s", result->log_path);
+                            atomic_init(&ctx.active_index, SIZE_MAX);
+                            atomic_init(&ctx.stop_watchdog, false);
+                            Thread watchdog = {0};
+                            const Result watchdog_create = threadCreate(
+                                &watchdog, constructor_watchdog_thread, &ctx,
+                                NULL, 0x10000, 0x2C, -2);
+                            const Result watchdog_start = R_SUCCEEDED(watchdog_create)
+                                ? threadStart(&watchdog) : watchdog_create;
+                            const bool watchdog_running = R_SUCCEEDED(watchdog_start);
+                            log_line(log, "constructor_watchdog_started=%s result=0x%08x",
+                                     watchdog_running ? "yes" : "no",
+                                     (unsigned)watchdog_start);
+                            if (watchdog_running)
+                                constructor_watchdog_record(&ctx, SIZE_MAX, 0);
+                            if (R_SUCCEEDED(watchdog_create) && !watchdog_running)
+                                threadClose(&watchdog);
                             const bool constructors_done =
                                 engine_constructor_run_once(
                                     &constructors, &run_state,
                                     constructor_run_gate, constructor_begin,
                                     constructor_completed, constructor_call,
                                     &ctx);
+                            if (watchdog_running) {
+                                atomic_store_explicit(&ctx.stop_watchdog, true,
+                                                      memory_order_release);
+                                const Result joined = threadWaitForExit(&watchdog);
+                                log_line(log, "constructor_watchdog_join=0x%08x",
+                                         (unsigned)joined);
+                                if (R_SUCCEEDED(joined)) threadClose(&watchdog);
+                            }
                             log_line(log, "constructor_run_completed=%s",
                                      constructors_done ? "yes" : "no");
                             log_line(log, "constructor_run_next_index=%zu",

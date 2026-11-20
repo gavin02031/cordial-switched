@@ -161,14 +161,29 @@ is the expected steady state.
   phase (`constructors` or `jni_onload`) it died in. The app recovers this
   automatically on the next launch; a fresh process re-running constructors
   is correct (their side effects died with the process).
+- `constructor-watchdog.txt` - separate, append-only liveness observations
+  for the experimental exclusive engine launch. The 2026-11-19 `link-44.txt`
+  run executed and returned from constructors 0-2, but stopped recording at
+  `constructor_begin_003` with the UI black and PLUS unresponsive. The next
+  build creates a `watchdog_started=yes` record before entering guest code;
+  if a constructor stays active for approximately 3, 10, 30, or another
+  30-second interval, a separate libnx thread records its index and elapsed
+  time. A heartbeat proves the host process and monitoring thread were still
+  running; it does not identify why the constructor stopped returning. No
+  heartbeat can mean a fatal, watcher startup failure, SD write failure or a
+  blocked monitor, so compare the numbered report's
+  `constructor_watchdog_started=` and `constructor_crash_marker_created=`
+  fields before drawing a conclusion. This is diagnostic only: it does not
+  skip constructors, terminate the guest, or claim JNI_OnLoad completed.
 - `system_property_read name=... result=empty` lines in the diagnostic log:
   the exact "what device is this?" questions the game asked, ready to drop
   into the presented-property table.
 
 ## What to send back
 
-The whole `sdmc:/switch/cordial-switched/` folder (or the newest link-NN.txt
-and any crash-NN.txt). No interpretation needed - the report is the data.
+The whole `sdmc:/switch/cordial-switched/` folder (or the newest link-NN.txt,
+constructor-watchdog.txt, and any crash-NN.txt). No interpretation needed -
+the report is the data.
 
 ## Honest expectations
 
