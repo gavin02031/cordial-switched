@@ -192,6 +192,15 @@ is the expected steady state.
   The `engine_module_registered=bias_0x...` line is the address base to
   subtract from a PC inside the mapped guest ELF. This samples execution;
   it does not change the Roblox library or bypass a constructor.
+  The `link-50.txt` hardware sample succeeded twice, with an identical
+  PC `0xFB774D14C` (guest virtual `0x26DD14C`), LR `0xFB774D014`
+  (guest virtual `0x26DD014`) and unchanged stack frame at 3s/10s.
+  That is evidence of a stable wait or spin, not of further constructor
+  progress. The next build appends `instruction_status=...`, eight 32-bit
+  `insn_-4` through `insn_+3` words around the sampled PC (after verifying
+  that the entire range is readable and inside the pinned guest image),
+  and x0-x28 register values. It reads only executable memory already
+  mapped by Morrow; no guest binary modification or execution occurs.
 - `exception-last.txt` - best-effort userland fault context. Starting with
   the next diagnostic build, the exception records its own build ID, system
   tick and runtime address of `__libnx_exception_handler`. Match the build

@@ -666,6 +666,9 @@ typedef struct {
     char report_path[112];
     Handle guest_thread_handle;
     bool register_sampling_allowed;
+    u64 guest_image_start;
+    u64 guest_image_bytes;
+    u64 guest_module_bias;
     atomic_size_t active_index;
     atomic_bool guest_call_active;
     atomic_bool stop_watchdog;
@@ -680,6 +683,11 @@ typedef struct {
     u64 lr;
     u64 fp;
     u64 sp;
+    u64 guest_pc;
+    u64 gprs[29];
+    u32 instructions[8];
+    const char *instruction_status;
+    Result instruction_query_result;
 } ConstructorThreadSample;
 
 // Sampling is opt-in to the kernel's own 0x32/0x33 capabilities and only
@@ -725,6 +733,37 @@ static ConstructorThreadSample constructor_watchdog_sample(
         sample.lr = regs.lr;
         sample.fp = regs.fp;
         sample.sp = regs.sp;
+        for (unsigned i = 0; i < 29; ++i)
+            sample.gprs[i] = regs.cpu_gprs[i].x;
+
+        // A PC alone only tells us where the guest waits. Copy eight ARM64
+        // instructions around it from an already-pinned readable RX image,
+        // so we can identify the loop without touching the proprietary ELF.
+        sample.instruction_status = "outside_guest_image";
+        if (ctx->guest_image_bytes >= 32 &&
+            sample.pc >= ctx->guest_image_start &&
+            sample.pc - ctx->guest_image_start >= 16 &&
+            sample.pc - ctx->guest_image_start <=
+                ctx->guest_image_bytes - 16 &&
+            sample.pc >= ctx->guest_module_bias) {
+            sample.guest_pc = sample.pc - ctx->guest_module_bias;
+            MemoryInfo info = {0};
+            u32 page_info = 0;
+            sample.instruction_query_result = svcQueryMemory(
+                &info, &page_info, sample.pc);
+            sample.instruction_status = "query_failed";
+            if (R_SUCCEEDED(sample.instruction_query_result)) {
+                sample.instruction_status = "not_readable_or_boundary";
+                if ((info.perm & Perm_R) && info.size >= 32 &&
+                    sample.pc >= info.addr && sample.pc - info.addr >= 16 &&
+                    sample.pc - info.addr <= info.size - 16) {
+                    memcpy(sample.instructions,
+                           (const void *)(uintptr_t)(sample.pc - 16),
+                           sizeof(sample.instructions));
+                    sample.instruction_status = "ok";
+                }
+            }
+        }
     }
     return sample;
 }
@@ -744,8 +783,8 @@ static void constructor_watchdog_record(const ConstructorRunContext *ctx,
     const int fd = open(ENGINE_REPORT_DIR "/constructor-watchdog.txt",
                         O_WRONLY | O_CREAT | O_APPEND, 0600);
     if (fd < 0) return;
-    char line[448];
-    const int n = index == SIZE_MAX
+    char line[1600];
+    const int head = index == SIZE_MAX
         ? snprintf(line, sizeof(line),
                    "%ld.%llu link_report=%.95s watchdog_started=yes\n",
                    (long)time(NULL), (unsigned long long)armGetSystemTick(),
@@ -753,7 +792,7 @@ static void constructor_watchdog_record(const ConstructorRunContext *ctx,
         : snprintf(line, sizeof(line),
                    "%ld.%llu link_report=%.95s active_constructor=%zu guest_call_active=%d approx_seconds=%u "
                    "register_sample=%s pause=0x%08x dump=0x%08x resume=0x%08x "
-                   "pc=0x%016llx lr=0x%016llx fp=0x%016llx sp=0x%016llx\n",
+                   "pc=0x%016llx lr=0x%016llx fp=0x%016llx sp=0x%016llx",
                    (long)time(NULL), (unsigned long long)armGetSystemTick(),
                    ctx->report_path, index,
                    atomic_load_explicit(&ctx->guest_call_active,
@@ -765,15 +804,52 @@ static void constructor_watchdog_record(const ConstructorRunContext *ctx,
                    (unsigned long long)sample.lr,
                    (unsigned long long)sample.fp,
                    (unsigned long long)sample.sp);
-    if (n > 0 && (size_t)n < sizeof(line)) {
+    if (head <= 0 || (size_t)head >= sizeof(line)) {
+        close(fd);
+        return;
+    }
+    size_t length = (size_t)head;
+    if (index != SIZE_MAX && strcmp(sample.status, "ok") == 0) {
+        int n = snprintf(line + length, sizeof(line) - length,
+                         " guest_pc=0x%llx instruction_status=%s query=0x%08x",
+                         (unsigned long long)sample.guest_pc,
+                         sample.instruction_status,
+                         (unsigned)sample.instruction_query_result);
+        if (n < 0 || (size_t)n >= sizeof(line) - length) {
+            close(fd);
+            return;
+        }
+        length += (size_t)n;
+        if (strcmp(sample.instruction_status, "ok") == 0) {
+            for (unsigned i = 0; i < 8; ++i) {
+                n = snprintf(line + length, sizeof(line) - length,
+                             " insn_%+d=%08x", (int)i - 4,
+                             (unsigned)sample.instructions[i]);
+                if (n < 0 || (size_t)n >= sizeof(line) - length) break;
+                length += (size_t)n;
+            }
+        }
+        for (unsigned i = 0; i < 29; ++i) {
+            n = snprintf(line + length, sizeof(line) - length,
+                         " x%u=%016llx", i,
+                         (unsigned long long)sample.gprs[i]);
+            if (n < 0 || (size_t)n >= sizeof(line) - length) break;
+            length += (size_t)n;
+        }
+    }
+    if (index != SIZE_MAX && length + 1 < sizeof(line)) {
+        line[length++] = '\n';
+        line[length] = 0;
+    }
+    if (length > 0 && length < sizeof(line)) {
         size_t written = 0;
-        while (written < (size_t)n) {
-            const ssize_t chunk = write(fd, line + written, (size_t)n - written);
+        while (written < length) {
+            const ssize_t chunk = write(fd, line + written, length - written);
             if (chunk < 0 && errno == EINTR) continue;
             if (chunk <= 0) break;
             written += (size_t)chunk;
         }
-        if (written == (size_t)n) fsync(fd);
+        if (written == length) fsync(fd);
     }
     close(fd);
 }
@@ -1704,6 +1780,11 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
                             ctx.register_sampling_allowed =
                                 envIsSyscallHinted(0x32) &&
                                 envIsSyscallHinted(0x33);
+                            ctx.guest_image_start =
+                                (u64)(uintptr_t)reservation.mapped;
+                            ctx.guest_image_bytes = plan.image_bytes;
+                            ctx.guest_module_bias = ctx.guest_image_start -
+                                stage.lowest_virtual_address;
                             log_line(log,
                                      "constructor_register_sampling=%s thread_handle=0x%x",
                                      ctx.register_sampling_allowed ? "available" :
