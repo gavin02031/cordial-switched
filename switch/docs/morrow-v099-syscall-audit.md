@@ -61,19 +61,59 @@ reproducible:
   wrapper form the original audit's limits section said it could not
   detect. These are not dead leaf stubs.
 - Five more table slots (0x66226b0-0x66227c0) point at function entries
-  0x5a7a0e8-0x5a7a744 in that region; only 0x5a7a744's function is
-  confirmed to contain inline svc sites (0x5a7aa34, 0x5a7aaa4). The other
-  four functions show no svc in their first 0x400 bytes.
+  0x5a7a0e8-0x5a7a744 in that region. ~~Only 0x5a7a744's function is
+  confirmed to contain inline svc sites (0x5a7aa34, 0x5a7aaa4)~~ -
+  WITHDRAWN in Revision 2: that attribution was wrong. None of the five
+  referenced function bodies contains an inline svc site.
 - Total confirmed raw-svc sites: 16 (7 wrappers + 9 inline). The true
-  total remains open (the other raw pattern hits are still mostly presumed
-  data, not disproven).
+  total remains open (see Revision 2 for the sharpened census).
+
+## Revision 2 (2026-11-20): svc-site attribution correction and census
+
+Revision 1 attributed the inline svc sites at 0x5a7aa34 and 0x5a7aaa4 to
+the table-referenced function at 0x5a7a744. Direct disassembly shows that
+function is a 0x3c-byte wrapper (stp prologue, one BL to 0x1db7d3c, ret at
+0x5a7a780) containing no svc. The attribution is withdrawn.
+
+Control-flow check of all five table-referenced functions (0x5a7a0e8,
+0x5a7a100, 0x5a7a168, 0x5a7a590, 0x5a7a744): recursive descent from each
+entry, following direct b/b.cond/cbz/cbnz/tbz/tbnz branches and call
+fallthrough, finds NO inline svc site in any of the five bodies. The only
+indirect control transfers are three `blr x8` C++ virtual calls in
+0x5a7a168 (vtable load: ldr x8,[obj]; ldr x8,[x8,#0x10]; blr x8), whose
+callees are runtime data and statically unbounded; no direct branch from
+any of the five reaches the svc region.
+
+The nine inline svc sites (0x5a7aa34-0x5a7d060) instead belong to larger
+functions starting at or after 0x5a7a7b0 (e.g. the one at 0x5a7a7b0 with a
+0x360-byte frame containing 0x5a7aa34/0x5a7aaa4), which are NOT referenced
+by the five table slots. What references them remains unresolved.
+
+What still stands from Revision 1: the relocation-derived pointer
+reachability result (slot 0x61dec08 -> getpid wrapper stub 0x267d0c0),
+the nine inline sites themselves, and all dispatch-mechanics analysis.
+
+Census, sharpened: an aligned word scan of the executable segment
+((word & 0xFFE0001F) == 0xD4000001) finds 130 `svc #0` pattern hits and
+69 hits with non-zero immediates. Per-1MB regions of the svc #0 hits:
+0xc00000: 43, 0xd00000: 41, 0xe00000: 30, 0x2600000: 7, 0x5a00000: 9.
+The 0x2600000 and 0x5a00000 regions match the 16 confirmed sites exactly
+(7 stub svcs, 9 inline svcs - no extras in those regions). The remaining
+114 svc #0 hits cluster in 0xc00000-0xefffff and are UNVERIFIED: word-scan
+hits can be embedded data, and these have not been confirmed as decoded
+instructions by disassembly. The 69 non-zero-immediate hits are presumed
+data constants (their immediate values are irregular) but are likewise
+unverified. True reachable-svc total: still open.
 
 Implication changes: "zero references" is dead as a reachability argument.
 Any reached svc #0 still fatals under the examined kernel implementation
 (see dispatch mechanics below), so the execution-phase risk is UNCHANGED in
-kind but WIDER in surface: pointer-referenced, ordinary-function inline
-syscalls with runtime-computed numbers must be assumed reachable through
-the normal call graph until a per-path analysis says otherwise.
+kind but WIDER in surface: ordinary functions containing inline syscalls
+with runtime-computed numbers must be assumed reachable through the normal
+call graph until a per-path analysis says otherwise. (Revision 2 withdrew
+the specific five-slot linkage to the inline sites; the conservative
+reachability posture stands because the containing functions' callers
+remain unresolved.)
 
 ## Horizon dispatch mechanics (source-grounded)
 
@@ -130,8 +170,11 @@ test console, and nothing here is hardware-observed behavior.
   forms, are not detected. (Revision 1: this gap is now confirmed real -
   9 inline register-computed sites found at 0x5a7aa34-0x5a7d060. Callers
   of their containing functions are not yet enumerated.)
-- The 123 remaining `svc #0` pattern hits are presumed literal-pool data but
-  are not individually disproven; the true raw-syscall count is >= 7.
+- The remaining `svc #0` pattern hits are not individually disproven;
+  Revision 2 counts 130 aligned `svc #0` word hits in total, 16 confirmed
+  as instructions, leaving 114 unverified (clustered in 0xc00000-0xefffff;
+  word-scan hits can be embedded data). The true raw-syscall count is
+  >= 16.
 - 3 hits carry small non-zero immediates (12, 13, 20) that would be valid
   Horizon ids. Near-certain data constants: an Android ELF contains no
   Horizon-targeted code. Flagged, not resolved.
