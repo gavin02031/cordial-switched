@@ -302,6 +302,12 @@ static void *guest_mmap(void *hint, size_t length, int protection, int flags,
                               memory_order_relaxed);
         trace_arena_event("arena_mmap_ok", (uintptr_t)base, size,
                           last_kernel_result);
+        // The return site identifies the guest allocator call even when its
+        // first memory access faults before the watchdog can sample the PC.
+        trace_arena_event("arena_mmap_guest_lr",
+                          (uintptr_t)__builtin_extract_return_addr(
+                              __builtin_return_address(0)),
+                          (uintptr_t)base, size);
     }
 #endif
     return base;
@@ -331,10 +337,27 @@ static int guest_mprotect(void *base, size_t length, int protection)
     }
     pthread_mutex_unlock(&lock);
 #ifdef __SWITCH__
-    if (trace)
+    if (trace) {
         trace_arena_event("arena_protect_return",
                           (uint32_t)result, result ? (unsigned)errno : 0,
                           last_kernel_result);
+        if (!result) {
+            // A successful SetMemoryPermission call is not evidence that the
+            // guest's next dereference will be valid. Save the actual kernel
+            // memory state and guest return PC before handing control back.
+            MemoryInfo info = {0};
+            u32 page_info = 0;
+            const Result query = svcQueryMemory(&info, &page_info,
+                                                 (u64)(uintptr_t)base);
+            trace_arena_event("arena_protect_query", (unsigned)query,
+                              R_SUCCEEDED(query) ? info.perm : 0,
+                              R_SUCCEEDED(query) ? info.type : 0);
+        }
+        trace_arena_event("arena_protect_guest_lr",
+                          (uintptr_t)__builtin_extract_return_addr(
+                              __builtin_return_address(0)),
+                          (uintptr_t)base, size);
+    }
 #endif
     return result;
 }

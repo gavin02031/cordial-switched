@@ -51,6 +51,7 @@
 #include "engine_constructor_plan.h"
 #include "engine_constructor_run.h"
 #include "engine_early_trace.h"
+#include "constructor_watchdog_schedule.h"
 #include "engine_execution_attempt.h"
 #include "engine_run_journal.h"
 #include "engine_memory_plan.h"
@@ -803,7 +804,7 @@ static ConstructorThreadSample constructor_watchdog_sample(
 // Keep its output separate from the main FILE so a guest-blocked main thread
 // cannot hold the report's stdio lock while the monitor is writing.
 static void constructor_watchdog_record(const ConstructorRunContext *ctx,
-                                        size_t index, unsigned elapsed)
+                                        size_t index, unsigned elapsed_ms)
 {
     const ConstructorThreadSample sample = index == SIZE_MAX
         ? (ConstructorThreadSample){.status = "startup"}
@@ -820,14 +821,15 @@ static void constructor_watchdog_record(const ConstructorRunContext *ctx,
         : snprintf(line, sizeof(line),
                    "%ld.%llu link_report=%.95s active_constructor=%zu guest_call_active=%d approx_seconds=%u "
                    "register_sample=%s pause=0x%08x dump=0x%08x resume=0x%08x "
-                   "pc=0x%016llx lr=0x%016llx fp=0x%016llx sp=0x%016llx",
+                   "elapsed_ms=%u pc=0x%016llx lr=0x%016llx fp=0x%016llx sp=0x%016llx",
                    (long)time(NULL), (unsigned long long)armGetSystemTick(),
                    ctx->report_path, index,
                    atomic_load_explicit(&ctx->guest_call_active,
                                         memory_order_acquire) ? 1 : 0,
-                   elapsed, sample.status, (unsigned)sample.pause_result,
+                   elapsed_ms / 1000, sample.status, (unsigned)sample.pause_result,
                    (unsigned)sample.dump_result,
                    (unsigned)sample.resume_result,
+                   elapsed_ms,
                    (unsigned long long)sample.pc,
                    (unsigned long long)sample.lr,
                    (unsigned long long)sample.fp,
@@ -904,26 +906,29 @@ static void constructor_watchdog_thread(void *argument)
 {
     ConstructorRunContext *ctx = argument;
     size_t last_index = SIZE_MAX;
-    unsigned elapsed = 0;
+    unsigned elapsed_ms = 0;
     while (!atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire)) {
-        svcSleepThread(1000000000LL);
+        const unsigned delay_ms = morrow_watchdog_delay_ms(elapsed_ms);
+        svcSleepThread((s64)delay_ms * 1000000LL);
         if (atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire))
             break;
         const size_t index = atomic_load_explicit(&ctx->active_index,
                                                    memory_order_acquire);
         if (index == SIZE_MAX) {
             last_index = SIZE_MAX;
-            elapsed = 0;
+            elapsed_ms = 0;
             continue;
         }
         if (index != last_index) {
             last_index = index;
-            elapsed = 0;
+            elapsed_ms = 0;
+            // The sleep above may belong to the prior constructor. Start
+            // this one's timing at the next 20 ms tick, not the old delay.
+            continue;
         }
-        if (elapsed < UINT_MAX) elapsed++;
-        if (elapsed == 3 || elapsed == 10 || elapsed == 30 ||
-            (elapsed > 30 && elapsed % 30 == 0))
-            constructor_watchdog_record(ctx, index, elapsed);
+        if (elapsed_ms <= UINT_MAX - delay_ms) elapsed_ms += delay_ms;
+        if (morrow_watchdog_sample_due(elapsed_ms))
+            constructor_watchdog_record(ctx, index, elapsed_ms);
     }
 }
 

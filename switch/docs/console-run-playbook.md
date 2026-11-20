@@ -228,6 +228,18 @@ is the expected steady state.
   code/errno/kernel result. For constructors, the arguments are
   index/guest target/zero. A last entry without its corresponding return
   narrows an early fatal but is not proof of where the fault occurred.
+  In link-58 (0.99.6), constructors 0-2 returned, constructor 3 allocated
+  a 0x7b2000-byte arena and the permission change returned success, but no
+  constructor 3 completion or three-second watchdog sample followed.
+  The follow-up probe records `arena_mmap_guest_lr` and
+  `arena_protect_guest_lr` (return address of the guest call site), plus
+  `arena_protect_query` (kernel query Result, actual permission and state).
+  Watchdog snapshots are now scheduled at approximately 20, 100, 300,
+  1,000, and 3,000 ms, before falling back to the former long intervals;
+  their `elapsed_ms` fields distinguish early samples from older reports.
+  This captures evidence without changing `libroblox.so` or bypassing a
+  failed constructor. Host tests validate the schedule only: actual
+  Switch liveness and gameplay remain unverified.
 - `exception-last.txt` - best-effort userland fault context. Starting with
   the next diagnostic build, the exception records its own build ID, system
   tick and runtime address of `__libnx_exception_handler`. Match the build

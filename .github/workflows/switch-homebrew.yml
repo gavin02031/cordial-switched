@@ -66,6 +66,12 @@ jobs:
             switch/source/engine_early_trace.c \
             -o /tmp/morrow-early-trace-test
           /tmp/morrow-early-trace-test
+      - name: Test sub-second constructor watchdog probe schedule
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/constructor_watchdog_schedule_test.c \
+            -o /tmp/morrow-watchdog-schedule-test
+          /tmp/morrow-watchdog-schedule-test
       - name: Test guest TPIDR bridge model and constructor run order
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
