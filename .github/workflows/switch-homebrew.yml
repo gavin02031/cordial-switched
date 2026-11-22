@@ -47,6 +47,12 @@ jobs:
             switch/source/engine_execution_attempt.c switch/source/engine_memory_plan.c \
             -o /tmp/morrow-input-bind-test
           /tmp/morrow-input-bind-test
+      - name: Test pre-guest memory budget formatter
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/engine_memory_budget_test.c switch/source/engine_memory_budget.c \
+            -o /tmp/morrow-memory-budget-test
+          /tmp/morrow-memory-budget-test
       - name: Test bounded and read-only SD log viewer
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

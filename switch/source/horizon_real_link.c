@@ -1,6 +1,7 @@
 #include "horizon_real_link.h"
 #include "android_import_resolver.h"
 #include "engine_module_registry.h"
+#include "engine_memory_budget.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1019,6 +1020,32 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
     log_line(log, "morrow_build_version=%s", MORROW_BUILD_VERSION);
     log_line(log, "attempt_epoch=%ld attempt_tick=%llu", (long)time(NULL),
              (unsigned long long)armGetSystemTick());
+    {
+        // Read-only kernel queries plus one stat of the engine file; no guest
+        // code and no mapping. Logged before any action so a later fatal
+        // still leaves the figures behind.
+        EngineMemoryBudgetInput budget = {0};
+        u64 value = 0;
+        if (R_SUCCEEDED(svcGetInfo(&value, InfoType_TotalMemorySize,
+                                   CUR_PROCESS_HANDLE, 0))) {
+            budget.total_ok = 1;
+            budget.total_bytes = value;
+        }
+        if (R_SUCCEEDED(svcGetInfo(&value, InfoType_UsedMemorySize,
+                                   CUR_PROCESS_HANDLE, 0))) {
+            budget.used_ok = 1;
+            budget.used_bytes = value;
+        }
+        struct stat engine_stat;
+        if (stat(ENGINE_LIBRARY_PATH, &engine_stat) == 0 &&
+            engine_stat.st_size > 0) {
+            budget.file_ok = 1;
+            budget.file_bytes = (uint64_t)engine_stat.st_size;
+        }
+        char budget_line[200];
+        engine_memory_budget_format(&budget, budget_line, sizeof budget_line);
+        log_line(log, "%s", budget_line);
+    }
     if (action == 0) {
         probe_guest_data_mapping(log);
 #ifdef MORROW_HAS_STACK_GUARDS

@@ -172,3 +172,22 @@ own verified fallback selects MADV_DONTNEED, which the shim serves.
 - Not yet observed: a guest actually requesting execute memory on the
   console, code-region capacity alongside the engine-image reservation at
   runtime, and any guest JIT behaviour on hardware.
+
+## Pre-guest memory budget line (host-tested formatter, device behavior unverified)
+
+Every real-link attempt now writes one `memory_budget ...` line before any
+action runs: process total and used memory from `svcGetInfo`, the engine file
+size from `stat`, and an arithmetic verdict. The numbers come from read-only
+queries; unavailable values print as `unavailable`, never zero.
+
+What it does NOT say: the engine file is a lower bound on the mapped image
+(bss, guest heap, thread stacks come on top), so `file_below_free_not_a_fit_claim`
+is not a fit prediction. `file_exceeds_free` would be real evidence the image
+cannot map. Whether the Lite has enough memory in this launch mode is still
+UNVERIFIED until a run logs the line.
+
+Scope of the "diagnostic runs no guest code" statement: it covers the
+selected action's own code in horizon_real_link_run only. Whether relocation
+processing, resolver callbacks or automatic initializers reachable on the
+diagnostic path can run guest code has NOT been traced; do not describe the
+diagnostic path as guest-free until that trace is done.
