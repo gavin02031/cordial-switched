@@ -138,3 +138,17 @@ extension the context does not advertise; Android engines are built for
 exactly that semantic (they gate on the GL_EXTENSIONS string), so this
 matches the platform the guest was written for. Any residual misuse is
 hardware-evidence territory, not something to pre-guess.
+
+## libc.so registered for dlopen/dlsym (addendum, this change)
+
+The dlopen table now registers libc.so alongside the existing native
+adapters. dlsym against its handle routes to android_libc_compat_resolve
+with the same ("LIBC", "libc.so") identity the static import resolver
+already uses, so runtime lookups and link-time imports serve identical
+symbols; unknown names still get an honest NULL plus dlerror, and
+unregistered libraries (libssl.so et al.) stay refused. Verified guest
+path motivating this: dlopen("libc.so", RTLD_LAZY) then
+dlsym("getauxval") at 0x1dd11d0 with a cbz fallback at 0x1dd1214 that
+honestly tolerates either answer; getauxval itself is the existing
+implementation (AT_PAGESZ, AT_RANDOM, else ENOENT). Host test covers
+open/lookup/miss/close and CI compiles the added translation units.

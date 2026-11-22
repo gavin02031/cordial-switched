@@ -14,11 +14,12 @@
 #include "android_configuration_compat.h"
 #include "android_egl_gles_compat.h"
 #include "android_math_compat.h"
+#include "android_libc_compat.h"
 #include "engine_module_registry.h"
 
 enum { DL_ERROR_BYTES = 128 };
 enum { MODULE_LOG, MODULE_ANDROID, MODULE_MATH, MODULE_DL,
-       MODULE_EGL, MODULE_GLES2, MODULE_COUNT };
+       MODULE_EGL, MODULE_GLES2, MODULE_LIBC, MODULE_COUNT };
 
 typedef struct {
     const char *name;
@@ -29,6 +30,7 @@ static CompatModule modules[MODULE_COUNT] = {
     {"liblog.so", 0}, {"libandroid.so", 0},
     {"libm.so", 0}, {"libdl.so", 0},
     {"libEGL.so", 0}, {"libGLESv2.so", 0},
+    {"libc.so", 0},
 };
 static pthread_mutex_t module_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -151,6 +153,12 @@ static void *bionic_dlsym(void *handle, const char *name)
         android_math_compat_resolve(name, "LIBC", "libm.so", &address);
     else if (module == &modules[MODULE_DL])
         android_dl_compat_resolve(name, "LIBC", "libdl.so", &address);
+    else if (module == &modules[MODULE_LIBC])
+        // Same symbols the static import resolver already serves for libc;
+        // unknown names still get an honest NULL plus dlerror. Verified
+        // guest path: dlopen("libc.so") then dlsym("getauxval") at
+        // 0x1dd11d0, with a cbz fallback that handles either answer.
+        android_libc_compat_resolve(name, "LIBC", "libc.so", &address);
     else if ((module == &modules[MODULE_EGL] && strncmp(name, "egl", 3) == 0) ||
              (module == &modules[MODULE_GLES2] && strncmp(name, "gl", 2) == 0))
         android_egl_gles_compat_resolve(name, NULL, NULL, &address);

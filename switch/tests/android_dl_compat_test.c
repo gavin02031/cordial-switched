@@ -13,6 +13,7 @@
 #include "android_configuration_compat.h"
 #include "android_math_compat.h"
 #include "android_egl_gles_compat.h"
+#include "android_libc_compat.h"
 #include "engine_module_registry.h"
 
 typedef void *(*OpenLibrary)(const char *, int);
@@ -193,6 +194,18 @@ int main(void)
     assert(lookup_symbol(dl_library, "dlopen") == (void *)(uintptr_t)open_library);
     assert(find_address((const void *)(uintptr_t)open_library, NULL) == 0);
     assert(close_library(dl_library) == 0);
+
+    // libc.so is a registered module serving the same symbols as the static
+    // import resolver; unknown names still get an honest NULL plus dlerror.
+    void *libc_library = open_library("libc.so", 0);
+    assert(libc_library);
+    assert(android_libc_compat_resolve("getauxval", "LIBC", "libc.so", &expected));
+    assert(lookup_symbol(libc_library, "getauxval") == (void *)(uintptr_t)expected);
+    assert(lookup_symbol(libc_library, "strlen") != NULL);
+    assert(lookup_symbol(libc_library, "definitely_not_a_libc_symbol") == NULL);
+    assert(get_error() != NULL);
+    assert(close_library(libc_library) == 0);
+    assert(open_library("libssl.so", 0) == NULL); // still refused
 
     assert(open_library("/sdmc/surprise.so", 0) == NULL);
     pthread_t worker;
