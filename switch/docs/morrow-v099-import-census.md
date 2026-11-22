@@ -251,8 +251,13 @@ nativeSetGamepadSupportedKeyWithGamepadType, nativeGamepadButtonEvent,
 nativeGamepadAxisEvent, nativeSetGamepadSupportedMotionWithGamepadType;
 nativePassKeyEvent stays on NativeGLInterface. The entry probe now
 classifies all six NativeInputInterface gamepad exports with their
-virtual addresses (host-tested); binding to the pump stays a future
-activation step. Verified shapes:
+virtual addresses (host-tested). morrow_input_bind translates the four
+pump natives (connect, disconnect, supported-key, button) into pump
+entries through the loader's RX-run translation - pure address math,
+nothing invoked, missing or non-RX exports stay null; axis and
+supported-motion are deliberately not bound. Binding says nothing about
+readiness, lifetime, thread or device gates; activation still requires
+every pump gate independently. Verified shapes:
 nativePassInput(env, cls, int, int, float, float) @0x275949c;
 nativePassKeyEvent(env, cls, int, int, int, int) @0x2755560 on
 NativeGLInterface; nativeGamepadButtonEvent(env, cls, int, int, int)

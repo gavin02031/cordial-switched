@@ -39,6 +39,14 @@ jobs:
             switch/source/morrow_input_map.c \
             -o /tmp/morrow-input-pump-test
           /tmp/morrow-input-pump-test
+      - name: Test probe-to-pump binding is translation only
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/morrow_input_bind_test.c switch/source/morrow_input_bind.c \
+            switch/source/morrow_input_pump.c switch/source/morrow_input_map.c \
+            switch/source/engine_execution_attempt.c switch/source/engine_memory_plan.c \
+            -o /tmp/morrow-input-bind-test
+          /tmp/morrow-input-bind-test
       - name: Test bounded and read-only SD log viewer
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
