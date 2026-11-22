@@ -239,3 +239,31 @@ Host-verified in the provider test (morrow_jni_runtime_test.cpp): the
 observer logs each distinct unmodeled class/method once, stops writing at
 the 192-entry cap, and a placeholder static call returns the zero default
 without crashing. Host result, not a console observation.
+
+## Input entry points (2026-11-22)
+
+The guest exports 34 Java_* input natives as dynamic symbols; binding is
+Android's automatic native resolution, so the runtime can resolve them
+through the loader exactly like JNI_OnLoad. Verified shapes:
+nativePassInput(env, cls, int, int, float, float) @0x275949c;
+nativePassKeyEvent(env, cls, int, int, int, int) @0x2755560 on
+NativeGLInterface; nativeGamepadButtonEvent(env, cls, int, int, int)
+@0x2759c70; nativeGamepadAxisEvent(env, cls, int, int, float, float,
+float) @0x2759cfc; nativeGamepadConnectEventWithGamepadType @0x27599f0;
+nativeSetGamepadSupportedKeyWithGamepadType @0x2759b30. None of them read
+the JNIEnv or jclass argument. Each posts to a lazily-initialized,
+acquire-guarded event-stream singleton in guest .bss; cross-thread posting
+is a source-supported interpretation, not yet a proven synchronization
+contract.
+
+The guest translates the public Android code domain itself: its key mapper
+(0x2759248) has one branch per honored keycode (4, 19-23, 96, 97, 99,
+100, 102-109 honored; 98 and 101 return unmapped) and its axis mapper
+(0x27593f0) honors axes 0, 1, 11, 14 plus hat/trigger axes 15-18, 22, 23
+(the hat axes are split into dpad events by the caller at 0x2759d2c).
+morrow_input_map.c maps the abstract pad to exactly this honored set and
+its host test asserts no emittable code falls outside it. Digital triggers
+use the L2/R2 keys, which reach the same guest codes as the trigger axes.
+Unresolved: the float payload layout of axis events, per-argument
+semantics of the int fields, and the post path's synchronization; those
+stay inactive until pinned from the consumer side.
