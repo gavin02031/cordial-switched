@@ -983,6 +983,23 @@ static void constructor_call(uintptr_t target, void *context)
     atomic_store_explicit(&ctx->guest_call_active, false, memory_order_release);
 }
 
+// Mirror diag_marker() in main.c: best-effort, fsync'd, silently skipped
+// on failure. Names the numbered report this run opened so a fatal during
+// the run can be attributed to exactly one link-NN.txt without relying on
+// file mtimes.
+static void note_link_opened(const char *log_path)
+{
+    const char *name = strrchr(log_path, '/');
+    name = name ? name + 1 : log_path;
+    FILE *marker = fopen(ENGINE_REPORT_DIR "/diag-progress.txt", "a");
+    if (!marker) return;
+    fprintf(marker, "%ld.%llu link_opened %s\n", (long)time(NULL),
+            (unsigned long long)armGetSystemTick(), name);
+    fflush(marker);
+    fsync(fileno(marker));
+    fclose(marker);
+}
+
 void horizon_real_link_run(RealLinkResult *result, unsigned action)
 {
     if (!result) return;
@@ -997,6 +1014,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         detail(result, "Cannot save a numbered link report.");
         return;
     }
+    note_link_opened(result->log_path);
     log_line(log, "# Morrow native engine entry readiness attempt");
     log_line(log, "morrow_build_version=%s", MORROW_BUILD_VERSION);
     log_line(log, "attempt_epoch=%ld attempt_tick=%llu", (long)time(NULL),

@@ -80,10 +80,13 @@ is the expected steady state.
 
 `sdmc:/switch/cordial-switched/`
 - `diag-progress.txt` - durable crash breadcrumbs (`l3_press`,
-  `jni_preamble_done`, `real_link_returned`), one per line, fsync'd at
-  write. Each line starts with epoch seconds and the boot tick so
-  breadcrumbs correlate with the `attempt_epoch=`/`attempt_tick=` lines
-  in any `link-NN.txt` from the same run. If a run fatals with no
+  `jni_preamble_done`, `real_link_returned`, `link_opened`), one per
+  line, fsync'd at write. Each line starts with epoch seconds and the
+  boot tick so breadcrumbs correlate with the
+  `attempt_epoch=`/`attempt_tick=` lines in any `link-NN.txt` from the
+  same run. `link_opened link-NN.txt` is written the moment a numbered
+  report is created, so a fatal during the run attributes to exactly
+  that file without relying on SD mtimes. If a run fatals with no
   `link-NN.txt` at all, the last line here localizes the stage; a line
   whose timestamp predates the run means the press never reached the
   handler.
