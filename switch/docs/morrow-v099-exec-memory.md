@@ -76,20 +76,56 @@ backing returns to the heap through the normal `drop_piece` path.
 
 - Any protection with W and X simultaneously (`PROT_WRITE|PROT_EXEC`,
   `PROT_READ|PROT_WRITE|PROT_EXEC`): the kernel asserts `!(is_w && is_x)`.
-  Guests that probe RWX first (Luau does) fall back to RW + mprotect,
-  which the shim does serve.
+- `mprotect` adding execute to an ordinary heap-born region. This is the
+  important one: execute permission requires `FlagCode` state, heap pages
+  can never carry it, and a code alias cannot occupy a heap address, so
+  the same-address RW -> RX conversion every textbook JIT uses is
+  impossible on this kernel. The only serveable pattern is execute
+  requested at `mmap` time, where the shim chooses the address.
 - Partial-range `mprotect`/`munmap` on an exec region: one kernel code
   mapping covers the whole region; splitting it is not approximated.
 - `mremap` (grow or shrink) and `madvise` on an exec region.
 - `PROT_WRITE` alone (pre-existing refusal, kept).
 
+## What the guest actually does (verified call-site census)
+
+Every `bl` to the `mmap`/`mprotect` PLT stubs in libroblox.so was
+disassembled and its constant arguments decoded (six `mmap`, four
+`mprotect` sites; no `mmap64` import exists):
+
+- The guest JIT code allocator (function containing 0x2176120) does
+  `mmap(NULL, aligned, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS)`
+  and then `mprotect` parts of the SAME mapping to `PROT_READ` (0x2175fd0)
+  and `PROT_READ|PROT_EXEC` (0x2175ff0) after copying code in. It never
+  probes RWX first. This pattern is kernel-impossible to serve at the
+  same address (see Refusals), so the shim's `ENOTSUP` stands — and the
+  guest handles it cleanly: on a nonzero `mprotect` result the allocator
+  zeroes its result struct and returns failure to its caller (verified at
+  0x2175ff4-0x2176030), with no error-logger call on this path. Whether
+  the caller then disables codegen and runs interpreted is beyond static
+  reach. The earlier claim in this document that the RW + mprotect
+  fallback "is served" was wrong and has been corrected.
+- The guest data allocator (0x23ffb54 cluster) mmaps RW anonymous and
+  fences guard pages with `PROT_NONE` at both ends — fully served by the
+  ordinary path.
+- Two shared file mappings (`flags & MAP_SHARED`, one RW at 0x1eb1be4,
+  one R|MAP_NORESERVE at 0x20194e8) are refused by the pre-existing
+  private-only rule, unchanged.
+- One read-only `MAP_PRIVATE` file mapping (0x2059ec4) is served.
+- A code alias is also created for private file mappings requested with
+  execute permission (e.g. guest `dlopen` of further libraries), with the
+  contents staged into the backing before the alias is mapped.
+
 ## Verification status
 
 - Host-exercised (x86_64 CI test, native mmap backend): allocation,
   rejection of W&X combos, refusal of partial/resize/discard operations,
-  the full flip sequence RW -> RX -> R -> None -> RX -> RW -> RX, real
-  execution of generated code at the returned address, and teardown. The
-  same test compiles and runs under qemu-aarch64 in the preview workflow.
+  refusal of execute transitions on ordinary regions (regression test for
+  a bug where such an mprotect silently fenced the pages PROT_NONE and
+  reported success), the full flip sequence RW -> RX -> R -> None -> RX
+  -> RW -> RX, real execution of generated code at the returned address,
+  and teardown. The same test compiles and runs under qemu-aarch64 in the
+  preview workflow.
 - Source-grounded (not hardware-observed): every kernel transition used
   is validated against Atmosphere page-table sources. The code-memory
   syscall sequence itself mirrors `horizon_code_memory`, which the

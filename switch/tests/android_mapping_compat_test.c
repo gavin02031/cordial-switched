@@ -91,6 +91,13 @@ int main(void)
     assert(protect_data(p, 4097, 3) == -1);
     assert(protect_data(p, 4096, 3) == 0);
     p[0] = 99;
+    // An ordinary data region can never become executable: the console
+    // kernel only grants execute permissions on code memory, which cannot
+    // occupy a heap address. This must fail loudly, not fake a success
+    // that would surface as a guest fault on the next jump.
+    assert(protect_data(p, 4096, 5) == -1 && errno == ENOTSUP);
+    assert(protect_data(p, 4096, 4) == -1 && errno == ENOTSUP);
+    assert(p[0] == 99);
     assert(unmap_data(p, 4096) == 0);
     assert(protect_data(p, 4096, 3) == -1);
     p = map_data(NULL, 12288, 3, 0x22, -1, 0);
@@ -131,6 +138,9 @@ int main(void)
     assert(unmap_data(p, 4096) == 0);
     // Guest code pages (JIT): execute without write is supported, but only
     // as whole-region operations, and never writable+executable at once.
+    // Non-private mappings stay refused regardless of execute permission.
+    assert(map_data(NULL, 4096, 5, 1, fd, 0) == FAILED && errno == ENOTSUP);
+    assert(map_data(NULL, 4096, 5, 0x32, -1, 0) == FAILED && errno == ENOTSUP);
     unsigned char *jit = map_data(NULL, 8192, 5, 0x22, -1, 0);
     assert(jit != FAILED && (uintptr_t)jit % 4096 == 0);
     assert(resize_data(jit, 8192, 4096, 0) == FAILED && errno == ENOTSUP);

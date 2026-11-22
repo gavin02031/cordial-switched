@@ -413,6 +413,12 @@ static void *guest_mmap(void *hint, size_t length, int protection, int flags,
 #endif
         return FAILED_ADDRESS;
     }
+    if ((protection & 4) && flags != PRIVATE_ANONYMOUS && flags != 2) {
+        // Exec regions are built from private heap backing; shared
+        // semantics cannot be honoured on a code alias.
+        errno = ENOTSUP;
+        return FAILED_ADDRESS;
+    }
     retry_rollbacks();
     Region *region = new_region(size);
     if (!region) {
@@ -487,6 +493,13 @@ static int guest_mprotect(void *base, size_t length, int protection)
             else if (r->protection == protection) result = 0;
             else if (!(result = exec_protect(r, protection)))
                 r->protection = protection;
+        } else if (protection & 4) {
+            // Ordinary regions live on heap pages, which can never carry
+            // FlagCode, and a code alias cannot occupy a heap address: an
+            // execute permission is impossible at this address. Refuse it
+            // rather than silently fencing the pages, which would only
+            // surface as a guest fault later.
+            result = reject(ENOTSUP);
         } else {
             result = protect_pages(base, size, protection);
             if (!result) {
