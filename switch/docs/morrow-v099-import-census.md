@@ -317,5 +317,11 @@ lifetime limits verbatim (unproven acquisition window, handshake is not
 consumer readiness, single producer) so they cannot silently drift from
 the census. Axis events stay INACTIVE: the float payload layout of
 nativeGamepadAxisEvent is unresolved. Button action encoding follows
-Android (0 = down, 1 = up), INFERRED until consumer-verified.
-`switch/tests/morrow_input_pump_test.c` host-tests the gates.
+Android (0 = down, 1 = up), INFERRED until consumer-verified, and the
+pump treats it as non-executable: button emits additionally require the
+explicit encoding-resolved note, so LIVE + bound entries alone never
+deliver inferred semantics. Activation of any path requires resolved
+semantics plus the readiness/lifetime conditions; readiness and bind
+flags alone are not those proofs.
+`switch/tests/morrow_input_pump_test.c` host-tests the gates, including
+the button refusal before encoding resolution.

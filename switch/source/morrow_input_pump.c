@@ -17,6 +17,7 @@ void morrow_input_pump_init(morrow_input_pump_t *pump)
     pump->state = MORROW_INPUT_PUMP_INACTIVE;
     pump->entries = (morrow_input_pump_entries_t){0};
     pump->engine_ready = false;
+    pump->button_action_encoding_resolved = false;
 }
 
 void morrow_input_pump_bind(morrow_input_pump_t *pump,
@@ -52,6 +53,13 @@ void morrow_input_pump_stop(morrow_input_pump_t *pump)
 morrow_input_pump_state_t morrow_input_pump_state(const morrow_input_pump_t *pump)
 {
     return pump ? pump->state : MORROW_INPUT_PUMP_INACTIVE;
+}
+
+void morrow_input_pump_note_button_action_encoding_resolved(morrow_input_pump_t *pump)
+{
+    if (!pump)
+        return;
+    pump->button_action_encoding_resolved = true;
 }
 
 static bool pump_live(const morrow_input_pump_t *pump)
@@ -98,6 +106,10 @@ bool morrow_input_pump_emit_button(morrow_input_pump_t *pump,
                                    bool pressed)
 {
     if (!pump_live(pump) || !pump->entries.gamepad_button_event)
+        return false;
+    // INFERRED encoding is not executable: require the explicit
+    // consumer-verified resolution note on top of LIVE + bound entries.
+    if (!pump->button_action_encoding_resolved)
         return false;
     int code = morrow_input_map_android_key((morrow_input_button_t)morrow_button);
     if (code < 0 || !morrow_input_guest_honors_key(code))

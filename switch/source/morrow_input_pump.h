@@ -47,6 +47,11 @@ typedef struct {
     morrow_input_pump_state_t state;
     morrow_input_pump_entries_t entries;
     bool engine_ready;
+    // Separate proof gates. LIVE + bound entries are NEVER sufficient on
+    // their own: each emit path also requires its semantics to be
+    // resolved. These flags are set only by the explicit note_* calls,
+    // each of which documents the evidence required before calling it.
+    bool button_action_encoding_resolved;
 } morrow_input_pump_t;
 
 void morrow_input_pump_init(morrow_input_pump_t *pump);
@@ -64,6 +69,12 @@ void morrow_input_pump_note_engine_ready(morrow_input_pump_t *pump);
 void morrow_input_pump_stop(morrow_input_pump_t *pump);
 
 morrow_input_pump_state_t morrow_input_pump_state(const morrow_input_pump_t *pump);
+
+// Call ONLY when the button action encoding has been consumer-verified
+// (who reads the record, and which value means down vs up). Until then
+// the encoding is INFERRED from the Android contract (0 = down, 1 = up)
+// and button emits refuse even when the pump is LIVE.
+void morrow_input_pump_note_button_action_encoding_resolved(morrow_input_pump_t *pump);
 
 // Emit helpers. Each returns true only when the event was delivered to the
 // bound guest entry. All refuse unless the pump is LIVE, the entry is

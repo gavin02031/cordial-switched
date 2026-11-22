@@ -64,6 +64,11 @@ int main(void)
     assert(morrow_input_pump_emit_connect(&pump, 7, 1));
     assert(connect_calls == 1 && last_device == 7);
     assert(!morrow_input_pump_emit_disconnect(&pump, 7, 1));
+    // INFERRED action encoding is not executable: LIVE + bound entries
+    // alone do not deliver buttons until the encoding is resolved.
+    assert(!morrow_input_pump_emit_button(&pump, 7, MORROW_INPUT_FACE_DOWN, true));
+    assert(button_calls == 0);
+    morrow_input_pump_note_button_action_encoding_resolved(&pump);
     assert(morrow_input_pump_emit_button(&pump, 7, MORROW_INPUT_FACE_DOWN, true));
     assert(button_calls == 1 && last_device == 7 && last_code == 96 && last_action == 0);
     assert(morrow_input_pump_emit_button(&pump, 7, MORROW_INPUT_START, false));
@@ -83,5 +88,9 @@ int main(void)
     assert(connect_calls == 1);
     morrow_input_pump_bind(&pump, &entries);
     assert(morrow_input_pump_state(&pump) == MORROW_INPUT_PUMP_STOPPED);
+
+    // A stopped pump with resolved semantics still refuses buttons.
+    assert(!morrow_input_pump_emit_button(&pump, 7, MORROW_INPUT_FACE_DOWN, true));
+    assert(button_calls == 2);
     return 0;
 }
