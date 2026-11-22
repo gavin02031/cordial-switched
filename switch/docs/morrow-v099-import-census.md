@@ -286,6 +286,16 @@ post-path function reads thread-local storage (scanned entries, posts,
 record constructor/copy, context once-init, fallback prologue), so the
 producer thread needs no guest TLS setup.
 
+Pre-ready semantics, resolved from the axis post's fallback (0x560e57c):
+when the global engine context is null, the event does NOT enter the
+ring buffer; it fans out synchronously to subscribers registered
+directly on the stream delegate (listener list walked with refcounting,
+handler invoked with the event arguments). So pre-ready events are
+neither buffered nor silently dropped; they take a different delivery
+path. Whether the engine's input system registers such direct
+subscribers before context init is UNVERIFIED, so engine visibility of
+pre-ready events remains unproven and readiness gating stays.
+
 Consequences for wiring: post all guest input events from one dedicated
 Morrow input thread; start posting only after the readiness signal (the
 GameActivity handshake flag is the best anchored signal we have, but it
