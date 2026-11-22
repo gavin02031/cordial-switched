@@ -118,6 +118,22 @@ static void add_extended_bridge_symbols(unsigned char *image)
     }
 }
 
+// Reuse fixture export slots 4-6 to classify gamepad input natives, three
+// per pass. Names are the guest's exact NativeInputInterface exports.
+static void use_gamepad_input_exports(unsigned char *image, const char *a,
+                                      const char *b, const char *c)
+{
+    const char *const trio[3] = {a, b, c};
+    uint32_t offset = 0x200;
+    for (unsigned i = 0; i < 3; ++i) {
+        size_t length = strlen(trio[i]) + 1;
+        assert(offset + length <= 1024);
+        memcpy(image + 0x900 + offset, trio[i], length);
+        put32(image + 0x240 + (i + 4) * 24, offset);
+        offset += (uint32_t)length;
+    }
+}
+
 static void use_activity_lifecycle_export(unsigned char *image, const char *stage)
 {
     static const char prefix[] =
@@ -206,6 +222,39 @@ int main(void)
     assert(result.has_app_bridge_main_thread_messages &&
            result.app_bridge_main_thread_messages_virtual_address == 0x1170);
     assert(!result.has_app_bridge_global_init && !result.has_app_bridge_v2_init);
+
+    // Gamepad input natives classify with their exact exported names.
+    make_fixture(fixture);
+    use_gamepad_input_exports(fixture,
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadConnectEventWithGamepadType",
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadDisconnectEvent",
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadButtonEvent");
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED);
+    assert(result.has_gamepad_connect &&
+           result.gamepad_connect_virtual_address == 0x1150);
+    assert(result.has_gamepad_disconnect &&
+           result.gamepad_disconnect_virtual_address == 0x1160);
+    assert(result.has_gamepad_button_event &&
+           result.gamepad_button_event_virtual_address == 0x1170);
+    assert(!result.has_gamepad_set_supported_key &&
+           !result.has_gamepad_axis_event &&
+           !result.has_gamepad_set_supported_motion);
+    make_fixture(fixture);
+    use_gamepad_input_exports(fixture,
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedKeyWithGamepadType",
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadAxisEvent",
+        "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedMotionWithGamepadType");
+    result = run_fixture(fixture);
+    assert(result.status == ENGINE_ENTRY_INSPECTED);
+    assert(result.has_gamepad_set_supported_key &&
+           result.gamepad_set_supported_key_virtual_address == 0x1150);
+    assert(result.has_gamepad_axis_event &&
+           result.gamepad_axis_event_virtual_address == 0x1160);
+    assert(result.has_gamepad_set_supported_motion &&
+           result.gamepad_set_supported_motion_virtual_address == 0x1170);
+    assert(!result.has_gamepad_connect && !result.has_gamepad_disconnect &&
+           !result.has_gamepad_button_event);
     for (unsigned i = 0; i < ENGINE_ACTIVITY_LIFECYCLE_STAGES; ++i) {
         const char *name = engine_activity_lifecycle_stage_name(i);
         assert(name);

@@ -30,6 +30,17 @@ typedef struct {
     bool has_app_bridge_surface_update;
     bool has_app_bridge_start_app;
     bool has_app_bridge_main_thread_messages;
+    // Gamepad input natives (class NativeInputInterface), discovered like
+    // every other export: bytes only, never executed by this probe. The
+    // first four feed the gated input wiring (morrow_input_pump); the last
+    // two are catalogued but their emit paths stay inactive (see the
+    // import census, input section).
+    bool has_gamepad_connect;
+    bool has_gamepad_disconnect;
+    bool has_gamepad_set_supported_key;
+    bool has_gamepad_button_event;
+    bool has_gamepad_axis_event;
+    bool has_gamepad_set_supported_motion;
     bool has_activity_lifecycle[ENGINE_ACTIVITY_LIFECYCLE_STAGES];
     bool has_init;
     bool has_init_array;
@@ -43,6 +54,12 @@ typedef struct {
     uint64_t app_bridge_surface_update_virtual_address;
     uint64_t app_bridge_start_app_virtual_address;
     uint64_t app_bridge_main_thread_messages_virtual_address;
+    uint64_t gamepad_connect_virtual_address;
+    uint64_t gamepad_disconnect_virtual_address;
+    uint64_t gamepad_set_supported_key_virtual_address;
+    uint64_t gamepad_button_event_virtual_address;
+    uint64_t gamepad_axis_event_virtual_address;
+    uint64_t gamepad_set_supported_motion_virtual_address;
     uint64_t activity_lifecycle_virtual_address[ENGINE_ACTIVITY_LIFECYCLE_STAGES];
     uint64_t init_virtual_address;
     uint64_t init_array_virtual_address;

@@ -244,7 +244,15 @@ without crashing. Host result, not a console observation.
 
 The guest exports 34 Java_* input natives as dynamic symbols; binding is
 Android's automatic native resolution, so the runtime can resolve them
-through the loader exactly like JNI_OnLoad. Verified shapes:
+through the loader exactly like JNI_OnLoad. The gamepad family lives on
+class NativeInputInterface (exact exported names, verified in .dynsym):
+nativeGamepadConnectEventWithGamepadType, nativeGamepadDisconnectEvent,
+nativeSetGamepadSupportedKeyWithGamepadType, nativeGamepadButtonEvent,
+nativeGamepadAxisEvent, nativeSetGamepadSupportedMotionWithGamepadType;
+nativePassKeyEvent stays on NativeGLInterface. The entry probe now
+classifies all six NativeInputInterface gamepad exports with their
+virtual addresses (host-tested); binding to the pump stays a future
+activation step. Verified shapes:
 nativePassInput(env, cls, int, int, float, float) @0x275949c;
 nativePassKeyEvent(env, cls, int, int, int, int) @0x2755560 on
 NativeGLInterface; nativeGamepadButtonEvent(env, cls, int, int, int)

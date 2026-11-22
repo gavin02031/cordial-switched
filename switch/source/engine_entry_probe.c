@@ -183,6 +183,30 @@ static bool scan_symbols(FILE *file, uint64_t symbols_offset, uint64_t count,
                    "Java_com_roblox_engine_jni_NativeGLInterface_nativeCallMessagesFromMainThread") == 0) {
             result->has_app_bridge_main_thread_messages = true;
             result->app_bridge_main_thread_messages_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadConnectEventWithGamepadType") == 0) {
+            result->has_gamepad_connect = true;
+            result->gamepad_connect_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadDisconnectEvent") == 0) {
+            result->has_gamepad_disconnect = true;
+            result->gamepad_disconnect_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedKeyWithGamepadType") == 0) {
+            result->has_gamepad_set_supported_key = true;
+            result->gamepad_set_supported_key_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadButtonEvent") == 0) {
+            result->has_gamepad_button_event = true;
+            result->gamepad_button_event_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeInputInterface_nativeGamepadAxisEvent") == 0) {
+            result->has_gamepad_axis_event = true;
+            result->gamepad_axis_event_virtual_address = address;
+        } else if (strcmp(name,
+                   "Java_com_roblox_engine_jni_NativeInputInterface_nativeSetGamepadSupportedMotionWithGamepadType") == 0) {
+            result->has_gamepad_set_supported_motion = true;
+            result->gamepad_set_supported_motion_virtual_address = address;
         }
     }
     return true;
