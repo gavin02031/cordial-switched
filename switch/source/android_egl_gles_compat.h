@@ -4,7 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// Identifies the core ES2 / EGL symbols that the native Mesa port can answer.
+// Identifies the core EGL / ES2 / ES3.0 / ES3.2 symbols that the native
+// Mesa port can answer. The ES3 entries are verified against Mesa 20.1's
+// libGLESv2 ABI list; EXT/OES/KHR variants and unexported core names stay
+// uncatalogued so guest probes see an honest NULL.
 // Window-surface creation is exposed only through a checked guest-window
 // adapter. It refuses unregistered Java/ANativeWindow handles; the Java
 // runtime must first bind a real Horizon NWindow through the window adapter.

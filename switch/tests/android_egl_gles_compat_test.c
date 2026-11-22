@@ -8,7 +8,7 @@ int main(void)
 {
     // The symbol catalogue can be audited on a host, without pretending
     // Linux's GL implementation is the Nintendo Switch Mesa backend.
-    assert(android_egl_gles_compat_known_count() == 91);
+    assert(android_egl_gles_compat_known_count() == 131);
     assert(android_egl_gles_compat_known("eglInitialize"));
     assert(android_egl_gles_compat_known("eglCreatePbufferSurface"));
     assert(android_egl_gles_compat_known("eglGetProcAddress"));
@@ -16,6 +16,18 @@ int main(void)
     assert(android_egl_gles_compat_known("glUniform1i"));
     assert(android_egl_gles_compat_known("glViewport"));
     assert(android_egl_gles_compat_known("eglCreateWindowSurface"));
+    assert(android_egl_gles_compat_known("glBlitFramebuffer"));
+    assert(android_egl_gles_compat_known("glFenceSync"));
+    assert(android_egl_gles_compat_known("glMapBufferRange"));
+    assert(android_egl_gles_compat_known("glTexStorage2D"));
+    assert(android_egl_gles_compat_known("glCopyImageSubData"));
+    // Deliberately not catalogued: EXT/OES/KHR suffixed variants and core
+    // functions Mesa 20.1 does not export from libGLESv2 (verified against
+    // src/mapi/es2api/gles2-symbols.txt in the mesa-20.1.0 release).
+    assert(!android_egl_gles_compat_known("glBlitFramebufferEXT"));
+    assert(!android_egl_gles_compat_known("glBindVertexArrayOES"));
+    assert(!android_egl_gles_compat_known("glMapBuffer"));
+    assert(!android_egl_gles_compat_known("glBufferStorage"));
     assert(!android_egl_gles_compat_known("glRandomUnimplementedExtension"));
     assert(!android_egl_gles_compat_known("ANativeWindow_fromSurface"));
     assert(!android_egl_gles_compat_known(NULL));

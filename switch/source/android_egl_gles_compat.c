@@ -8,6 +8,16 @@
 #ifdef __SWITCH__
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
+#if defined(__has_include)
+#if __has_include(<GLES3/gl3.h>)
+#include <GLES3/gl3.h>
+#define CORDIAL_SWITCH_GLES3_HEADERS 1
+#endif
+#if __has_include(<GLES3/gl32.h>)
+#include <GLES3/gl32.h>
+#define CORDIAL_SWITCH_GLES32_HEADERS 1
+#endif
+#endif
 #endif
 
 // Keep the imported symbol catalogue explicit. Arbitrary symbols from an
@@ -106,6 +116,58 @@
     X(glVertexAttribPointer) \
     X(glViewport)
 
+// ES 3.0 core entry points the guest references. Each name was verified
+// against Mesa 20.1's libGLESv2 ABI list (src/mapi/es2api/gles2-symbols.txt,
+// identical between mesa-20.1.0-rc3, which devkitPro switch-mesa 20.1.0-5
+// builds, and the mesa-20.1.0 release) and against the declarations in Mesa
+// 20.1's own GLES3/gl3.h. Resolution still gates on the installed headers so
+// a build without them refuses the import instead of guessing a prototype.
+#define GLES3_CORE_SYMBOLS(X) \
+    X(glBeginQuery) \
+    X(glBindBufferBase) \
+    X(glBindBufferRange) \
+    X(glBindVertexArray) \
+    X(glBlitFramebuffer) \
+    X(glClearBufferfi) \
+    X(glClearBufferfv) \
+    X(glClearBufferiv) \
+    X(glClientWaitSync) \
+    X(glCompressedTexImage3D) \
+    X(glCompressedTexSubImage3D) \
+    X(glDeleteQueries) \
+    X(glDeleteSync) \
+    X(glDeleteVertexArrays) \
+    X(glDrawArraysInstanced) \
+    X(glDrawBuffers) \
+    X(glDrawElementsInstanced) \
+    X(glEndQuery) \
+    X(glFenceSync) \
+    X(glFramebufferTextureLayer) \
+    X(glGenQueries) \
+    X(glGenVertexArrays) \
+    X(glGetActiveUniformBlockiv) \
+    X(glGetInteger64v) \
+    X(glGetProgramBinary) \
+    X(glGetQueryiv) \
+    X(glGetUniformBlockIndex) \
+    X(glInvalidateFramebuffer) \
+    X(glMapBufferRange) \
+    X(glProgramBinary) \
+    X(glProgramParameteri) \
+    X(glRenderbufferStorageMultisample) \
+    X(glTexImage3D) \
+    X(glTexStorage2D) \
+    X(glTexStorage3D) \
+    X(glTexSubImage3D) \
+    X(glUniformBlockBinding) \
+    X(glUnmapBuffer) \
+    X(glWaitSync)
+
+// ES 3.2 core entry point the guest references; exported by Mesa 20.1's
+// libGLESv2 (verified as above) and declared in GLES3/gl32.h.
+#define GLES32_CORE_SYMBOLS(X) \
+    X(glCopyImageSubData)
+
 bool android_egl_gles_compat_known(const char *name)
 {
     if (!name) return false;
@@ -115,6 +177,8 @@ bool android_egl_gles_compat_known(const char *name)
 #define KNOWN(symbol) if (strcmp(name, #symbol) == 0) return true;
     EGL_CORE_SYMBOLS(KNOWN)
     GLES2_CORE_SYMBOLS(KNOWN)
+    GLES3_CORE_SYMBOLS(KNOWN)
+    GLES32_CORE_SYMBOLS(KNOWN)
 #undef KNOWN
     return false;
 }
@@ -122,7 +186,8 @@ bool android_egl_gles_compat_known(const char *name)
 unsigned android_egl_gles_compat_known_count(void)
 {
 #define COUNT(symbol) + 1u
-    return 3u EGL_CORE_SYMBOLS(COUNT) GLES2_CORE_SYMBOLS(COUNT);
+    return 3u EGL_CORE_SYMBOLS(COUNT) GLES2_CORE_SYMBOLS(COUNT) \
+        GLES3_CORE_SYMBOLS(COUNT) GLES32_CORE_SYMBOLS(COUNT);
 #undef COUNT
 }
 
@@ -265,6 +330,12 @@ bool android_egl_gles_compat_resolve(const char *name, const char *version,
     }
     EGL_CORE_SYMBOLS(MAP)
     GLES2_CORE_SYMBOLS(MAP)
+#if CORDIAL_SWITCH_GLES3_HEADERS
+    GLES3_CORE_SYMBOLS(MAP)
+#endif
+#if CORDIAL_SWITCH_GLES32_HEADERS
+    GLES32_CORE_SYMBOLS(MAP)
+#endif
 #undef MAP
 #endif
     return false;
