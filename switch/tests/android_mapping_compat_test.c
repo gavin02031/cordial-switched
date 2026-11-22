@@ -104,6 +104,20 @@ int main(void)
     assert(p != FAILED);
     p[0] = 11;
     p[8192] = 22;
+    // Pure-hint advice succeeds as a validated no-op; destructive or
+    // unknown advice gets the Linux EINVAL. The guest allocator probes
+    // MADV_FREE (8) and only falls back to MADV_DONTNEED on EINVAL.
+    assert(discard_data(p, 4096, 1) == 0);
+    assert(discard_data(p, 4096, 14) == 0);
+    assert(discard_data(p, 4096, 16) == 0);
+    assert(discard_data(p, 4096, 23) == 0);
+    assert(discard_data(p, 4096, 8) == -1 && errno == EINVAL);
+    assert(discard_data(p, 4096, 99) == -1 && errno == EINVAL);
+    assert(discard_data(p, 4096, 18) == -1 && errno == EINVAL);
+    assert(p[0] == 11 && p[8192] == 22);
+    assert(discard_data(p, 4096, 4) == 0);
+    assert(p[0] == 0 && p[8192] == 22);
+    p[0] = 11;
     assert(unmap_data(p + 4096, 4096) == 0);
     assert(protect_data(p + 4096, 1, 1) == -1);
     assert(p[0] == 11 && p[8192] == 22);

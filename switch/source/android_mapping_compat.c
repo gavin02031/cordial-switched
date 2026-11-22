@@ -648,7 +648,25 @@ static int guest_madvise(void *base, size_t length, int advice)
 {
     size_t size = page_bytes(length);
     if (!size || (uintptr_t)base % PAGE_BYTES) return reject(EINVAL);
-    if (advice != 4) return reject(ENOTSUP); // MADV_DONTNEED
+    switch (advice) {
+    // Pure hints with no memory-content semantics the guest can observe.
+    // Linux itself may ignore them, so a validated no-op success is the
+    // honest answer. DONTDUMP/DODUMP only scope core dumps, which this
+    // runtime never produces for guest ranges.
+    case 0: case 1: case 2: case 3:       // NORMAL RANDOM SEQUENTIAL WILLNEED
+    case 14: case 15:                     // HUGEPAGE NOHUGEPAGE
+    case 16: case 17:                     // DONTDUMP DODUMP
+    case 20: case 21: case 22: case 23: { // COLD PAGEOUT POPULATE_READ/WRITE
+        pthread_mutex_lock(&lock);
+        int found = find_range(base, size) != NULL;
+        pthread_mutex_unlock(&lock);
+        return found ? 0 : reject(ENOMEM);
+    }
+    }
+    // Linux answers unknown advice with EINVAL. MADV_FREE in particular
+    // must fail this way: the guest allocator probes for it and falls
+    // back to MADV_DONTNEED only on EINVAL (verified at its call site).
+    if (advice != 4) return reject(EINVAL); // MADV_DONTNEED
     pthread_mutex_lock(&lock);
     Region **slot = find_range(base, size);
     int result = 0;
