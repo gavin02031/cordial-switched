@@ -287,8 +287,35 @@ record constructor/copy, context once-init, fallback prologue), so the
 producer thread needs no guest TLS setup.
 
 Consequences for wiring: post all guest input events from one dedicated
-Morrow input thread; start posting only after engine readiness (the
-pre-ready fallback path exists and cannot crash, but whether it buffers
-or drops is unresolved, so readiness gating keeps semantics defined);
-stop posting when the engine stops. Teardown ordering itself is safe by
-the refcount symmetry above.
+Morrow input thread; start posting only after the readiness signal (the
+GameActivity handshake flag is the best anchored signal we have, but it
+proves that handshake, not necessarily consumer readiness); stop posting
+and join the input thread when the engine stops.
+
+Explicit limits, kept unproven by design (2026-11-22, second-pass
+correction): the atomic load-then-incref in the post is the guest's own
+synchronization, but the guest side of that acquisition window is
+UNPROVEN. Not calling the exported release function does not establish
+that the guest never replaces or releases delegates internally; the
+delegate-writer scan produced no verified non-Morrow writer. The
+stop-and-join ordering above therefore protects Morrow-initiated
+teardown only; it does not exclude every post-vs-teardown race
+structurally. Refcount symmetry in nativeReleaseAllRbxEventStreams makes
+OUR teardown path safe; it is not evidence about internal guest timing.
+Wiring that treats these limits as proven is a bug.
+
+### Wiring module: gated and inactive (2026-11-22)
+
+`switch/source/morrow_input_pump.{h,c}` owns gating and argument
+validation for the pinned connect/disconnect/supported-key/button posts.
+It resolves no guest symbols; entries arrive as function pointers at
+activation time. Every emit refuses unless the pump is LIVE (entries
+bound AND the readiness signal observed), the entry is bound, the
+control maps to a guest-honored code, and the gamepad type enum is
+inside the guest's 1..3 clamp. Stop is terminal. The header carries the
+lifetime limits verbatim (unproven acquisition window, handshake is not
+consumer readiness, single producer) so they cannot silently drift from
+the census. Axis events stay INACTIVE: the float payload layout of
+nativeGamepadAxisEvent is unresolved. Button action encoding follows
+Android (0 = down, 1 = up), INFERRED until consumer-verified.
+`switch/tests/morrow_input_pump_test.c` host-tests the gates.
