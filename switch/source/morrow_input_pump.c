@@ -4,9 +4,9 @@
 
 #include "morrow_input_map.h"
 
-// Android key event actions (public API), used for button events. The
-// guest passes the value through to its own record; the encoding is
-// INFERRED from the Android contract until consumer-verified.
+// Android key event actions (public API), used for button events.
+// Consumer-verified in the guest's state application: pressed iff
+// action != 1, i.e. 0 = down, 1 = up.
 #define MORROW_ACTION_DOWN 0
 #define MORROW_ACTION_UP 1
 
@@ -107,8 +107,8 @@ bool morrow_input_pump_emit_button(morrow_input_pump_t *pump,
 {
     if (!pump_live(pump) || !pump->entries.gamepad_button_event)
         return false;
-    // INFERRED encoding is not executable: require the explicit
-    // consumer-verified resolution note on top of LIVE + bound entries.
+    // Verified encoding still requires the explicit resolution note on
+    // top of LIVE + bound entries: semantics activation is deliberate.
     if (!pump->button_action_encoding_resolved)
         return false;
     int code = morrow_input_map_android_key((morrow_input_button_t)morrow_button);

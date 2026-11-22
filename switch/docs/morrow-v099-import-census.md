@@ -335,3 +335,38 @@ semantics plus the readiness/lifetime conditions; readiness and bind
 flags alone are not those proofs.
 `switch/tests/morrow_input_pump_test.c` host-tests the gates, including
 the button refusal before encoding resolution.
+
+### Consumer-side verification of button and axis payloads (2026-11-22, third pass)
+
+The posts do more than append ring records: both the button post
+(0x5603288) and the axis post (0x56036e8) synchronously apply the event
+to the controller state under CtrlBufferGuard (stream+0x58, locked in
+the post) on the producer thread. The ring records feed event
+subscribers; the guarded maps feed engine state. Verified from the
+guest's own state application:
+
+- Button action encoding: VERIFIED, no longer INFERRED. Both the
+  FFlag-selected sinks (flag byte at 0x6720548; new sink via
+  [stream+0xa8] and legacy map at stream+0x1458) compute
+  `pressed = (action != 1)` (cmp w21,#1; cset ne at 0x5603464-70) and
+  store (float)action with a dedupe compare. So 1 = release, 0 = press,
+  matching Android ACTION_UP/DOWN. The pump's encoding-resolved gate
+  stays as an activation-time explicitness mechanism; its documentation
+  now references this evidence.
+- Axis payload layout: VERIFIED as argument order. The axis state entry
+  stores {s0, s1, s2, stateEnum} into stream+0x1458 keyed
+  {deviceField, axis} (0x56039e0-0x5603a70). The enum derives from the
+  third float: all three zero -> 2 (neutral); s2 >= 1.0 -> 0; else 1.
+- HAT handling: the guest native (0x2759cfc) splits AXIS_HAT_X/Y (15/16)
+  into internal dpad codes 0x3f4-0x3f7 (up/down/right/left) carrying
+  1.0/0.0 in s2 with s0/s1 passed through. Morrow's dpad mapping already
+  sends keycodes 19-22 as button events, which the keyMapper honors, so
+  the HAT path stays unused.
+- Still OPEN (device behavior gate): the semantic roles of s0 and s1
+  (companion pair values vs unused) are not established from the reader
+  side. Axis emits stay inactive until the reader of stream+0x1458
+  entries is traced. The polling-interval int at 0x67205f0 and the
+  poll-provider member (+0x460) also remain untraced.
+- Single-producer constraint re-grounded: the CtrlBuffer application is
+  mutex-protected, but the ring append is not; mixed producers could
+  still corrupt the ring. One posting thread remains required.

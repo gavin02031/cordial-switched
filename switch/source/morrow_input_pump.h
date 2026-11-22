@@ -21,7 +21,9 @@
 //   thread may ever call morrow_input_pump_emit_* for a live pump.
 // - Axis events stay INACTIVE: the float payload layout of
 //   nativeGamepadAxisEvent is unresolved. Button action encoding follows
-//   Android (0 = down, 1 = up), marked INFERRED until consumer-verified.
+//   Android (0 = down, 1 = up). Consumer-verified 2026-11-22 in the
+//   guest's own state application (see the census doc, input section):
+//   both FFlag-selected sinks compute pressed = (action != 1).
 
 typedef struct {
     // Resolved guest entry points; null means unresolved, which forces the
@@ -70,10 +72,11 @@ void morrow_input_pump_stop(morrow_input_pump_t *pump);
 
 morrow_input_pump_state_t morrow_input_pump_state(const morrow_input_pump_t *pump);
 
-// Call ONLY when the button action encoding has been consumer-verified
-// (who reads the record, and which value means down vs up). Until then
-// the encoding is INFERRED from the Android contract (0 = down, 1 = up)
-// and button emits refuse even when the pump is LIVE.
+// The button action encoding is consumer-verified (0 = down, 1 = up;
+// the guest's state application computes pressed = (action != 1)). This
+// note stays as an explicit activation-time step so that semantics
+// verification is a deliberate part of bring-up, not an accident of
+// LIVE + bound entries. Button emits refuse until it is called.
 void morrow_input_pump_note_button_action_encoding_resolved(morrow_input_pump_t *pump);
 
 // Emit helpers. Each returns true only when the event was delivered to the
