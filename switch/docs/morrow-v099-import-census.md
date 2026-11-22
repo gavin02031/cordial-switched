@@ -341,8 +341,12 @@ the button refusal before encoding resolution.
 The posts do more than append ring records: both the button post
 (0x5603288) and the axis post (0x56036e8) synchronously apply the event
 to the controller state under CtrlBufferGuard (stream+0x58, locked in
-the post) on the producer thread. The ring records feed event
-subscribers; the guarded maps feed engine state. Verified from the
+the post) on the producer thread, and (on the newer FFlag path) push a
+compact event into the queue at [stream+0xa8]. This grounding is
+post-to-queue only: the draining of that queue and its application to
+engine state, and the readiness conditions, remain unverified. The ring
+records feed event subscribers; whether and when the engine consumes
+queued events is guest-internal and untraced. Verified from the
 guest's own state application:
 
 - Button action encoding: VERIFIED, no longer INFERRED. Both the
