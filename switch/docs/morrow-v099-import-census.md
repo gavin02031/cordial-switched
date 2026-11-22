@@ -234,3 +234,8 @@ distinct key is logged once, capped at 192 entries (overflow counted, not
 written); entries name classes and JNI signatures only, never call
 arguments. The file is expected to appear on the next console run and is
 the intended input for deciding which classes deserve real models.
+
+Host-verified in the provider test (morrow_jni_runtime_test.cpp): the
+observer logs each distinct unmodeled class/method once, stops writing at
+the 192-entry cap, and a placeholder static call returns the zero default
+without crashing. Host result, not a console observation.

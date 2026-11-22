@@ -6,6 +6,7 @@
 #include "android_configuration_compat.h"
 #include "android_native_window_compat.h"
 #include "morrow_jni_runtime.h"
+#include "morrow_jni_unknown_observer.h"
 
 #include <cassert>
 #include <cstdio>
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <pthread.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 // Exercise the actual JNI function table rather than a mock provider. The
@@ -198,8 +200,59 @@ static void *worker_run(void *value)
     return nullptr;
 }
 
+// Host verification of the unknown-surface observer: unmodeled class and
+// method resolutions are logged once each and capped, and a placeholder
+// static call returns the zero default instead of crashing. This must run
+// before morrow_jni_runtime_start so the test VM owns the observer's
+// single install.
+static void test_unknown_observer()
+{
+    const char *dir = "/tmp/morrow-jni-observer-test";
+    mkdir(dir, 0755);
+    char log_path[256];
+    snprintf(log_path, sizeof log_path, "%s/jni-unknown-surface.txt", dir);
+    remove(log_path);
+    jnivm::VM observed(true);
+    morrow_jni_unknown_observer_install(&observed, dir);
+    observed.initialize();
+    JNIEnv *oenv = observed.GetJNIEnv();
+    assert(oenv);
+    jclass unmodeled = oenv->FindClass("com/example/Unmodeled");
+    assert(unmodeled);
+    assert(oenv->FindClass("com/example/Unmodeled") == unmodeled);
+    jmethodID placeholder = oenv->GetMethodID(unmodeled, "mystery", "()I");
+    assert(placeholder);
+    assert(oenv->GetMethodID(unmodeled, "mystery", "()I") == placeholder);
+    jmethodID static_placeholder = oenv->GetStaticMethodID(unmodeled, "staticMystery", "()I");
+    assert(static_placeholder);
+    // A placeholder call must not crash; the pinned VM returns the zero
+    // default for the return type (host-observed, not a console result).
+    assert(oenv->CallStaticIntMethod(unmodeled, static_placeholder) == 0);
+    for (int i = 0; i < 200; ++i) {
+        char mname[32];
+        snprintf(mname, sizeof mname, "m%d", i);
+        assert(oenv->GetMethodID(unmodeled, mname, "()V"));
+    }
+    FILE *log = fopen(log_path, "r");
+    assert(log);
+    int lines = 0;
+    bool saw_class = false, saw_method = false, saw_smethod = false;
+    char buf[256];
+    while (fgets(buf, sizeof buf, log)) {
+        ++lines;
+        if (strstr(buf, "class com/example/Unmodeled")) saw_class = true;
+        if (strstr(buf, "method com/example/Unmodeled.mystery()I")) saw_method = true;
+        if (strstr(buf, "smethod com/example/Unmodeled.staticMystery()I")) saw_smethod = true;
+    }
+    fclose(log);
+    assert(saw_class && saw_method && saw_smethod);
+    // 203 distinct lookups, hard cap 192 written: dedupe and cap verified.
+    assert(lines == 192);
+}
+
 int main()
 {
+    test_unknown_observer();
     auto *bridge = reinterpret_cast<BridgeVm *>(android_jni_vm_bridge_instance());
     assert(bridge && bridge->functions);
     assert(!android_jni_vm_bridge_has_provider());
