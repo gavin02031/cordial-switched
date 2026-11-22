@@ -62,6 +62,8 @@ int main(void)
     discard_data = (void *)(uintptr_t)value;
     assert(map_data(NULL, SIZE_MAX, 3, 0x22, -1, 0) == FAILED);
     assert(map_data(NULL, 4096, 7, 0x22, -1, 0) == FAILED);
+    assert(map_data(NULL, 4096, 6, 0x22, -1, 0) == FAILED);
+    assert(map_data(NULL, 4096, 2, 0x22, -1, 0) == FAILED);
     assert(map_data(NULL, 4096, 3, 0x32, -1, 0) == FAILED);
     assert(map_data(NULL, 4096, 3, 2, -1, 0) == FAILED);
     // The guest's allocator reserves anonymous pages with fd=0, not -1.
@@ -127,6 +129,37 @@ int main(void)
     assert(p != FAILED && resize_data(p, 8192, 4096, 0) == p);
     assert(protect_data(p + 4096, 4096, 3) == -1 && errno == ENOMEM);
     assert(unmap_data(p, 4096) == 0);
+    // Guest code pages (JIT): execute without write is supported, but only
+    // as whole-region operations, and never writable+executable at once.
+    unsigned char *jit = map_data(NULL, 8192, 5, 0x22, -1, 0);
+    assert(jit != FAILED && (uintptr_t)jit % 4096 == 0);
+    assert(resize_data(jit, 8192, 4096, 0) == FAILED && errno == ENOTSUP);
+    assert(discard_data(jit, 8192, 4) == -1 && errno == ENOTSUP);
+    assert(protect_data(jit + 4096, 4096, 5) == -1 && errno == ENOTSUP);
+    assert(unmap_data(jit + 4096, 4096) == -1 && errno == ENOTSUP);
+    assert(protect_data(jit, 8192, 3) == 0);
+#if defined(__x86_64__)
+    { const unsigned char ret[] = {0xc3};
+#elif defined(__aarch64__)
+    { const unsigned char ret[] = {0xc0, 0x03, 0x5f, 0xd6};
+#endif
+#if defined(__x86_64__) || defined(__aarch64__)
+      memcpy(jit, ret, sizeof(ret));
+      __builtin___clear_cache((char *)jit, (char *)jit + sizeof(ret));
+      assert(protect_data(jit, 8192, 5) == 0);
+      ((void (*)(void))(void *)jit)();
+      assert(protect_data(jit, 8192, 1) == 0);
+      assert(!memcmp(jit, ret, sizeof(ret)));
+      // Through every transition the region must keep serving the guest:
+      // None -> RX and RX -> RW from an already-writable alias, then back.
+      assert(protect_data(jit, 8192, 0) == 0);
+      assert(protect_data(jit, 8192, 5) == 0);
+      assert(protect_data(jit, 8192, 3) == 0);
+      jit[0] = 0;
+      assert(protect_data(jit, 8192, 5) == 0);
+    }
+#endif
+    assert(unmap_data(jit, 8192) == 0);
     pthread_t threads[8];
     for (uintptr_t i = 0; i < 8; ++i)
         assert(pthread_create(&threads[i], NULL, worker, (void *)i) == 0);
