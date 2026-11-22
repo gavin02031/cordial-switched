@@ -207,6 +207,21 @@ static void test_fail_closed_descriptors(void)
     assert(ioctl_fn(0, 0UL) == -1 && errno == ENOSYS);
     errno = 0;
     assert(syscall_fn(0) == -1 && errno == ENOSYS);
+    errno = 0;
+    // Verified guest numbers route to real implementations.
+    unsigned char random_a[32], random_b[32];
+    memset(random_a, 0, sizeof(random_a));
+    memset(random_b, 0, sizeof(random_b));
+    assert(syscall_fn(278, random_a, sizeof(random_a), 0) == (long)sizeof(random_a));
+    assert(syscall_fn(278, random_b, sizeof(random_b), 0) == (long)sizeof(random_b));
+    assert(memcmp(random_a, random_b, sizeof(random_a)) != 0);
+    errno = 0;
+    assert(syscall_fn(278, random_a, sizeof(random_a), 8) == -1 && errno == EINVAL);
+    errno = 0;
+    assert(syscall_fn(278, NULL, 4, 0) == -1 && errno == EFAULT);
+    long tid_a = syscall_fn(178);
+    long tid_b = syscall_fn(178);
+    assert(tid_a > 0 && tid_a == tid_b);
 }
 
 static void test_fail_closed_misc(void)

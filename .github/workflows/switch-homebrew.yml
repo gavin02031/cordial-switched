@@ -265,6 +265,7 @@ jobs:
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
             switch/tests/android_system_compat_test.c \
             switch/source/android_system_compat.c \
+            switch/source/android_libc_compat.c \
             switch/source/android_log_compat.c \
             switch/source/android_property_compat.c \
             switch/source/android_eventfd_compat.c switch/source/android_timerfd_compat.c switch/source/android_epoll_compat.c switch/source/android_virtual_fd.c -pthread \
@@ -277,6 +278,7 @@ jobs:
             switch/source/android_epoll_compat.c \
             switch/source/android_eventfd_compat.c switch/source/android_timerfd_compat.c switch/source/android_virtual_fd.c \
             switch/source/android_system_compat.c \
+            switch/source/android_libc_compat.c \
             switch/source/android_log_compat.c \
             switch/source/android_property_compat.c -pthread -lm \
             -o /tmp/morrow-epoll-test

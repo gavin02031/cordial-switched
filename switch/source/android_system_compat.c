@@ -12,6 +12,9 @@
 #include "android_eventfd_compat.h"
 #include "android_property_compat.h"
 #include "android_timerfd_compat.h"
+#include "android_libc_compat.h"
+
+#include <pthread.h>
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -509,9 +512,28 @@ static int guest_ioctl(int fd, unsigned long request, ...)
 
 static long guest_syscall(long number, ...)
 {
-    (void)number;
-    errno = ENOSYS;
-    return -1;
+    // Numbers verified in the guest binary route to real implementations;
+    // everything else stays an honest ENOSYS.
+    va_list args;
+    va_start(args, number);
+    long result;
+    switch (number) {
+    case 178: // gettid: pthread_self is unique per live thread on both hosts.
+        result = (long)(uintptr_t)pthread_self();
+        break;
+    case 278: { // getrandom: guest call sites pass (buf, len, 0).
+        void *buffer = va_arg(args, void *);
+        size_t length = va_arg(args, size_t);
+        unsigned flags = va_arg(args, unsigned);
+        result = android_getrandom(buffer, length, flags);
+        break;
+    }
+    default:
+        errno = ENOSYS;
+        result = -1;
+    }
+    va_end(args);
+    return result;
 }
 
 static int guest_prctl(int option, ...)

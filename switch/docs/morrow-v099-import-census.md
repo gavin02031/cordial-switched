@@ -152,3 +152,29 @@ dlsym("getauxval") at 0x1dd11d0 with a cbz fallback at 0x1dd1214 that
 honestly tolerates either answer; getauxval itself is the existing
 implementation (AT_PAGESZ, AT_RANDOM, else ENOENT). Host test covers
 open/lookup/miss/close and CI compiles the added translation units.
+
+## Raw syscall dispatcher: gettid + getrandom routed (addendum, this change)
+
+The four raw-syscall sites the census left undecoded all pass the number
+as an immediate in w0 right before the call:
+
+- 0x1e173cc and 0x1f4f758: syscall(178) = gettid; result stored into a
+  per-structure slot without an error check.
+- 0x1e553c0 and 0x1e553f8: syscall(278) = getrandom(buf, len<=0x100, 0)
+  in a chunked fill loop (function at 0x1e55388) with EINTR/EAGAIN retry;
+  any other failure returns -1 to its caller. Call graph, verified: the
+  init function probes the loop once; on failure it opens "/dev/random"
+  (string at 0x5829ad, adjacent "ossl_rand_pool" — this is OpenSSL's
+  rand_unix entropy path) and falls back to fd reads; the fill entry
+  selects getrandom vs the fd by a flag the probe sets. Our open shim has
+  no /dev/random, so without routing, entropy init fails outright, and
+  OpenSSL treats seed failure as fatal for TLS use.
+
+guest_syscall now routes 178 to pthread_self (unique per live thread on
+newlib and glibc) and 278 to android_getrandom, a new exported helper
+over the same real OS-seeded source getentropy already uses, with
+GRND_NONBLOCK/GRND_RANDOM validated and unknown flags EINVAL. All other
+numbers keep the blanket ENOSYS. Host tests cover routing, EFAULT/EINVAL,
+per-thread tid stability, and the unchanged ENOSYS default; CI compile
+lines gained android_libc_compat.c where android_system_compat.c is
+linked without it.

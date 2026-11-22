@@ -259,6 +259,23 @@ static int android_getentropy(void *buffer, size_t count)
 #endif
 }
 
+long android_getrandom(void *buffer, size_t count, unsigned flags)
+{
+    // GRND_NONBLOCK and GRND_RANDOM are the only defined flags. Our source
+    // is the OS-seeded generator either way and never blocks, so both are
+    // accepted; anything else is a caller bug and fails honestly.
+    if (flags & ~(1u | 2u)) { errno = EINVAL; return -1; }
+    if (!buffer && count) { errno = EFAULT; return -1; }
+    unsigned char *target = buffer;
+    size_t done = 0;
+    while (done < count) {
+        size_t chunk = count - done > 256 ? 256 : count - done;
+        if (android_getentropy(target + done, chunk) != 0) return -1;
+        done += chunk;
+    }
+    return (long)done;
+}
+
 static void android_arc4random_buf(void *buffer, size_t count)
 {
     // The API returns no error code. Never pass cryptographic callers an
