@@ -3,6 +3,8 @@
 #include <jnivm.h>
 
 #include "morrow_jni_runtime.h"
+#include "morrow_jni_unknown_observer.h"
+#include "elf_probe.h"
 #include "android_jni_vm_bridge.h"
 #include "android_asset_compat.h"
 #include "android_native_window_compat.h"
@@ -822,7 +824,11 @@ extern "C" bool morrow_jni_runtime_start(void)
     if (runtime)
         return true;
     try {
-        std::unique_ptr<jnivm::VM> candidate(new jnivm::VM());
+        // skipInit so the unknown-surface hook lands before the first env
+        // exists; VM() would create that env inside its own constructor.
+        std::unique_ptr<jnivm::VM> candidate(new jnivm::VM(true));
+        morrow_jni_unknown_observer_install(candidate.get(), ENGINE_REPORT_DIR);
+        candidate->initialize();
         JNIEnv *env = candidate->GetJNIEnv();
         if (!env || !env->functions || env->GetVersion() != JNI_VERSION_1_6)
             return false;

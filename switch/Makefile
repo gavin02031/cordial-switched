@@ -52,7 +52,7 @@ export DEPSDIR  := $(CURDIR)/$(BUILD)
 CFILES          := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 SFILES          := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 ifeq ($(WITH_JNIVM),1)
-CPPFILES        := morrow_jni_runtime.cpp
+CPPFILES        := morrow_jni_runtime.cpp morrow_jni_unknown_observer.cpp
 endif
 
 export OFILES   := $(CFILES:.c=.o) $(SFILES:.s=.o) $(CPPFILES:.cpp=.o)

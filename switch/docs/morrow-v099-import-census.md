@@ -205,3 +205,32 @@ next output. With libaaudio/libOpenSLES unregistered, audio outputs fail
 cleanly and the guest continues without sound. INFERRED: engine-level
 tolerance of FMOD output-init failure; not crash-relevant at the FMOD
 layer. A real audren-backed output is a separate feature, not a fix.
+
+## JNI class surface census (2026-11-22)
+
+141 JNI class-path strings were recovered from the guest binary; 139 have
+code cross-references (batched adrp+add xref scan). The JNI runtime models
+10 classes. The unmodeled remainder is mostly app-shell surface (ads,
+purchase, bugreporter, age-signals, calling, connectivity proxies,
+androidx); engine-core entries (GameActivity, NativeGLJavaInterface,
+MotionEvent, KeyEvent) are already modeled.
+
+Unmodeled classes do not crash the pinned libjnivm VM. Source-grounded in
+the pinned commit (third_party/libjnivm): FindClass auto-creates an empty
+Class and returns non-null; GetMethodID (the runtime constructs the VM
+with the default non-null mode) auto-creates a placeholder Method and
+returns non-null; calling a placeholder returns a zero/false/null default
+for the return type. What the guest does with those default returns is
+unknown until observed on hardware; this census is not evidence the guest
+tolerates them.
+
+### Unknown-surface observer (compiled diagnostic, not yet observed on console)
+
+morrow_jni_unknown_observer.cpp wraps FindClass / GetMethodID /
+GetStaticMethodID through the VM's AddHook mechanism and appends the first
+resolution of each unmodeled class or unhooked method to
+jni-unknown-surface.txt in the report directory. Bounded by design: each
+distinct key is logged once, capped at 192 entries (overflow counted, not
+written); entries name classes and JNI signatures only, never call
+arguments. The file is expected to appear on the next console run and is
+the intended input for deciding which classes deserve real models.
