@@ -267,3 +267,28 @@ use the L2/R2 keys, which reach the same guest codes as the trigger axes.
 Unresolved: the float payload layout of axis events, per-argument
 semantics of the int fields, and the post path's synchronization; those
 stay inactive until pinned from the consumer side.
+
+### Input post-path lifetime contract (2026-11-22, second pass)
+
+Verified against the axis post (0x56036e8) and button post (0x5603288),
+which share one structure: stream delegate at [stream+0x1228/+0x1220],
+null-context and null-delegate fallbacks (0x560e57c / 0x560dac0), global
+context accessor 0x1f53938, atomic refcount increment 0x2747d40
+(ldaddal / ldaxr-stlxr) on the delegate while the event is built and
+appended. nativeReleaseAllRbxEventStreams (@0x275b318 -> 0x27a0364) is
+refcount-symmetric: atomic decrement, virtual destroy only at zero, so a
+post racing teardown holds its reference and cannot use-after-free.
+
+The ring-buffer append store-advances the write pointer without a lock
+(verified in both post families): the streams are single-producer by
+design, matching Android, where one UI thread calls these natives. No
+post-path function reads thread-local storage (scanned entries, posts,
+record constructor/copy, context once-init, fallback prologue), so the
+producer thread needs no guest TLS setup.
+
+Consequences for wiring: post all guest input events from one dedicated
+Morrow input thread; start posting only after engine readiness (the
+pre-ready fallback path exists and cannot crash, but whether it buffers
+or drops is unresolved, so readiness gating keeps semantics defined);
+stop posting when the engine stops. Teardown ordering itself is safe by
+the refcount symmetry above.
