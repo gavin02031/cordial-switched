@@ -55,6 +55,6 @@ int main(void)
     assert(!android_egl_gles_compat_resolve("glCreateShader", NULL, NULL, NULL));
     assert(!android_egl_gles_compat_resolve("eglCreateWindowSurface", NULL, NULL, &address));
     assert(address == 0);
-    puts("android_egl_gles_compat_test: 91 names checked, no fake host backend");
+    puts("android_egl_gles_compat_test: 131 names checked, no fake host backend");
     return 0;
 }

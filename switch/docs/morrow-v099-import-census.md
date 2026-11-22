@@ -100,3 +100,41 @@ context at runtime on hardware at all. If it exposes ES 2.0 only, the
 added symbols resolve but a 3.x context creation fails honestly and the
 guest falls back per its own renderer probing. Hardware evidence needed
 either way; no playability claim follows from this change.
+
+## Guest EGL usage, statically decoded (addendum, this change)
+
+The guest's EGL entry path was traced directly (single call site each):
+
+- eglInitialize: one site, 0x2e2600c.
+- eglChooseConfig: one site, 0x2e274a8. The attrib list is stack-built in
+  two variants selected by a flag: {runtime pair, MIN_SWAP_INTERVAL,
+  RED_SIZE, GREEN_SIZE, BLUE_SIZE, EGL_NONE} and the same plus
+  {STENCIL_SIZE=8} before the terminator. Red/green/blue depths and the
+  swap interval are runtime arguments; no SAMPLES/MSAA request appears in
+  the statically visible portion. Modest config; nothing nouveau cannot
+  advertise. INFERRED: RGB depths are 8/8/8 from the engine's defaults;
+  the first runtime pair could not be decoded statically.
+- eglCreateContext: one site, 0x2e2614c. Attrib list is rodata at
+  0x7ed1bc and reads exactly {EGL_CONTEXT_CLIENT_VERSION=2, EGL_NONE}.
+  VERIFIED: the guest requests an ES 2.0 context. This scopes the whole
+  renderer question: the ES2 core catalogue is the live path; the ES3
+  core additions from the previous change answer probes but an ES2
+  context cannot use ES3-only calls, and the EXT/OES variant strings
+  (glMapBufferOES, glBindVertexArrayOES, EXT occlusion query, KHR_debug
+  markers) are the real fidelity surface on the ES2 path.
+- eglGetProcAddress: 72 call sites. Probing is the guest's dominant GL
+  resolution mechanism, so probe answers matter more than the static
+  catalogue size.
+
+Policy change in this commit: our eglGetProcAddress shim previously
+returned NULL for every name outside the explicit catalogue. It now
+forwards uncatalogued gl* names to the real driver eglGetProcAddress and
+returns the driver's answer (real entry point or NULL), which is the
+same answer a real Android EGL gives. EGL names stay catalogue-only so
+the checked window-surface and error wrappers cannot be probed around.
+GL entry points carry no EGL handles; ABI is the driver's own dispatch
+type. CAVEAT (INFERRED): Mesa can return non-NULL for entry points whose
+extension the context does not advertise; Android engines are built for
+exactly that semantic (they gate on the GL_EXTENSIONS string), so this
+matches the platform the guest was written for. Any residual misuse is
+hardware-evidence territory, not something to pre-guess.

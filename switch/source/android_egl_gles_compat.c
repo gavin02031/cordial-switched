@@ -265,12 +265,19 @@ static EGLint checked_get_error(void)
 
 static __eglMustCastToProperFunctionPointerType native_get_proc_address(const char *name)
 {
-    // Delegate only to registered symbols with identical ABI, including the
-    // checked window-surface wrapper; never disclose raw Mesa entry points.
+    // Catalogue first: checked wrappers and registered core symbols.
     uint64_t address = 0;
-    if (!android_egl_gles_compat_resolve(name, NULL, NULL, &address))
-        return NULL;
-    return (__eglMustCastToProperFunctionPointerType)(uintptr_t)address;
+    if (android_egl_gles_compat_resolve(name, NULL, NULL, &address))
+        return (__eglMustCastToProperFunctionPointerType)(uintptr_t)address;
+    // Uncatalogued gl* names are extension probes. Forward them to the real
+    // driver, which answers NULL when it has no such entry point; that is
+    // the same answer the engine gets from a real Android EGL, and a NULL
+    // probe is the engine's feature-off signal. GL entry points carry no
+    // EGL handles, so the window/display safety checks are unaffected. EGL
+    // names stay catalogue-only so those checks cannot be probed around.
+    if (name && name[0] == 'g' && name[1] == 'l')
+        return eglGetProcAddress(name);
+    return NULL;
 }
 #endif
 
