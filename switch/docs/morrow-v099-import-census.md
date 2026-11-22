@@ -178,3 +178,30 @@ numbers keep the blanket ENOSYS. Host tests cover routing, EFAULT/EINVAL,
 per-thread tid stability, and the unchanged ENOSYS default; CI compile
 lines gained android_libc_compat.c where android_system_compat.c is
 linked without it.
+
+## Load-time dependencies and the audio path (addendum, this change)
+
+DT_NEEDED, read from the guest's dynamic section: libandroid.so,
+liblog.so, libOpenMAXAL.so, libmediandk.so, libGLESv2.so, libEGL.so,
+libOpenSLES.so, libdl.so, libm.so, libc.so. Of the 582 undefined dynamic
+symbols, zero belong to libOpenSLES or libOpenMAXAL: those NEEDED entries
+carry no directly referenced imports, so they need no symbol answers at
+load time. libGLESv2 (74) and libEGL (17) imports are catalogue-served,
+libandroid (39) and libmediandk (31) have their own resolvers.
+
+libmediandk.so is now registered in the dlopen table (this change):
+Android semantics for a NEEDED library make dlopen succeed for the
+already-loaded module, and dlsym routes to the same media resolvers the
+static imports use. The verified guest probe at 0x20315a8 now gets the
+semantically correct answer instead of a refusal.
+
+Audio, traced: FMOD is the output stack (fmod_output_opensl.cpp strings,
+SL_IID_* and AAudioStreamBuilder_* symbol strings). It dlopens
+libaaudio.so (site 0x28bf2f4) and libOpenSLES.so through a helper
+(0x28be3a0: dlopen(name, RTLD_NOW), error 0x12 on NULL) and resolves
+through another (0x28be3e8: dlsym, error 0xd on NULL). Both propagate
+honest errors with no abort; FMOD's driver enumeration then tries the
+next output. With libaaudio/libOpenSLES unregistered, audio outputs fail
+cleanly and the guest continues without sound. INFERRED: engine-level
+tolerance of FMOD output-init failure; not crash-relevant at the FMOD
+layer. A real audren-backed output is a separate feature, not a fix.

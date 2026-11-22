@@ -15,11 +15,15 @@
 #include "android_egl_gles_compat.h"
 #include "android_math_compat.h"
 #include "android_libc_compat.h"
+#include "android_media_codec_compat.h"
+#include "android_media_format_compat.h"
+#include "android_image_reader_compat.h"
 #include "engine_module_registry.h"
 
 enum { DL_ERROR_BYTES = 128 };
 enum { MODULE_LOG, MODULE_ANDROID, MODULE_MATH, MODULE_DL,
-       MODULE_EGL, MODULE_GLES2, MODULE_LIBC, MODULE_COUNT };
+       MODULE_EGL, MODULE_GLES2, MODULE_LIBC, MODULE_MEDIANDK,
+       MODULE_COUNT };
 
 typedef struct {
     const char *name;
@@ -30,7 +34,7 @@ static CompatModule modules[MODULE_COUNT] = {
     {"liblog.so", 0}, {"libandroid.so", 0},
     {"libm.so", 0}, {"libdl.so", 0},
     {"libEGL.so", 0}, {"libGLESv2.so", 0},
-    {"libc.so", 0},
+    {"libc.so", 0}, {"libmediandk.so", 0},
 };
 static pthread_mutex_t module_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -159,6 +163,15 @@ static void *bionic_dlsym(void *handle, const char *name)
         // guest path: dlopen("libc.so") then dlsym("getauxval") at
         // 0x1dd11d0, with a cbz fallback that handles either answer.
         android_libc_compat_resolve(name, "LIBC", "libc.so", &address);
+    else if (module == &modules[MODULE_MEDIANDK]) {
+        // libmediandk.so is DT_NEEDED in the guest, so Android semantics
+        // make this dlopen succeed for the already-loaded library. Symbols
+        // route to the same resolvers the static imports use; unavailable
+        // codecs/images answer honestly at call time.
+        if (!android_media_codec_compat_resolve(name, NULL, NULL, &address) &&
+            !android_media_format_compat_resolve(name, NULL, NULL, &address))
+            android_image_reader_compat_resolve(name, NULL, NULL, &address);
+    }
     else if ((module == &modules[MODULE_EGL] && strncmp(name, "egl", 3) == 0) ||
              (module == &modules[MODULE_GLES2] && strncmp(name, "gl", 2) == 0))
         android_egl_gles_compat_resolve(name, NULL, NULL, &address);

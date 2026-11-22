@@ -14,6 +14,7 @@
 #include "android_math_compat.h"
 #include "android_egl_gles_compat.h"
 #include "android_libc_compat.h"
+#include "android_media_codec_compat.h"
 #include "engine_module_registry.h"
 
 typedef void *(*OpenLibrary)(const char *, int);
@@ -206,6 +207,19 @@ int main(void)
     assert(get_error() != NULL);
     assert(close_library(libc_library) == 0);
     assert(open_library("libssl.so", 0) == NULL); // still refused
+
+    // libmediandk.so is DT_NEEDED in the guest: its dlopen succeeds and
+    // dlsym serves the same symbols as the static imports.
+    void *media_library = open_library("libmediandk.so", 0);
+    assert(media_library);
+    uint64_t media_expected = 0;
+    assert(android_media_codec_compat_resolve("AMediaCodec_createDecoderByType",
+                                              NULL, NULL, &media_expected));
+    assert(lookup_symbol(media_library, "AMediaCodec_createDecoderByType") ==
+           (void *)(uintptr_t)media_expected);
+    assert(lookup_symbol(media_library, "AMediaFormat_new") != NULL);
+    assert(lookup_symbol(media_library, "AMediaCodec_notAFunction") == NULL);
+    assert(close_library(media_library) == 0);
 
     assert(open_library("/sdmc/surprise.so", 0) == NULL);
     pthread_t worker;

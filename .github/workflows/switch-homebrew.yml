@@ -187,6 +187,9 @@ jobs:
             switch/source/android_math_compat.c \
             switch/source/android_libc_compat.c \
             switch/source/android_epoll_compat.c \
+            switch/source/android_media_codec_compat.c \
+            switch/source/android_media_format_compat.c \
+            switch/source/android_image_reader_compat.c \
             switch/source/engine_module_registry.c -pthread -lm \
             -o /tmp/cordial-android-dl-test
           /tmp/cordial-android-dl-test
