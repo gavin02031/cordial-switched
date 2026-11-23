@@ -275,3 +275,11 @@ not that any guest constructor or Roblox frame executed.
 UNKNOWNS: No post-change console report is available; this definite API
 misuse is a strong crash candidate but does not establish that it caused
 the user's particular "software closed" fatal without an L3 breadcrumb.
+
+2026-11-22 19:26 America/Chicago — [HIGH][OBSERVED CI FAILURE / CAUSE INFERRED]
+AArch64 desktop workspace test failure is a native header/type compile error, not a failed Roblox or Switch runtime test.
+EVIDENCE: GitHub Actions test run https://github.com/gavin02031/cordial-switched/actions/runs/45069369383 ; failing AArch64 job 137352664089. `cargo test --workspace` builds `crates/cordial-linker-sys`; `third_party/mcpelauncher-linker/bionic/linker/linker.cpp` includes host `sys/param.h` -> `signal.h` -> `asm/sigcontext.h`, which reports `unknown type name '__u128'` at line 81. CMake then fails compiling linker.cpp and the Rust build script exits 101. The x86-64 job passed; Horizon preview succeeded.
+BLOCKER: The desktop AArch64 C++/system-header compilation path fails before workspace tests can run. Exact root cause (header ordering, compiler/system-header compatibility, or missing architecture typedef) remains unknown; this is not evidence of guest import or hardware execution failure.
+PROPOSED FOR FLINT: Reproduce the failing compile command with its include paths, compiler and sysroot; inspect the preprocessed definitions of `__u128` and Linux AArch64 kernel headers. Correct the host build's header/toolchain compatibility at the owning build boundary, avoiding broad typedef injection or changes to guest ABI assumptions. Keep the Horizon build and desktop host fixes separate.
+SUCCESS: The same AArch64 Ubuntu `cargo test --workspace` job compiles the linker and completes tests while x86-64 and Horizon preview remain green.
+UNKNOWNS: No confirmed source-level cause or successful corrected run; no new Switch Lite hardware milestone.
