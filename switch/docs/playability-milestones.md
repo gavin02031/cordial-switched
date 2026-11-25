@@ -9,7 +9,7 @@ engine code or graphics calls executed. The first required missing name is fchow
 | Milestone | Required evidence | Current state |
 | --- | --- | --- |
 | A | Complete required-import resolution against the actual Horizon providers, including dependency/version identity | Blocked: complete target-observed provider manifest unavailable; the 80-site link-31 count is historical, not a verified current symbol count |
-| B | Dependency initialization, DT_INIT, then DT_INIT_ARRAY complete in order | Blocked: 2,505 guest array entries; current code validates targets only |
+| B | Dependency initialization, DT_INIT, then DT_INIT_ARRAY complete in order | Blocked: runner is wired; repository-recorded link-58 reports constructors 0–2 returned and no constructor 3 completion |
 | C | JNI_OnLoad and observed Android startup finish | Not reached; Java application parameters/lifecycle incomplete |
 | D | A visible frame produced by guest engine calls through GLES | Not reached; launcher/triangle frames do not qualify |
 | E | Working engine authentication, with a supported Quick Login flow if available | Not implemented |
