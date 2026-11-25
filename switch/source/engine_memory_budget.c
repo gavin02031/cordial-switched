@@ -17,8 +17,8 @@ EngineMemoryBudgetVerdict engine_memory_budget_verdict(
 static const char *verdict_text(EngineMemoryBudgetVerdict v)
 {
     switch (v) {
-    case ENGINE_MEMORY_BUDGET_FILE_EXCEEDS_FREE: return "file_exceeds_free";
-    case ENGINE_MEMORY_BUDGET_FILE_BELOW_FREE: return "file_below_free_not_a_fit_claim";
+    case ENGINE_MEMORY_BUDGET_FILE_EXCEEDS_FREE: return "file_exceeds_kernel_uncommitted_not_oom";
+    case ENGINE_MEMORY_BUDGET_FILE_BELOW_FREE: return "file_below_kernel_uncommitted_not_a_fit_claim";
     default: return "unknown";
     }
 }
@@ -38,6 +38,6 @@ size_t engine_memory_budget_format(const EngineMemoryBudgetInput *in,
         snprintf(freeb, sizeof freeb, "%" PRIu64,
                  in->total_bytes - in->used_bytes);
     return (size_t)snprintf(out, out_size,
-        "memory_budget total=%s used=%s free=%s engine_file=%s verdict=%s",
+        "memory_budget kernel_total=%s kernel_used=%s kernel_uncommitted=%s engine_file=%s verdict=%s allocation_gate=informational_only",
         total, used, freeb, file, verdict_text(engine_memory_budget_verdict(in)));
 }

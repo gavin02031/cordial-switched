@@ -23,6 +23,29 @@ v0.99.7 fixes executable-alias cleanup when permission setup and kernel rollback
 both fail: the address reservation and backing remain owned until cleanup succeeds.
 This is not a demonstrated fix for constructor 3's missing completion or gameplay.
 
+Constructor diagnostics now sample across timing deadlines, including when a
+constructor changes during a 50 ms poll. Register capture remains ahead of SD
+writes. This is best effort: a fault before the next poll, a blocked filesystem,
+or a kernel-handled exception can prevent a fresh durable sample.
+
+`memory_budget.kernel_uncommitted` is the kernel allocation remainder, not
+malloc's available heap. `allocator_budget` reports newlib's arena and free
+blocks separately; neither proves a large contiguous allocation will succeed.
+The budget line is informational and does not gate engine execution.
+
+For the audited engine, the absent dyninit section leaves its two **weak**
+boundary imports at ELF symbol value zero (plus any relocation addend). Required
+missing symbols still fail linking. No PT_TLS means no ELF template to copy;
+it does not justify replacing Horizon's thread pointer or bypassing unsupported
+TLS relocations. `OnLoadProbe.nativeIncrement` is our synthetic native-registration
+test: its declaration lookup can appear in the unknown-method census before
+RegisterNatives. A passing synthetic probe does not mean Roblox JNI_OnLoad ran.
+
+Constructor 3's crash cause and successful native startup remain unverified.
+For fault attribution, retain the matching build hash, numbered link report,
+constructor-watchdog log, and `exception-last.txt` or Atmosphere crash report.
+An unclean-exit journal records the interrupted phase, not the fault PC.
+
 The renderer requests GPU acceleration and VSync, then falls back to an
 accelerated renderer without VSync or a software renderer if necessary. Static
 backgrounds and text are cached instead of rasterised every frame. The

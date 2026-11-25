@@ -396,6 +396,9 @@ static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
     const EngineTlsScratchStatus status =
         engine_tls_scratch_prepare(library, profile, &template_image);
     log_line(log, "tls_template_status=%d", status);
+    log_line(log, "tls_elf_template_required=%s",
+             profile->has_tls_segment ? "yes" : "no_pt_tls");
+    log_line(log, "tls_host_thread_pointer_policy=preserved");
     log_line(log, "tls_thread_pointer_installed=no");
     log_line(log, "tls_dynamic_modules_supported=no");
     if (status == ENGINE_TLS_PREPARED && template_image.size) {
@@ -412,6 +415,8 @@ static void audit_thread_tls(FILE *library, const EngineProbeResult *profile,
                      thread.dtv.modules[1] == thread.data ? "yes" : "no");
         }
         engine_tls_thread_release(&thread);
+    } else if (status == ENGINE_TLS_ABSENT) {
+        log_line(log, "tls_thread_image_prepared=not_required_no_pt_tls");
     } else if (status == ENGINE_TLS_PREPARED) {
         log_line(log, "tls_thread_image_prepared=empty_template");
     } else {
@@ -925,21 +930,22 @@ static void constructor_watchdog_thread(void *argument)
         }
         const bool changed = index != last_index;
         if (changed) last_index = index;
+        const unsigned previous_ms = elapsed_ms;
         elapsed_ms = morrow_watchdog_advance_elapsed(elapsed_ms,
                                                      delay_ms, changed);
         // Sample *before* any SD I/O. The prior implementation flushed up
         // to 32 fsync'ed markers and skipped the first observation of a new
         // constructor, missing fast faults before the 20 ms sample.
-        if (morrow_watchdog_sample_due(elapsed_ms))
+        if (morrow_watchdog_sample_crossed(previous_ms, elapsed_ms, changed))
             constructor_watchdog_record(ctx, index, elapsed_ms);
         engine_early_trace_flush(ENGINE_REPORT_DIR);
     }
 }
 
 // Gate proof for the constructor runner: the RX mapping is pinned for the
-// process lifetime. TLS is no part of the gate: the caller installs the
-// bridge only when the ELF carries a PT_TLS template, and an ELF without
-// TLS has no thread-pointer state to bridge before its constructors run.
+// process lifetime. The audited engine has no PT_TLS, TLS relocations or
+// direct thread-pointer accesses. Absence of PT_TLS alone does not prove
+// that an arbitrary Android binary cannot read Bionic thread state.
 static bool constructor_run_gate(void *context)
 {
     (void)context;
@@ -1046,9 +1052,18 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
             budget.file_ok = 1;
             budget.file_bytes = (uint64_t)engine_stat.st_size;
         }
-        char budget_line[200];
+        char budget_line[384];
         engine_memory_budget_format(&budget, budget_line, sizeof budget_line);
         log_line(log, "%s", budget_line);
+        // Kernel used memory includes the reserved libnx heap. Its free
+        // malloc blocks remain available despite a small kernel remainder.
+        // Neither number measures the largest contiguous allocation.
+        const struct mallinfo heap = mallinfo();
+        log_line(log, "allocator_budget arena_bytes=%llu allocated_bytes=%llu "
+                 "free_blocks_bytes=%llu largest_allocation=unknown",
+                 (unsigned long long)heap.arena,
+                 (unsigned long long)heap.uordblks,
+                 (unsigned long long)heap.fordblks);
     }
     if (action == 0) {
         probe_guest_data_mapping(log);
@@ -1711,6 +1726,7 @@ void horizon_real_link_run(RealLinkResult *result, unsigned action)
         log_line(log, "aps2_applied=%u", stage.packed_applied);
         log_line(log, "symbol_applied=%u", stage.symbol_applied);
         log_line(log, "strict_weak_undefined_relocations=%u", stage.weak_undefined_relocations);
+        log_line(log, "strict_weak_undefined_policy=zero_symbol_value_plus_addend");
         log_line(log, "strict_required_missing_relocations=%u", stage.required_missing_relocations);
         log_line(log, "dyninit_section_verified=%u",
                  stage.dyninit_section_verified ? 1u : 0u);

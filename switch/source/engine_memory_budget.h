@@ -9,10 +9,10 @@
 // flags); this code only does arithmetic and text. It does not call the
 // kernel and executes no guest code.
 //
-// The verdict is arithmetic, not a prediction: file size is only a lower
-// bound on the mapped image (bss, heap, thread stacks and guest allocations
-// come on top), so "fits" means "the file alone is smaller than free
-// memory", never "the engine will run".
+// The kernel remainder is not malloc capacity: libnx can reserve its heap
+// up front, and unused blocks inside that heap count as kernel-used memory.
+// This comparison must never gate allocation or be interpreted as OOM.
+// Actual allocation and mapping failures remain authoritative.
 typedef enum {
     ENGINE_MEMORY_BUDGET_UNKNOWN = 0,      // a needed number was unavailable
     ENGINE_MEMORY_BUDGET_FILE_EXCEEDS_FREE,
