@@ -911,6 +911,9 @@ static void constructor_watchdog_thread(void *argument)
     while (!atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire)) {
         const unsigned delay_ms = morrow_watchdog_delay_ms(elapsed_ms);
         svcSleepThread((s64)delay_ms * 1000000LL);
+        // All guest allocator SD writes happen on the watcher, not on the
+        // thread executing Roblox; drain even when the watcher stops.
+        engine_early_trace_flush(ENGINE_REPORT_DIR);
         if (atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire))
             break;
         const size_t index = atomic_load_explicit(&ctx->active_index,
@@ -966,6 +969,7 @@ static bool constructor_begin(size_t index, uintptr_t target, void *context)
 static bool constructor_completed(size_t index, uintptr_t target, void *context)
 {
     ConstructorRunContext *ctx = context;
+    engine_early_trace_flush(ENGINE_REPORT_DIR);
     if (index < 8 || (index && !(index & (index - 1))))
         engine_early_trace_append(ENGINE_REPORT_DIR, "ctor_return",
                                   index, target, 0);

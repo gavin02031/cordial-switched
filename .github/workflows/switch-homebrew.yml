@@ -86,6 +86,11 @@ jobs:
             switch/source/engine_constructor_run.c \
             -o /tmp/morrow-constructor-run-test
           /tmp/morrow-constructor-run-test
+      - name: Test conservative Cortex-A57 ARM64 auxv
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+            switch/tests/android_auxv_a57_test.c -o /tmp/morrow-auxv-a57-test
+          /tmp/morrow-auxv-a57-test
       - name: Test independently durable early constructor breadcrumbs
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \

@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "android_libc_compat.h"
+#include "android_auxv_a57.h"
 
 #include <errno.h>
 #include <getopt.h>
@@ -523,6 +524,11 @@ static void initialise_aux_random(void)
 
 static unsigned long android_getauxval(unsigned long key)
 {
+    // The Switch Lite runs real Cortex-A57 ARMv8 cores. Report only FP and
+    // ASIMD/NEON, never LSE atomics (ARMv8.1) or unverified extensions.
+    bool known = false;
+    const unsigned long value = morrow_a57_auxv_value(key, &known);
+    if (known) return value;
     if (key == 6) { // Linux AT_PAGESZ
         int size = android_getpagesize();
         return size > 0 ? (unsigned long)size : 0;

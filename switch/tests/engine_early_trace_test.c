@@ -26,6 +26,32 @@ int main(void)
     assert(fclose(file) == 0);
     assert(!engine_early_trace_append(NULL, "ctor_enter", 0, 0, 0));
     assert(!engine_early_trace_append(dir, "", 0, 0, 0));
+    // No synchronous file write from simulated guest callbacks.
+    assert(engine_early_trace_stage("arena_mmap_ok", 0x1, 0x2, 0x3));
+    assert(engine_early_trace_stage("arena_protect_return", 0, 0, 0));
+    file = fopen(path, "rb");
+    assert(file);
+    unsigned before = 0;
+    while (fgets(line, sizeof(line), file)) ++before;
+    assert(before == 2 && fclose(file) == 0);
+    assert(engine_early_trace_flush(dir) == 2);
+    assert(engine_early_trace_flush(dir) == 0);
+    file = fopen(path, "rb");
+    assert(file);
+    assert(fgets(line, sizeof(line), file));
+    assert(fgets(line, sizeof(line), file));
+    assert(fgets(line, sizeof(line), file));
+    assert(strstr(line, "trace_event=arena_mmap_ok a=0x1 b=0x2 c=0x3"));
+    assert(fgets(line, sizeof(line), file));
+    assert(strstr(line, "trace_event=arena_protect_return"));
+    assert(!fgets(line, sizeof(line), file));
+    assert(fclose(file) == 0);
+    assert(!engine_early_trace_stage(NULL, 0, 0, 0));
+    assert(!engine_early_trace_stage("", 0, 0, 0));
+    for (unsigned i = 0; i < 32; ++i)
+        assert(engine_early_trace_stage("arena_queue", i, 0, 0));
+    assert(!engine_early_trace_stage("arena_queue", 99, 0, 0));
+    assert(engine_early_trace_flush(dir) == 32);
     assert(unlink(path) == 0);
     assert(rmdir(dir) == 0);
     puts("durable early constructor and mmap breadcrumbs passed");

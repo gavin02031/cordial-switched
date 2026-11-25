@@ -24,14 +24,13 @@ static uint32_t last_kernel_result;
 static atomic_uintptr_t traced_arena;
 
 // The first allocator arena uses anonymous PROT_NONE mmap with fd=0.
-// A console run crashed before the watchdog could sample after the fd fix;
-// keep only this arena's transitions in an independently durable trace.
-// Restore errno so diagnostic I/O cannot change the guest-visible result.
+// Do not touch FAT, fsync or malloc from the guest allocator callback:
+// queue breadcrumbs for the watchdog to persist instead. Preserve errno.
 static void trace_arena_event(const char *event, uint64_t a, uint64_t b,
                               uint64_t c)
 {
     const int saved_errno = errno;
-    engine_early_trace_append("sdmc:/switch/cordial-switched", event, a, b, c);
+    engine_early_trace_stage(event, a, b, c);
     errno = saved_errno;
 }
 

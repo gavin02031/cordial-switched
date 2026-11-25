@@ -2,6 +2,7 @@
 #include "engine_early_trace.h"
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -41,4 +42,53 @@ bool engine_early_trace_append(const char *directory, const char *event,
     if (ok) ok = fsync(fd) == 0;
     if (close(fd) != 0) ok = false;
     return ok;
+}
+
+// A bounded try-lock protects the queue without heap allocation or SD I/O.
+// Contended/full writes are dropped instead of re-entering allocator locks.
+enum { EARLY_QUEUE_LIMIT = 32, EARLY_EVENT_LIMIT = 48 };
+typedef struct {
+    char event[EARLY_EVENT_LIMIT + 1];
+    uint64_t a, b, c;
+} EarlyQueuedEvent;
+static EarlyQueuedEvent early_queue[EARLY_QUEUE_LIMIT];
+static unsigned early_count;
+static atomic_flag early_guard = ATOMIC_FLAG_INIT;
+
+bool engine_early_trace_stage(const char *event,
+                              uint64_t a, uint64_t b, uint64_t c)
+{
+    if (!event || !*event) return false;
+    const size_t length = strlen(event);
+    if (length > EARLY_EVENT_LIMIT) return false;
+    if (atomic_flag_test_and_set_explicit(&early_guard, memory_order_acquire))
+        return false;
+    bool queued = early_count < EARLY_QUEUE_LIMIT;
+    if (queued) {
+        EarlyQueuedEvent *item = &early_queue[early_count++];
+        memcpy(item->event, event, length + 1);
+        item->a = a;
+        item->b = b;
+        item->c = c;
+    }
+    atomic_flag_clear_explicit(&early_guard, memory_order_release);
+    return queued;
+}
+
+size_t engine_early_trace_flush(const char *directory)
+{
+    if (!directory || !*directory) return 0;
+    if (atomic_flag_test_and_set_explicit(&early_guard, memory_order_acquire))
+        return 0;
+    EarlyQueuedEvent snapshot[EARLY_QUEUE_LIMIT];
+    const unsigned count = early_count;
+    if (count) memcpy(snapshot, early_queue, count * sizeof(snapshot[0]));
+    early_count = 0;
+    atomic_flag_clear_explicit(&early_guard, memory_order_release);
+    size_t persisted = 0;
+    for (unsigned i = 0; i < count; ++i)
+        if (engine_early_trace_append(directory, snapshot[i].event,
+                                      snapshot[i].a, snapshot[i].b, snapshot[i].c))
+            ++persisted;
+    return persisted;
 }
