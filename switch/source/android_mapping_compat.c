@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "android_mapping_compat.h"
 #include "engine_early_trace.h"
+#include "engine_alias_transaction.h"
 
 #include <errno.h>
 #include <sys/stat.h>
@@ -59,6 +60,7 @@ typedef struct Region {
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static Region *regions;
 static Region *rollback_pending;
+static int exec_unmap(Region **slot, Region *region);
 
 static size_t page_bytes(size_t length)
 {
@@ -144,6 +146,10 @@ static void retry_rollbacks(void)
     Region **slot = &rollback_pending;
     while (*slot) {
         Region *r = *slot;
+        if (r->exec) {
+            if (exec_unmap(slot, r)) slot = &r->next;
+            continue;
+        }
         if (release_pages(r, 0, r->size)) { slot = &r->next; continue; }
         *slot = r->next;
         drop_piece(r);
@@ -185,6 +191,31 @@ static bool exec_supported(void)
 }
 #endif
 
+#ifdef __SWITCH__
+typedef struct { Region *region; void *code; int protection; } AliasSetup;
+static uint32_t alias_map(void *opaque)
+{
+    AliasSetup *s = opaque;
+    return svcMapProcessCodeMemory(envGetOwnProcessHandle(),
+        (u64)(uintptr_t)s->code, (u64)(uintptr_t)s->region->backing->storage,
+        s->region->size);
+}
+static uint32_t alias_protect(void *opaque)
+{
+    AliasSetup *s = opaque;
+    return svcSetProcessMemoryPermission(envGetOwnProcessHandle(),
+        (u64)(uintptr_t)s->code, s->region->size,
+        s->protection == 4 ? Perm_X : Perm_Rx);
+}
+static uint32_t alias_unmap(void *opaque)
+{
+    AliasSetup *s = opaque;
+    return svcUnmapProcessCodeMemory(envGetOwnProcessHandle(),
+        (u64)(uintptr_t)s->code, (u64)(uintptr_t)s->region->backing->storage,
+        s->region->size);
+}
+#endif
+
 // Map the region's backing pages into the code region so the guest receives
 // an address it may execute. The kernel moves the source pages to
 // NotMapped+Locked for the lifetime of the alias
@@ -199,25 +230,22 @@ static int exec_setup(Region *region, int protection)
     void *reservation = code ? virtmemAddReservation(code, region->size) : NULL;
     virtmemUnlock();
     if (!reservation) return reject(ENOMEM);
-    const Handle process = envGetOwnProcessHandle();
     armDCacheFlush(region->backing->storage, region->size);
-    Result rc = svcMapProcessCodeMemory(process, (u64)(uintptr_t)code,
-                                        (u64)(uintptr_t)region->backing->storage,
-                                        region->size);
-    last_kernel_result = rc;
-    if (R_SUCCEEDED(rc))
-        rc = svcSetProcessMemoryPermission(process, (u64)(uintptr_t)code,
-                                           region->size,
-                                           protection == 4 ? Perm_X : Perm_Rx);
-    last_kernel_result = rc;
-    if (R_FAILED(rc)) {
-        const Result mapped = svcUnmapProcessCodeMemory(
-            process, (u64)(uintptr_t)code,
-            (u64)(uintptr_t)region->backing->storage, region->size);
-        if (R_FAILED(mapped)) last_kernel_result = mapped;
-        virtmemLock();
-        virtmemRemoveReservation(reservation);
-        virtmemUnlock();
+    AliasSetup setup = {region, code, protection};
+    const EngineAliasOperations ops = {alias_map, alias_protect, alias_unmap, &setup};
+    const EngineAliasResult outcome = engine_alias_prepare(&ops);
+    last_kernel_result = outcome.error;
+    if (outcome.alias_retained) {
+        region->exec = true;
+        region->code_reservation = reservation;
+        region->base = code;
+    }
+    if (!outcome.ready) {
+        if (!outcome.alias_retained) {
+            virtmemLock();
+            virtmemRemoveReservation(reservation);
+            virtmemUnlock();
+        }
         return reject(EACCES);
     }
     // The kernel performs the instruction-cache maintenance for execute
@@ -315,7 +343,14 @@ static int exec_unmap(Region **slot, Region *region)
 static void discard_private(Region *region)
 {
     int saved = errno;
-    if (release_pages(region, 0, region->size) == 0) drop_piece(region);
+    if (region->exec) {
+        // Permission setup failed and the kernel refused to undo its alias.
+        // Keep both reservation and backing; never treat locked source pages
+        // as ordinary heap or permit another map to reuse the alias address.
+        region->next = rollback_pending;
+        rollback_pending = region;
+    }
+    else if (release_pages(region, 0, region->size) == 0) drop_piece(region);
     else {
         region->next = rollback_pending;
         rollback_pending = region;

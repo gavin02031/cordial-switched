@@ -342,6 +342,10 @@ jobs:
             switch/tests/android_property_compat_test.c switch/source/android_property_compat.c \
             -o /tmp/morrow-property-table-test
           /tmp/morrow-property-table-test
+      - name: Test executable alias setup failure ownership
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source switch/tests/engine_alias_transaction_test.c switch/source/engine_alias_transaction.c -o /tmp/morrow-alias-test
+          /tmp/morrow-alias-test
       - name: Test guest anonymous data mappings and page permissions
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source switch/tests/android_mapping_compat_test.c switch/source/android_mapping_compat.c -pthread -o /tmp/morrow-mapping-test

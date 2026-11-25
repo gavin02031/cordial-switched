@@ -1,10 +1,7 @@
-Warning: truncated output (original token count: 23486)
-Total output lines: 1416
-
 # Cordial Switched: Morrow native UI experiment
 
 This directory builds a **Nintendo Switch `.nro` preview**, separate from
-Cordial's existing Linux binaries. The current v0.99.6 preview includes a 720p GPU-first
+Cordial's existing Linux binaries. The current v0.99.7 preview includes a 720p GPU-first
 dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
 SDL2_ttf. Its lavender glass-style UI now includes **Home, Browse, Friends,
 Avatar, Settings, Engine, Link and Logs**. Settings has Account, Controls,
@@ -21,6 +18,10 @@ engine startup. Development `.nro` packages still use the Cordial Switched
 name until a playable Morrow v1.0 is proven. **It does not
 currently run Roblox, connect to Roblox servers or sign in to any Roblox
 account.**
+
+v0.99.7 fixes executable-alias cleanup when permission setup and kernel rollback
+both fail: the address reservation and backing remain owned until cleanup succeeds.
+This is not a demonstrated fix for constructor 3's missing completion or gameplay.
 
 The renderer requests GPU acceleration and VSync, then falls back to an
 accelerated renderer without VSync or a software renderer if necessary. Static
@@ -657,7 +658,86 @@ then check:
    non-executable relocation audit at the *same* base and lists up to 24 missing
    Android imports, total missing lookups, and unsupported relocation counts.
    The `execution_gate` and `engine_entry_called` fields state exactly why a
-   call into Roblox i…1486 tokens truncated… explicitly
+   call into Roblox is refused. It cannot safely execute the Roblox entry while
+   required imports, the Bionic/JNI runtime, and graphics services are absent.
+   v0.31 supplies a separate, bounded C++ destructor registry for Android's
+   versioned `__cxa_atexit` and `__cxa_finalize` imports. It respects DSO
+   ownership and reverse registration order, runs callbacks outside its lock,
+   and never aliases a native newlib C++ exit-handler list. The missing
+   `__register_atfork` import is **not** claimed as working: actual process-fork
+   semantics are not implemented. This is a linker-runtime component, not
+   evidence of successful Roblox engine execution.
+   v0.32 implements the seven imported Android NDK `ALooper_*` APIs
+   against native file-descriptor polling: thread-local loopers, bounded
+   registration/replacement/removal, correct timeout/error results, and
+   callback invocation without holding the registration mutex. Callbacks
+   returning zero are removed, and all observed callbacks in a poll batch run.
+   This is not a GameActivity or JNI implementation. The libnx socket/poll
+   backend has not been confirmed on the user's actual command-pipe fds, so
+   hardware startup remains **unverified**.
+   v0.33 adds Android's **versioned libdl lookup** exports (`dlopen`, `dlsym`,
+   `dlclose`, `dlerror`, `dladdr`) using a bounded namespace of the real native
+   adapters already supplied here (`liblog.so`, partial `libandroid.so`,
+   `libm.so`, `libdl.so`). Unknown Android libraries and missing symbols fail
+   explicitly; per-thread `dlerror` retains useful errors and `dladdr`
+   refuses to fabricate a guest DSO base. This does **not** load arbitrary
+   Android binaries or replace the missing GameActivity/JNI/graphics runtime.
+   v0.34 inspects the real ELF's exported `JNI_OnLoad` and
+   `ANativeActivity_onCreate` functions plus `DT_INIT` and constructor-array
+   metadata. The new `entry_probe_*`, `jni_onload_*`, `native_activity_*`, and
+   `elf_init_array_entries` fields appear in the same numbered L3 report.
+   Stripped section headers are reported as *unknown*, not as proof that an
+   initializer is absent. All discovery is **read-only**: it does not execute
+   the initializers or resolve the remaining Android JNI/graphics dependencies.
+   v0.35 supplies a native `ANativeWindow` reference-count and dimension bridge
+   (five NDK imports), accepting only surfaces explicitly registered by a future
+   JNI implementation. No Java surface is registered today, so `fromSurface`
+   correctly returns unavailable, and no EGL framebuffer is claimed.
+   v0.36 adds six Android NDK asset-manager entry points. Read-only assets can
+   come from a deliberately bound local directory, with path traversal rejected,
+   buffers limited to 16 MiB and file descriptors issued for real files. No Java
+   `AssetManager` has been bound yet: the caller must supply a verified object
+   and keep its JNI reference alive, so this is not APK-resource emulation.
+   v0.37 adds the C ABI for JavaVM's five JNI invocation callbacks, including
+   `GetEnv`, thread attachment/detachment, and daemon attachment. Calls fail
+   closed until a real Java environment provider is installed once; `GetEnv`
+   delegates per-thread `JNIEnv` lookup to that provider, which must never
+   share an environment between threads. The host regression test uses a
+   deliberately **mock** provider to verify the ABI,
+   failure modes, and thread isolation. **No JNI environment or Java classes
+   exist in the Switch runtime yet; Roblox `JNI_OnLoad` is still not called.**
+   v0.38 introduces an **opt-in, isolated native Mesa EGL/GLES2 display test**.
+   On the Loader page press **Minus**. Morrow first closes its SDL renderer,
+   then asks Mesa for the default Horizon window and an OpenGL ES 2 context.
+   If successful, it draws a pastel triangle through GLES shaders and a vertex
+   buffer. Press **B** or **Plus** to return to Homebrew Menu. The numbered
+   `graphics-XX.txt` report records the actual EGL error or first successful
+   swap. The graphics test does **not** render any Roblox content. The user
+   reported seeing the triangle on their Switch Lite with v0.38; a numbered
+   `graphics-XX.txt` report for that run has not yet been supplied.
+   v0.39 exposed 90 explicit, ABI-compatible EGL/GLES2 function addresses to
+   the ARM64 strict import resolver, using the same native Mesa libraries that
+   power the graphics test. Guest `dlopen`/`dlsym` can find only registered
+   symbols in `libEGL.so` and `libGLESv2.so`. One critical EGL import,
+   `eglCreateWindowSurface`, was intentionally left unmapped at that point:
+   a guest `ANativeWindow` is not a Horizon `NWindow`, and handing the former
+   directly to Mesa would be unsafe. The imported `eglGetProcAddress` is
+   restricted to registered symbols too.
+   v0.40 adds the **91st EGL/GLES symbol**, a checked `eglCreateWindowSurface`
+   adapter. An explicit guest `ANativeWindow` to Horizon `NWindow` registration
+   is mandatory; arbitrary guest handles and unbound windows are refused with
+   `EGL_BAD_NATIVE_WINDOW`. The existing **Minus** graphics test now exercises
+   this path using a synthetic Surface identity paired to the real Horizon
+   display, checks that an unregistered handle fails, then draws the same
+   triangle. `graphics-XX.txt` records `unregistered_window_rejected` and
+   `guest_egl_window_surface_created` separately. **This synthetic test is not
+   Java, JNI or Roblox.** No real Java Surface is registered yet; the Android
+   engine still cannot initialise and this is not a release candidate.
+   v0.41 supplies nine imported `AConfiguration_*` functions, including
+   configuration lifecycle and language/country, screen-size and dp getters.
+   A newly allocated configuration starts with the NDK's unspecified values;
+   `AConfiguration_fromAssetManager` copies metadata only if an existing,
+   verified native asset manager received a configuration profile explicitly
    from its owner. Stale or unregistered handles cannot supply locale or dp.
    No real Android Java asset manager is registered on Switch yet, so this
    narrows the unresolved import gap without pretending to have a complete

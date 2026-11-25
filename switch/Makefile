@@ -12,7 +12,7 @@ BUILD        := build
 SOURCES      := source
 APP_TITLE    := Cordial Switched
 APP_AUTHOR   := Cordial Switched contributors
-APP_VERSION  := 0.99.6
+APP_VERSION  := 0.99.7
 BUILD_REVISION := $(or $(shell git rev-parse --short=12 HEAD 2>/dev/null),$(GITHUB_SHA))
 BUILD_ID      := $(APP_VERSION)$(if $(BUILD_REVISION),+$(BUILD_REVISION))
 
