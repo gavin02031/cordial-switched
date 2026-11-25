@@ -78,17 +78,49 @@ bool engine_early_trace_stage(const char *event,
 size_t engine_early_trace_flush(const char *directory)
 {
     if (!directory || !*directory) return 0;
-    if (atomic_flag_test_and_set_explicit(&early_guard, memory_order_acquire))
+    char path[192];
+    const int pn = snprintf(path, sizeof(path), "%s/constructor-watchdog.txt",
+                            directory);
+    if (pn <= 0 || (size_t)pn >= sizeof(path)) return 0;
+
+    // Open before draining so the queue survives a temporarily inaccessible
+    // SD card. Never hold the producer try-lock while doing filesystem I/O.
+    const int fd = open(path, O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd < 0) return 0;
+    if (atomic_flag_test_and_set_explicit(&early_guard, memory_order_acquire)) {
+        close(fd);
         return 0;
+    }
     EarlyQueuedEvent snapshot[EARLY_QUEUE_LIMIT];
     const unsigned count = early_count;
     if (count) memcpy(snapshot, early_queue, count * sizeof(snapshot[0]));
     early_count = 0;
     atomic_flag_clear_explicit(&early_guard, memory_order_release);
+
+    // One open/fsync/close per batch instead of up to 32 full SD syncs.
+    // The independent watchdog can return to register sampling promptly.
+    const long stamp = (long)time(NULL);
     size_t persisted = 0;
-    for (unsigned i = 0; i < count; ++i)
-        if (engine_early_trace_append(directory, snapshot[i].event,
-                                      snapshot[i].a, snapshot[i].b, snapshot[i].c))
-            ++persisted;
+    for (unsigned i = 0; i < count; ++i) {
+        char line[256];
+        const int n = snprintf(line, sizeof(line),
+            "%ld build=%.48s trace_event=%s a=0x%llx b=0x%llx c=0x%llx\n",
+            stamp, MORROW_BUILD_VERSION, snapshot[i].event,
+            (unsigned long long)snapshot[i].a,
+            (unsigned long long)snapshot[i].b,
+            (unsigned long long)snapshot[i].c);
+        if (n <= 0 || (size_t)n >= sizeof(line)) break;
+        size_t done = 0;
+        while (done < (size_t)n) {
+            const ssize_t bytes = write(fd, line + done, (size_t)n - done);
+            if (bytes < 0 && errno == EINTR) continue;
+            if (bytes <= 0) break;
+            done += (size_t)bytes;
+        }
+        if (done != (size_t)n) break;
+        ++persisted;
+    }
+    if (persisted) fsync(fd);
+    close(fd);
     return persisted;
 }

@@ -911,28 +911,28 @@ static void constructor_watchdog_thread(void *argument)
     while (!atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire)) {
         const unsigned delay_ms = morrow_watchdog_delay_ms(elapsed_ms);
         svcSleepThread((s64)delay_ms * 1000000LL);
-        // All guest allocator SD writes happen on the watcher, not on the
-        // thread executing Roblox; drain even when the watcher stops.
-        engine_early_trace_flush(ENGINE_REPORT_DIR);
-        if (atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire))
+        if (atomic_load_explicit(&ctx->stop_watchdog, memory_order_acquire)) {
+            engine_early_trace_flush(ENGINE_REPORT_DIR);
             break;
+        }
         const size_t index = atomic_load_explicit(&ctx->active_index,
                                                    memory_order_acquire);
         if (index == SIZE_MAX) {
             last_index = SIZE_MAX;
             elapsed_ms = 0;
+            engine_early_trace_flush(ENGINE_REPORT_DIR);
             continue;
         }
-        if (index != last_index) {
-            last_index = index;
-            elapsed_ms = 0;
-            // The sleep above may belong to the prior constructor. Start
-            // this one's timing at the next 20 ms tick, not the old delay.
-            continue;
-        }
-        if (elapsed_ms <= UINT_MAX - delay_ms) elapsed_ms += delay_ms;
+        const bool changed = index != last_index;
+        if (changed) last_index = index;
+        elapsed_ms = morrow_watchdog_advance_elapsed(elapsed_ms,
+                                                     delay_ms, changed);
+        // Sample *before* any SD I/O. The prior implementation flushed up
+        // to 32 fsync'ed markers and skipped the first observation of a new
+        // constructor, missing fast faults before the 20 ms sample.
         if (morrow_watchdog_sample_due(elapsed_ms))
             constructor_watchdog_record(ctx, index, elapsed_ms);
+        engine_early_trace_flush(ENGINE_REPORT_DIR);
     }
 }
 
