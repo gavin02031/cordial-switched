@@ -29,6 +29,24 @@ int main(void)
         }
     }
     assert(found == sizeof(expected) / sizeof(expected[0]));
+    // Reproduce the phase shift when another constructor starts during a
+    // 50 ms poll. Exact equality would miss every subsequent deadline.
+    elapsed = morrow_watchdog_advance_elapsed(200, 50, true);
+    assert(morrow_watchdog_sample_crossed(200, elapsed, true));
+    found = 1;
+    while (elapsed < 60000) {
+        const unsigned previous = elapsed;
+        elapsed = morrow_watchdog_advance_elapsed(
+            elapsed, morrow_watchdog_delay_ms(elapsed), false);
+        if (morrow_watchdog_sample_crossed(previous, elapsed, false))
+            ++found;
+    }
+    assert(found == sizeof(expected) / sizeof(expected[0]));
+    assert(morrow_watchdog_sample_crossed(900, 1000, true));
+    assert(morrow_watchdog_sample_crossed(100, 50, true));
+    assert(!morrow_watchdog_sample_crossed(100, 150, false));
+    assert(morrow_watchdog_sample_crossed(29000, 61000, false));
+    assert(!morrow_watchdog_sample_crossed(UINT_MAX, UINT_MAX, false));
     puts("Short-interval constructor watchdog schedule: pass");
     return 0;
 }

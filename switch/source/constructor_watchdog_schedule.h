@@ -32,4 +32,21 @@ static inline bool morrow_watchdog_sample_due(unsigned elapsed_ms)
            (elapsed_ms >= 30000 && elapsed_ms % 30000 == 0);
 }
 
+// A new constructor can be observed during the 50 ms or 1000 ms polling
+// phase. Its counter need not land exactly on any deadline thereafter.
+// Sample immediately on a change, then when crossing a deadline; do not
+// replay every missed sample after a slow filesystem call.
+static inline bool morrow_watchdog_sample_crossed(unsigned previous_ms,
+                                                 unsigned elapsed_ms,
+                                                 bool new_constructor)
+{
+    if (new_constructor) return true;
+    if (elapsed_ms <= previous_ms) return false;
+    const unsigned deadlines[] = {20, 100, 300, 1000, 3000, 10000, 30000};
+    for (unsigned i = 0; i < sizeof(deadlines) / sizeof(deadlines[0]); ++i)
+        if (previous_ms < deadlines[i] && elapsed_ms >= deadlines[i])
+            return true;
+    return elapsed_ms / 30000 > previous_ms / 30000;
+}
+
 #endif
