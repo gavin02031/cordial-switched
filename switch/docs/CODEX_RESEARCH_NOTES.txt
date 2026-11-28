@@ -283,3 +283,13 @@ BLOCKER: The desktop AArch64 C++/system-header compilation path fails before wor
 PROPOSED FOR FLINT: Reproduce the failing compile command with its include paths, compiler and sysroot; inspect the preprocessed definitions of `__u128` and Linux AArch64 kernel headers. Correct the host build's header/toolchain compatibility at the owning build boundary, avoiding broad typedef injection or changes to guest ABI assumptions. Keep the Horizon build and desktop host fixes separate.
 SUCCESS: The same AArch64 Ubuntu `cargo test --workspace` job compiles the linker and completes tests while x86-64 and Horizon preview remain green.
 UNKNOWNS: No confirmed source-level cause or successful corrected run; no new Switch Lite hardware milestone.
+
+
+2026-11-28 09:37 America/Chicago — [HIGH][OBSERVED SOURCE / HARDWARE IMPACT INFERRED]
+50 ms transition can suppress all scheduled constructor watchdog samples.
+EVIDENCE: c52c1118cc37fb8f20c0291ff1d25406ad1f3248; https://github.com/gavin02031/cordial-switched/blob/c52c1118cc37fb8f20c0291ff1d25406ad1f3248/switch/source/constructor_watchdog_schedule.h
+morrow_watchdog_advance_elapsed resets elapsed to the previous polling delay; morrow_watchdog_sample_due uses exact equality. A read-only arithmetic model of the current helpers starting at 50 ms yields 50,70,90,110,160,...,1010,2010,... and zero scheduled hits over 100 iterations. Starting at 20 ms produces the expected hits. The test in switch/tests/constructor_watchdog_schedule_test.c checks the 50 ms reset value but only exercises the complete schedule starting at zero. Horizon preview CI succeeds; this is not hardware validation.
+BLOCKER: Missing register observations can obscure the cause of constructor 3 failure; the latest commit explicitly addresses missed samples in link-62/64, but this transition case remains uncovered.
+PROPOSED FOR FLINT: Sample on every newly observed constructor regardless of previous delay; track monotonic deadlines and sample when crossed, coalescing missed deadlines rather than requiring equality. Test transitions from 20, 50 and 1000 ms polling, including oversleep and saturation.
+SUCCESS: Model/regression test proves initial and subsequent observations across transitions; consolidated Switch report identifies the active constructor and sample timing without claiming a missing sample proves a crash.
+UNKNOWNS: No fresh hardware report; actual scheduling and whether this defect explains link-62/64 remain unknown.
