@@ -1,0 +1,41 @@
+diff --git a/src/jnivm/internal/method.cpp b/src/jnivm/internal/method.cpp
+--- a/src/jnivm/internal/method.cpp
++++ b/src/jnivm/internal/method.cpp
+@@ -197,7 +197,9 @@ template<class T> T jnivm::MDispatchBase2<T>::CallMethod(JNIEnv *env, jobject ob
+         LOG("JNIVM", "CallMethod field is null");
+ #endif
+     if (mid && mid->nativehandle) {
+-        auto cl = JNITypes<std::shared_ptr<Class>>::JNICast(ENV::FromJNIEnv(env), env->GetObjectClass(obj));
++        jclass local_class = env->GetObjectClass(obj);
++        auto cl = JNITypes<std::shared_ptr<Class>>::JNICast(ENV::FromJNIEnv(env), local_class);
++        env->DeleteLocalRef(local_class);
+         mid = findVirtualOverload(ENV::FromJNIEnv(env), cl.get(), mid);
+ #ifdef JNI_TRACE
+         LOG("JNIVM", "Call Member Function Class=`%s` Method=`%s` Signature=`%s`", cl ? cl->nativeprefix.data() : "???", mid->name.data(), mid->signature.data());
+@@ -215,7 +217,9 @@ template<class T> T jnivm::MDispatchBase2<T>::CallMethod(JNIEnv *env, jobject ob
+         }
+     } else {
+ #ifdef JNI_TRACE
+-        auto cl = JNITypes<std::shared_ptr<Class>>::JNICast(ENV::FromJNIEnv(env), env->GetObjectClass(obj));
++        jclass local_class = env->GetObjectClass(obj);
++        auto cl = JNITypes<std::shared_ptr<Class>>::JNICast(ENV::FromJNIEnv(env), local_class);
++        env->DeleteLocalRef(local_class);
+         LOG("JNIVM", "Call Unknown Member Function Class=`%s` Method=`%s` Signature=`%s`", cl ? cl->nativeprefix.data() : "???", mid ? mid->name.data() : "???", mid ? mid->signature.data() : "???");
+ #endif
+         return defaultVal<T>(ENV::FromJNIEnv(env), mid ? mid->signature : "");
+diff --git a/src/jnivm/vm.cpp b/src/jnivm/vm.cpp
+--- a/src/jnivm/vm.cpp
++++ b/src/jnivm/vm.cpp
+@@ -242,7 +242,11 @@ jclass GetObjectClass(JNIEnv *env, jobject jo) {
+ 	return jo ? JNITypes<std::shared_ptr<jnivm::Class>>::ToJNIType(ENV::FromJNIEnv(env), JNITypes<std::shared_ptr<jnivm::Object>>::JNICast(ENV::FromJNIEnv(env), jo)->getClassInternal(ENV::FromJNIEnv(env))) : env->FindClass("Invalid");
+ };
+ jboolean IsInstanceOf(JNIEnv *env, jobject jo, jclass cl) {
+-	return jo && IsAssignableFrom(env, GetObjectClass(env, jo), cl);
++	if (!jo) return false;
++	jclass local_class = GetObjectClass(env, jo);
++	jboolean result = IsAssignableFrom(env, local_class, cl);
++	env->DeleteLocalRef(local_class);
++	return result;
+ };
+ 
+ #include "internal/method.h"

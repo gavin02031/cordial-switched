@@ -1,0 +1,43 @@
+# Every Morrow provider source, one per line. Single list consumed by:
+#   - switch/tools/audit_android_elf.py (host-provider coverage build)
+#   - .github/workflows/switch-homebrew.yml (engine stage test link)
+# Add new android_*_compat.c files here; do not grow a second copy of this
+# list in either consumer. android_bionic_setjmp.s is deliberately absent:
+# the audit appends it only on aarch64 hosts.
+android_asset_compat.c
+android_configuration_compat.c
+android_coverage_compat.c
+android_cxa_compat.c
+android_dl_compat.c
+android_egl_gles_compat.c
+android_epoll_compat.c
+android_eventfd_compat.c
+android_file_compat.c
+android_fortify_compat.c
+android_image_reader_compat.c
+android_jump_compat.c
+android_libc_compat.c
+android_log_compat.c
+android_looper_compat.c
+android_mapping_compat.c
+android_math_compat.c
+android_media_codec_compat.c
+android_media_format_compat.c
+android_native_window_compat.c
+android_process_compat.c
+android_property_compat.c
+android_pthread_compat.c
+android_sem_compat.c
+android_socket_compat.c
+android_stdio_compat.c
+android_system_compat.c
+android_thread_attr_compat.c
+android_thread_lifecycle_compat.c
+android_timerfd_compat.c
+android_tls_compat.c
+android_wchar_compat.c
+android_import_resolver.c
+android_arm64_tcb_shadow.c
+android_virtual_fd.c
+engine_tls_scratch.c
+engine_module_registry.c

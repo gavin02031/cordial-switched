@@ -1,5 +1,10 @@
 target/
 build/
+# Horizon homebrew smoke-test output; never check generated executables in.
+/switch/*.elf
+/switch/*.nro
+/switch/*.nacp
+/switch/*.map
 *.o
 *.so
 .cache/

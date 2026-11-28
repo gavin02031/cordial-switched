@@ -1,0 +1,1420 @@
+# Cordial Switched: Morrow native UI experiment
+
+This directory builds a **Nintendo Switch `.nro` preview**, separate from
+Cordial's existing Linux binaries. The current v0.99.7 preview includes a 720p GPU-first
+dashboard built with SDL2/OpenGL ES, Nintendo's system font via `pl` and
+SDL2_ttf. Its lavender glass-style UI now includes **Home, Browse, Friends,
+Avatar, Settings, Engine, Link and Logs**. Settings has Account, Controls,
+Graphics (live UI FPS and animation toggle), Audio, Network, System and
+Diagnostics tabs. The Engine and Link pages retain ARM64 inspection and
+on-device test controls. Logs reads the latest bounded tail of diagnostic
+`.txt` files from the SD card without changing them.
+It reads handheld controls and
+touchscreen input. Home cards open the engine inspector, linker tests, settings
+and logs. Browse shows explicitly labelled sample imagery, Friends is empty,
+and Avatar displays an offline mannequin. None invent a live Roblox session.
+Browse **does not yet fetch experiences or launch games**: those require real Roblox authentication and
+engine startup. Development `.nro` packages still use the Cordial Switched
+name until a playable Morrow v1.0 is proven. **It does not
+currently run Roblox, connect to Roblox servers or sign in to any Roblox
+account.**
+
+v0.99.7 fixes executable-alias cleanup when permission setup and kernel rollback
+both fail: the address reservation and backing remain owned until cleanup succeeds.
+This is not a demonstrated fix for constructor 3's missing completion or gameplay.
+
+The renderer requests GPU acceleration and VSync, then falls back to an
+accelerated renderer without VSync or a software renderer if necessary. Static
+backgrounds and text are cached instead of rasterised every frame. The
+Settings > Graphics reports the actual renderer, the measured UI frame rate and
+average frame time; 60 FPS is a **target**, not a measured hardware result or
+a promise about eventual game performance. The current layout targets the
+Switch Lite's 1280x720 handheld display.
+
+### Which UI is ours?
+
+Morrow's launcher is native Horizon software. Its Home, Browse, Friends,
+Avatar, Settings and controller-focused overlays can have a
+completely original design; they do not need to imitate the Android app
+shell. Once supported, gameplay itself would still run through Roblox's
+Android engine, with compatibility services behind the scenes. An experience
+browser or login flow requires its own verified, secure integration; the
+current library is an **offline visual preview**, not a live account session.
+**v0.77 adds an original Accounts page** with a clearly marked offline
+identity state and future account-switching layout. It accepts no credentials,
+imports no cookies, and cannot sign in. The Windows Roblox Account Manager's
+account-switching concept informed the layout, not the authentication code.
+Roblox's official [Open Cloud OAuth](https://create.roblox.com/docs/cloud/auth/oauth2-overview)
+can provide authorised third-party profile access, but an Open Cloud identity
+token is **not evidence of a native Roblox game-engine session**.
+
+## Build
+
+The [Cordial Switched Horizon preview](../.github/workflows/switch-homebrew.yml)
+GitHub Actions workflow uses the `devkitpro/devkita64` toolchain container.
+Download the resulting `cordial-switched-switch-preview` artifact from the
+workflow run; its contents are `cordial-switched.nro`.
+
+The separate `morrow-switch-jni-runtime-preview` artifact is an opt-in
+JNI-enabled variant linked to real `libjnivm`. On Loader, **L3** initialises that VM,
+registers one typed JNI `com/google/androidgamesdk/GameActivity` reference,
+whose `getWaterfallInsets` callback returns a real `androidx/core/graphics/Insets`
+object with four zero fields for the Switch's fullscreen display, registers a
+typed JNI `android/view/Surface` global reference with the host-owned Horizon
+window, optionally binds a typed JNI
+`android/content/res/AssetManager` to an existing read-only SD directory,
+registers a stable typed Java `android/content/res/Configuration` identity
+whose `getLocales()` now carries the **actual Switch system language** when
+the settings service is available (no fallback language is fabricated),
+and exposes a typed `LocalStorageManager.getAllocatableBytes()` response
+measured from the mounted Switch SD card (only if its free-space query succeeds),
+plus `GameActivity.getResources().getDisplayMetrics()` with real Horizon
+surface dimensions and an explicitly neutral 1× Android layout scale,
+and `Resources.getConfiguration()` with matching live portrait/landscape,
+width/height dp, and Switch touchscreen values while the surface is bound,
+exposes the asset manager via GameActivity's `getAssets` JNI callback only if bound,
+and runs the same non-executable ELF link diagnostic. Its `link-XX.txt`
+report records `jni_vm_provider_installed`, `jni_game_activity_object_registered`,
+`android_java_surface_registered`, `android_java_asset_manager_registered`,
+and `jni_java_configuration_object_registered` independently. It also executes
+an original Morrow-owned `JNI_OnLoad`-shaped
+callback against that VM and registers, attempts to invoke, then unregisters
+one native method. The `morrow_synthetic_jni_onload_*` fields in `link-XX.txt`
+record each stage. The patched VM now dispatches one predeclared `(I)I` native
+through `CallStaticIntMethod`; **other raw JNI signatures are not implemented**
+and `RegisterNatives` rejects them. Normal **L3** does **not** call into
+`libroblox.so`. **Before v0.75**, holding **ZL + L3** requested the experimental real
+`JNI_OnLoad` call. It will refuse to execute if strict relocation fails, the
+engine has uninitialised PT_TLS or ELF constructors, required JNI objects are
+missing, or its entry is not in RX memory. It writes the precise reason in
+`link-XX.txt`. **There is a real possibility of an app crash if a call is
+allowed**: the Android Java and graphics runtime is incomplete, and no
+authentication, playable frame, or online connection has been validated.
+An entered engine mapping stays resident until you quit Morrow. If and only if
+`JNI_OnLoad` returns `0x00010006`, **ZR + L3** makes a *separate*, one-time
+experimental call to the observed AGDK `GameActivity.initializeNativeCode`
+export. It requires a real bound AssetManager (`assets/` must exist), typed
+Configuration and Surface; the report records an eventual native handle or
+the missing prerequisite. **It can crash**, because current Roblox APKs may
+change their JNI descriptors and the Android activity runtime is incomplete.
+It does not log in or render Roblox. Restart before trying the sequence again.
+Use a test account only if full gameplay is eventually reached.
+**The implemented Activity callbacks are not a complete
+GameActivity bootstrap, lifecycle/IME service, engine EGL context, Roblox
+startup, or Switch hardware proof**.
+
+**v0.99.3 advances offline auditing, constructor preparation and crash diagnostics.**
+The audit now prints the full distinct missing required ABI-key list when run
+with a verified manifest, preserves import-entry counts separately, and labels
+only directly adjacent AArch64 `MOVZ x8/w8` + `svc #0` sequences as tentative
+futex/getpid/gettid syscall hints. CI tests these rules with synthetic ELF
+fixtures; the proprietary Roblox binary is never added to GitHub.
+The constructor controller now has a gated Horizon execution path with
+required before/after journal callbacks. Repository-recorded link-58 evidence
+reports constructors 0–2 returned and constructor 3 did not produce a completion
+record; see the [console playbook](docs/console-run-playbook.md). A best-effort libnx exception handler records PC, x8,
+ESR and FAR when Horizon delivers an exception to userland; dynamically mapped
+code may instead be handled by the kernel, so missing logs prove nothing.
+**Some guest initialization code has executed according to the recorded hardware
+evidence; completed startup and playable Roblox remain unverified.**
+See [milestone and syscall limitations](docs/playability-milestones.md).
+
+**v0.99.2 makes the required `fchown` symbol linkable without falsely
+claiming filesystem ownership support.** Desktop POSIX builds forward to real
+`fchown`; Horizon returns `EOPNOTSUPP` for a valid descriptor (or `EBADF` for an
+invalid one). This can move the linker to its next missing import, but guest
+code actually requesting ownership changes will still fail. A passing link is
+not proof of engine startup or functional Android filesystem semantics.
+
+**v0.99 handles absent ELF weak imports and reports them separately.**
+See [the v0.99 loader notes](docs/morrow-v099-weak-imports.md) for the new
+`link-XX.txt` fields and the remaining hardware test.
+
+**v0.98 records why the ELF dyninit section boundary cannot be verified.**
+The latest Switch Lite `link-28.txt` (v0.97) confirms **534 of 629 imports
+supported, 95 unresolved**, versus 437/629 and 192 missing in v0.86.
+Its strict first blocker is unversioned `__start_ls_rbx_dyninit1`:
+`dyninit_section_verified=0`. v0.98 logs `dyninit_section_status` to separate
+missing section headers, malformed metadata, a missing named section, and an
+invalid/duplicate section from a verified mapped boundary. No fallback guesses
+or synthesized symbol addresses are permitted. An extra Bionic `vasprintf`
+provider allocates its actual formatted result with checked length and
+caller-owned storage. Synthetic ELF and stdio regression tests pass; **the
+new status and the additional import are not yet Switch-verified**. Strict
+relocation, constructors, Android runtime and actual Roblox gameplay remain
+blocked. See the next Loader `link-XX.txt` after installing the new build.
+
+**v0.97 expands the Android libc import bridge with eight more providers.**
+Seven numeric `_l` parsers (`strtol_l`, `strtoll_l`, `strtoul_l`,
+`strtoull_l`, `strtof_l`, `strtod_l`, `strtold_l`) follow Bionic's documented
+non-`_l` conversion semantics, without treating the opaque guest locale as
+a different native locale structure. ARM64 `strtold_l` is explicitly gated on
+the IEEE binary128 long-double ABI. The `fchmod` import calls the native
+descriptor operation, preserving real filesystem errors and rejecting unknown
+mode bits before any mutation. `fchown` and `geteuid` remain unresolved:
+Horizon/newlib cannot provide the required POSIX user identity or ownership
+semantics, and returning fabricated success would be misleading.
+Tests exercise numeric overflow/end pointers, file modes and negative import
+resolution. **INFERRED:** four of these names were seen missing in v0.86, but we have no
+newer Switch import audit or evidence that the guest has entered Roblox.
+
+**v0.96 translates Bionic socket creation flags and descriptor commands.**
+`socket` converts Android's `SOCK_NONBLOCK` and `SOCK_CLOEXEC` to native
+Linux or Horizon BSD constants, so the host actually creates the requested
+nonblocking/close-on-exec socket. The `fcntl` import now handles the basic
+descriptor commands (duplicate, get/set close-on-exec, get/set status flags)
+with Android-to-native status-bit translation. Unknown command and flag bits
+fail explicitly. Host tests check both native descriptor state and the Android
+round-trip, including invalid flags. The Switch build has not been confirmed
+on hardware and this does not establish engine execution or gameplay.
+
+**v0.95 adds translated `poll`, `select`, and `getnameinfo` providers.**
+Readiness calls use native descriptor sets and explicit Linux/BSD event-bit
+conversion; name lookups translate Android flags, socket addresses and error
+codes. Unsupported select sizes fail before accessing guest buffers. Socket
+readiness, timeout, closed-descriptor and numeric IPv4/IPv6 name tests run on
+the host and ARM64 CI. The shared pthread registry now hashes object addresses
+instead of scanning every registered mutex on each operation. This is runtime
+work, not a measured gameplay FPS improvement. Engine startup, login, joining
+and visible Roblox frames remain unverified. **v1.0 is reserved for verified
+playable gameplay**, with 30 FPS as the initial Switch Lite target and 60 FPS
+as a performance goal requiring on-console measurements.
+
+The same v0.95 development line also provides 19 locale-related imports:
+`newlocale`, `uselocale`, `freelocale`, narrow/wide collation and transform,
+and ten wide-character classifiers plus upper/lower conversion. Android
+category masks are translated; locale handles stay opaque native objects.
+Unsupported locale names fail through the native provider instead of silently
+selecting a replacement. The checked locale is `C`; availability of other
+locales depends on the Switch C library. These adapters do not establish
+Roblox UI text rendering or a working account session.
+
+**v0.94 validates the ELF constructor call targets** from a strictly relocated,
+non-executable staging image, checking the final RX pages and Bionic's null/-1
+sentinels without calling guest code. See [the constructor preflight notes](docs/morrow-v094-constructors.md).
+It does not unlock the still-blocked Roblox constructor or TLS execution.
+
+**v0.93 adds nine more Android networking providers** for DNS resolution,
+send/receive, socket options and IP text conversion. Native address and error
+layouts are translated, and unsupported options still fail explicitly. See
+[the network ABI notes](docs/morrow-v093-networking.md) for tested behaviour,
+limitations and the no-hardware-log caveat. Roblox gameplay remains blocked.
+
+**v0.92 adds a first, strictly checked Android socket-to-Horizon BSD bridge.**
+Ten `libc.so@LIBC` functions (`socket`, `connect`, `bind`, `listen`,
+`shutdown`, `accept`, `getsockname`, `getpeername`, `sendto`, `recvfrom`) now
+translate Linux/Bionic IPv4 and IPv6 address structures to the Switch's BSD
+family/length layout, including the distinct IPv6 family number. Horizon's
+BSD service initializes **only on the first actual socket call**, never during
+the read-only ELF import audit. Unsupported socket flags, address families,
+message flags and malformed addresses fail explicitly. A host-side test uses
+real TCP and UDP IPv4 loopback traffic to exercise bind/connect/accept,
+address roundtrips, peeking and shutdown. This is **not** a verified Roblox
+network session or a promise of online gameplay; additional Android DNS,
+polling, socket options, encryption and other services remain missing.
+These ten names have not been cross-checked against a new Switch import log,
+so the last **hardware-confirmed** count remains 437 of 629, with 192 missing
+(v0.86). Real gameplay, not an import count, is the v1.0 Morrow milestone.
+
+**v0.91 adds 13 more observed Android/Bionic import providers** across three
+areas. Four `libm.so@LIBC` long-double functions (`fmal`, `powl`, `roundl`,
+`llroundl`) are gated on the AArch64 binary128 ABI at compile time. Seven
+UTF-8 conversion functions (`mbrtowc`, `mbrlen`, `mbtowc`, `wcrtomb`,
+`mbsnrtowcs`, `mbsrtowcs`, `wcsnrtombs`) use Bionic's actual eight-byte
+`mbstate_t` footprint rather than passing guest storage to native newlib.
+Their decoder validates incomplete sequences, code points, surrogates and
+overlong encodings; tests cover roundtrips, partial input and bounded output.
+Finally, `__cmsg_nxthdr` checks Android ancillary-data header bounds before
+advancing, and `localeconv` supplies the native C-locale numeric structure
+with Android LP64 field offsets. Malformed control messages return NULL.
+The incompatible Android `locale_t`, sockets, native signal handling and
+other services remain unimplemented. **INFERRED:** these 13 names appeared
+in the v0.86 report; without a new hardware audit they are not a verified
+decrease from 192, and no real Roblox frame or login has been observed.
+
+**v0.90 adds a conditional, checked resolution path for two guest-owned
+linker section boundaries**, `__start_ls_rbx_dyninit1` and
+`__stop_ls_rbx_dyninit1`. The ELF stage reads the actual section-header
+table and binds them to the final code reservation only if one unambiguous
+`ls_rbx_dyninit1` section is allocated, correctly aligned, backed by
+`PT_LOAD`, and within the image's address range. Absent, stripped, ambiguous,
+or corrupt metadata leaves the imports unresolved. Versioned or unrelated
+symbols are never redirected to these guest pointers. The strict linker
+diagnostic now logs `dyninit_section_verified=0/1` so a future device trace
+can distinguish a real section from an assumption. Synthetic ELF tests cover
+positive and deliberately malformed metadata; **whether the actual Roblox
+ELF carries the section is not yet known**.
+
+**v0.90 also implements three Bionic FORTIFY `fd_set` entry points**:
+`__FD_SET_chk`, `__FD_CLR_chk` and `__FD_ISSET_chk`. They enforce Android's
+1024-descriptor limit and 128-byte object-size checks before modifying
+memory, and accept only the matching `LIBC`/`libc.so` provider. Host tests
+exercise the first/last bits, clearing and intentional FORTIFY aborts.
+**INFERRED:** these five names appeared in the v0.86 missing list, but this
+release has no new Switch hardware import count; actual engine startup,
+Roblox rendering and login remain blocked and unverified.
+
+**v0.87 introduces a paired ARM64 `setjmp`/`longjmp` provider** for the
+observed `LIBC` imports. The provider saves AArch64 callee-saved core and
+floating-point registers into a 32-word Bionic-sized buffer, and checks a
+checksum, native thread identity, return address and stack alignment before
+restoring them. It does not alias Horizon/newlib's incompatible jump buffer.
+The Android signal-mask variants stay unresolved: Horizon has no equivalent
+Android signal delivery and mask semantics. The ordinary pair also does not
+claim signal-mask preservation. Host tests check refusal on other
+architectures, cross-thread use and buffer corruption; CI additionally runs
+actual ARM64 jumps under QEMU. **INFERRED:** the confirmed v0.86 hardware audit
+of 437/629 supported imports may improve by two; neither a successful strict
+link nor any Roblox code execution has yet been observed for this change.
+
+**v0.89 adds 13 observed synchronisation entry points** without exposing
+Bionic's opaque pthread or semaphore storage to Horizon/newlib: five
+reader/writer-lock operations, four process-private counting semaphore
+operations, a condition-variable timed wait, and three condition-attribute
+operations. The wrappers track live readers, writers and blocked calls so
+destroy cannot free an object while threads are using it. Native absolute
+realtime and monotonic deadlines are supported through native condition
+attributes, including Bionic’s static monotonic initialiser. Unknown and
+process-shared attribute bits remain rejected. Process-shared
+semaphores return `ENOSYS`, not pretend success. Host concurrency tests cover
+reader/writer exclusion, recursion, deadlines, semaphore overflow and active
+teardown. **INFERRED:** these 13 names appeared in `link-25.txt`, but neither
+their resolution nor engine execution has been checked on Switch hardware.
+
+**v0.88 adds 18 distinct imports from the v0.86 hardware report.** The
+filesystem provider translates Android ARM64 `stat`/`fstat`/`lstat` records,
+`open` flags and `dirent` records instead of passing incompatible newlib
+layouts to the engine. It also binds `__open_2`, `lseek`, `ftruncate`, and
+directory open/read/close. Unsupported open flags fail before creating or
+truncating a file. `pread`, `pread64` and `pwrite` remain unresolved: newlib
+emulates positional I/O with seek/read-or-write/seek, which races with other
+users of the same descriptor. Directory types
+on Horizon are reported as `DT_UNKNOWN`; callers can request `stat`.
+
+`optarg`, `optind`, `environ`, `tzname`, `timezone` and `daylight` now expose
+the live storage used by their host functions, with `getopt_long` and `fdopen`
+also bound. Tests exercise changing timezone/parser globals, metadata output
+bounds, sparse file offsets above 4 GiB, symlink metadata, directory iteration,
+FORTIFY aborts, and failures that leave file contents unchanged. The desktop
+MCP cannot exercise these Horizon ABI providers, so these use standalone
+compatibility tests. **INFERRED:** these providers should reduce the missing
+import audit; there is no new hardware count or Roblox execution result yet.
+The remaining Android runtime services and linker symbols still block engine
+startup. v0.90 only handles the dynamic-section boundaries when the actual
+guest ELF independently validates their addresses. This is not playable v1.0.
+
+### Transfer from an iPhone without a PC
+
+With [FTPD](https://github.com/mtheall/ftpd) installed on the modded Switch
+Lite, all subsequent `.nro` updates and diagnostic reports can be transferred
+wirelessly. One-time FTPD installation requires an existing homebrew installer
+or access to the SD card (an iPhone USB-C microSD reader also works).
+
+1. In iPhone Safari, open the [Horizon preview workflow](../.github/workflows/switch-homebrew.yml),
+   select the latest completed successful run and download the
+   `morrow-switch-jni-runtime-preview` artifact for JNI-enabled Loader tests.
+   Extract its ZIP in the iPhone Files app to obtain `cordial-switched.nro`.
+2. Quit Morrow. Connect the iPhone and Switch Lite to the same Wi-Fi, then
+   launch FTPD from the Switch Homebrew Menu. Note the IP address shown.
+3. In an iPhone FTP client such as
+   [FTPManager](https://apps.apple.com/us/app/ftpmanager-ftp-sftp-client/id525959186),
+   connect using **FTP**, the displayed Switch IP, port **5000** and anonymous
+   access if FTPD is using its default settings.
+4. Upload `cordial-switched.nro` to **`/switch/cordial-switched.nro`** on the
+   Switch SD card, replacing only the previous NRO. Do not replace the
+   `/switch/cordial-switched/` data directory or its `libroblox.so` and assets.
+5. Exit FTPD, launch Morrow, open Loader and press **L3**. After testing,
+   reopen FTPD and copy the newest `/switch/cordial-switched/link-XX.txt`
+   back to your iPhone to report the next blocker.
+
+FTPD uses ordinary unencrypted FTP. Run it only on a trusted local Wi-Fi
+network, never expose port 5000 to the internet, and exit the server when done.
+
+**v0.86 adds native POSIX file, clock, DNS-address formatting and checked-I/O
+bridges** for the Bionic imports seen in the v0.85 hardware report. File
+descriptors and paths use actual host calls; bad FORTIFY read/write/readlink
+bounds abort, and the `__write_chk` provider is specifically `LIBC_N`.
+This does not translate Android paths into `sdmc:` paths or make Android
+`stat`/`FILE`/`jmp_buf` layouts compatible. The v0.85 `link-24.txt` confirmed
+400 supported out of 629 imports, leaving **229 unresolved**. Host tests cover
+the new entrypoints, provider versions, I/O and buffer violations.
+**INFERRED:** if the Switch link includes the same standard C entrypoints,
+v0.86 may resolve 37 more lookups (229 to 192). The first strict linker stop
+is still `longjmp @ LIBC`; neither actual guest execution nor a Roblox frame
+has been verified. Install the latest NRO, run Loader L3 and send its log.
+
+**v0.85 adds 33 independently version-gated Bionic import names** from the
+v0.84 device `link-22.txt`: nine more `FILE*` operations through the existing
+opaque-stream adapter, math `sincosf`/`sincos`/`finitef`, four checked or fatal
+FORTIFY functions, and 17 libc functions or data symbols. The latter include
+OS-seeded `__stack_chk_guard` and `arc4random_buf`, `memrchr`, time/scheduling,
+and basic ANSI C interfaces. Failed bounds checks abort; failed entropy does
+not quietly return pretend random bytes. These are host-tested, not yet
+validated at call sites in the guest on Switch. The v0.85 `link-24.txt`
+read-only import audit confirmed a drop from 262 to 229.
+The first strict blocker remains `longjmp @ LIBC`: Android's private
+`jmp_buf` ABI is not safely interchangeable with Horizon/newlib. We do not
+bind that pair until it has an architecture-specific implementation and tests.
+No Roblox frame or login is claimed; run Loader L3 and compare the next log.
+
+**v0.84 includes Morrow's chosen original pastel logo** in the Homebrew Menu
+`.nro` icon. The full-size artwork is in `switch/assets/morrow-logo.webp`;
+the 256-pixel JPEG is the embedded Switch icon. The app is still titled
+Cordial Switched while the engine remains experimental. This preview also
+provides a per-thread Bionic `__cxa_thread_atexit_impl` implementation:
+registered C++ thread-local destructors run on the owning thread at exit,
+including registrations made during teardown. This is covered by host tests,
+not yet confirmed with the Roblox engine on Switch. The `longjmp` import and
+other unresolved imports still block strict relocation, so **no Roblox frame
+or login is claimed**.
+
+**v0.83 handles the next strict linker stop, `__gcov_dump`,** from the v0.82
+`link-19.txt` report. It also resolves `__gcov_flush`: both are void profiler
+hooks, not rendering or gameplay services. Because Horizon has no guest gcov
+counter registry, a call explicitly warns that coverage was not saved; Morrow
+does not silently claim a profile was written. Compatible pure libc string,
+wide-character and numeric functions now bind only to `LIBC` from `libc.so`,
+and the 16-byte `in6addr_any` / `in6addr_loopback` data constants bind only to
+the observed `LIBC_N` provider. Android `AMediaCodec_createCodecByName` now
+returns null through the same honest unsupported-decoder path as its peers.
+**INFERRED:** the v0.82 audit still reported 292 missing imports and 2,505 ELF
+constructors. Remaining mismatched ABI functions (notably `setjmp`/`longjmp`
+and POSIX structures) are intentionally not forwarded blindly to libnx.
+This is a linker compatibility update, not a verified Roblox frame or login.
+After installing, run Loader L3 and send the next `link-XX.txt`.
+
+**v0.82 handles the next strict linker stop, `__sF@LIBC`,** observed on Switch
+in the v0.81 `link-18.txt` report. The pre-Android-M three-element standard
+stream array now has Bionic's verified 152-byte LP64 stride. FILE-taking stdio
+wrappers translate each legacy slot to the corresponding Horizon stream; the
+host must never dereference those opaque bytes as a newlib FILE. The wrappers
+also refuse to close global standard streams. Host tests verify every slot,
+the 152-byte addressing, version/provider checks and safe refusal to close.
+The unversioned `getentropy` import also uses libnx's OS-seeded ChaCha RNG,
+with Android's 256-byte limit and error handling, instead of fabricated bytes.
+The v0.81 audit progressed to 629 import lookups and found 298 unresolved
+imports; v0.82 therefore saves up to 512 names and versions in the next
+`link-XX.txt`, instead of hiding all but 24. The full list is a read-only
+diagnostic, not newly supported functionality. **INFERRED:** even after `__sF`
+is resolved, many missing libc/Android imports and 2,505 constructors prevent
+real `JNI_OnLoad`, Roblox graphics, login and gameplay. Send the latest Loader
+L3 report after updating; experimental ZL+ZR+Minus may still refuse entry.
+
+**v0.81 addresses two observed v0.80 linker blockers** from a real Switch
+`link-17.txt` (L3 export/link diagnostic). The strict and NX-audit linker
+now relocates defined, already-loaded ARM64 dynamic symbols against the
+actual future code reservation instead of reporting every defined reference
+as `Non-imported or invalid dynamic symbol`. A mapped PT_LOAD target is
+required; malformed sections, TLS variables and GNU IFUNCs still stop safely.
+This lets the read-only audit inspect imports beyond the previous early stop.
+It also adds an Android NDK image-reader provider for the exact
+`AImageReader_delete` family missing from the log. Following Cordial's
+desktop implementation, `AImageReader_newWithUsage` returns the genuine
+`AMEDIA_ERROR_UNSUPPORTED` error and a null reader; accessors refuse invalid
+objects rather than claiming a functioning video-decoder or fake buffers.
+The `ldexp` and `round` math symbols are connected to compatible C functions
+with their observed provider/version requirements. Host tests cover internal
+RELA/PLT/absolute-symbol binding, invalid ELF metadata, image-reader error
+contracts and math ABIs. **INFERRED:** this moves the failure boundary
+forward; there are more unresolved imports and 2,505 ELF constructors in
+that user-supplied library. Full Android dynamic initialization, gameplay,
+login and the first real Roblox frame are not yet demonstrated on Switch.
+Send the next `link-XX.txt` after Loader L3 to see the new first blocker.
+
+**v0.80 adds the nine real Android ActivityNativeMain lifecycle native calls**
+to the experimental App Bridge startup path (after a successful JNI_OnLoad).
+It discovers the *actual executable exports* in the local ARM64 `libroblox.so`:
+`nativeOnPreCreated`, `nativeOnCreated`, `nativeOnPostCreated`,
+`nativeOnPreStarted`, `nativeOnStarted`, `nativeOnPostStarted`,
+`nativeOnPreResumed`, `nativeOnResumed` and `nativeOnPostResumed`.
+All nine must exist in mapped RX pages; missing exports block the sequence
+instead of guessing a target or declaring an absent callback successful.
+For each stage Morrow invokes the observed `(JNIEnv*, jclass, jstring)` JNI ABI
+with the real typed class identity and `com.roblox.client.ActivityNativeMain`
+name. It saves and syncs a separate crash marker *before* each guest call,
+records its actual return and JNI/C++ exception state, and stops on failure.
+The activity name is not a fabricated Android Activity instance. These
+callbacks alone do **not** provide an Android Application, its window/input
+services, login or a rendered Roblox frame. **INFERRED:** the callback order
+matches Cordial's Android startup investigation; it remains untested on
+Switch hardware. Existing strict ELF relocation, PT_TLS and constructor
+gates remain in force; a blocked `JNI_OnLoad` still prevents lifecycle calls.
+The next on-device `link-XX.txt` or `crash-XX.txt` will identify the first
+actual stop rather than implying a frame appeared.
+
+**v0.74 corrected the ZL + ZR + L3 App Bridge V2 experiment**, after
+successful JNI_OnLoad in the same process. It checks the five launch
+exports against the pinned mapped RX pages and invokes
+the observed JNI signatures in order: `nativeGameGlobalInit`,
+`nativeUpdateAdapterInit`, `nativeAppBridgeV2InitWithParams`,
+`nativeAppBridgeStartLuaAppDM`, then
+`nativeAppBridgeV2StartAppWithParams`. The earlier v0.72–v0.73 sequence
+was wrong to require `nativeAppBridgeV2UpdateSurfaceAppWithPlatformParams`
+*before* StartApp: Cordial's recorded Android ActivityNativeMain flow
+uses surface update on a subsequent resize. Morrow now probes this export
+separately and leaves it uncalled without a real resize event. The existing
+typed StartAppParams carries the real Horizon-owned Java Surface. Each
+attempted native entry is written to
+`link-XX.txt`, along with whether it returned and any JNI exception; it
+stops at the first failed step. The InitParams and StartAppParams are
+**partial**: full Android Application/lifecycle, authentication, version/User-Agent and
+several other Android services are not implemented. This attempt can crash
+or refuse to run, and a successful return **does not prove login, a Roblox
+frame, a game session, or compatibility with Roblox servers**.
+**INFERRED:** The launch order and JNI call signatures are based on Cordial's
+recorded Android launch trace and the open-source Mocktail capability resolver
+([komaruworld/mocktail](https://github.com/komaruworld/mocktail)), not a
+successful Switch execution. The loader additionally audits the optional
+`nativeCallMessagesFromMainThread` export. **v0.73 adds ZL + ZR + R3** as a
+*separate* opt-in, one-shot attempt of that JNI callback after all five bridge
+steps returned successfully in the same process. This call is made on the UI
+thread only after its mapped RX address is verified, with a new persistent
+crash breadcrumb and numbered report. It is **not a recurring Android event
+loop**: no lifecycle or frame-present validation exists, and a returning
+callback is **not** evidence of engine boot or authentication. The callback
+may crash or hang on incomplete Android services. Restart Morrow before
+trying the risky sequence again.
+
+**v0.74 also records guest-only graphics activity** in each numbered link
+report: checked EGL window creation, successful `eglMakeCurrent`, `glClear`,
+and successful `eglSwapBuffers`. It counts only calls to the graphics ABI
+we expose to the guest, not Morrow's own SDL preview. Even all four positive
+counters are **not proof that a visible Roblox frame reached the screen**.
+
+**v0.75 moves real engine entry behind an exclusive graphics handoff.**
+Older previews attempted JNI startup while Morrow's SDL renderer still
+owned the same Horizon window: that could conflict with the guest EGL context.
+On Loader, hold **ZL + ZR and press Minus**. Morrow closes its SDL UI,
+renderer, and window *before* binding the real JNI Surface and attempting
+`JNI_OnLoad`, the nine Activity lifecycle JNI calls and five App Bridge entries. Individual ZL/ZR+L3 and
+ZL+ZR+R3 native entry calls now fail closed
+while SDL is active; normal L3 diagnostics are unchanged. If JNI startup is
+blocked, a simple console screen directs you to `link-XX.txt`; after JNI
+entry, the process exits if the App Bridge cannot start. If all five entries
+return, the exclusive Horizon window stays available until you press PLUS,
+and Morrow appends bounded 2-second guest EGL activity snapshots to the last
+link report. **INFERRED:** releasing SDL removes a plausible graphics-ownership
+conflict. It does not solve engine TLS, ELF constructors, Android services,
+login, or prove the guest rendered a visible frame. Crashes still leave
+durable step breadcrumbs, and normal **Minus** still runs only the separate
+synthetic GLES triangle smoke test.
+
+**v0.76 adds a bounded experimental main-thread message pump** to the same
+exclusive launch path. Only after `JNI_OnLoad` and all five App Bridge entries
+return successfully, Morrow calls the verified mapped
+`nativeCallMessagesFromMainThread` export at approximately 10 Hz, for at most
+120 attempts (about 12 seconds), while preserving the guest-owned Horizon
+window. It stops on a failed callback, JNI/C++ exception, missing runtime
+prerequisite or SD logging failure. Each attempt is written and synced to the
+same numbered `link-XX.txt`, with an independently synced
+`engine-in-progress.txt` crash marker describing its numbered pump tick.
+Morrow clears that marker only once the callback returns and the result has
+been written durably; an unclean exit leaves a recoverable `crash-XX.txt` on
+the next launch. You can leave the exclusive display with **PLUS**. This is
+**not a working Android event loop**, verified Roblox login, or playable
+experience. No real guest frame has been verified on Switch hardware.
+
+**v0.79 fixes an exclusive-launch bootstrap ordering bug.** The opt-in
+**ZL + ZR + Minus** engine path previously created the JNI VM *before* asking
+the mounted SD filesystem for its free space. The VM registers the typed
+`LocalStorageManager` only at creation time, so the engine path could not
+expose that class even when the SD measurement would have succeeded. Normal
+**L3** diagnostics already used the correct order. Both paths now share the
+same preparation routine, which reads SD free space before creating the VM.
+The existing `jni_storage_free_space_measured` and
+`jni_local_storage_manager_registered` fields in the numbered link report
+show whether the actual runtime objects were available; neither is a claim
+that Roblox's storage subsystem initialised. **INFERRED:** restoring the
+required Java class may remove one engine startup obstacle. This still needs
+a real Switch run and does not verify login, a Roblox frame or gameplay.
+
+**v0.78 makes native crash breadcrumbs more reliable.** JNI_OnLoad,
+GameActivity, each App Bridge entry and each main-thread pump callback now
+write and synchronise their return result **before** clearing the persistent
+entry marker. A failed log flush or sync leaves that marker for next-boot
+recovery; a successful return alone cannot be mistaken for a durable report.
+Host tests cover both a synchronised result and an unsynchronisable report.
+This fixes a diagnostic gap, not Android bootstrap or Roblox login.
+
+Before **any** experimental engine entry (JNI_OnLoad, AGDK GameActivity,
+each of the nine Activity lifecycle callbacks, each of the five App Bridge
+steps and every v0.76 message-pump callback),
+Morrow syncs both its numbered link log
+and an `engine-in-progress.txt` marker to SD. If the process crashes,
+freezes and is force-quit, or loses power before the call returns, the next
+successful Morrow launch archives that marker as `crash-XX.txt`, preserving
+the last requested phase and corresponding link report. A crash log is a
+**last-known-step breadcrumb, not a native stack trace or proof of the cause**.
+If the SD write or sync fails, Morrow refuses to enter the guest library.
+Copy `crash-XX.txt` and its referenced `link-XX.txt` when reporting failures.
+The Surface adapter now accepts valid local/global aliases to the same Java
+object after checking VM ownership; it does not accept arbitrary pointers,
+create an EGL context or render Roblox frames.
+For optional asset validation, place assets extracted from your own legitimate
+APK under `sdmc:/switch/cordial-switched/assets/`. Without that directory,
+asset registration correctly remains `no`; no APK or assets are downloaded by
+the preview, and no asset bytes are included in its diagnostic reports.
+The default graphics preview and its synthetic **Minus** triangle test are
+unchanged. On the opt-in JNI preview, **Loader → Minus** now repeats the
+triangle test with a real `libjnivm` Java `Surface` instead of the synthetic
+one, recording the result in `graphics-XX.txt`. This is an on-device test of
+JNI Surface → `ANativeWindow_fromSurface` → EGL → GLES, not a Roblox render.
+
+For a local build, install devkitPro with `devkitA64`, `libnx`,
+`switch-sdl2`, and `switch-sdl2_ttf`, set `DEVKITPRO`, and run:
+
+```sh
+make -C switch
+```
+
+For the opt-in JNI variant, apply
+[`libjnivm-local-refs.patch`](patches/libjnivm-local-refs.patch) to the pinned
+JNI submodule before building its static library. CI performs this step in both
+JNI jobs; a fresh local checkout can do so with:
+
+```sh
+git submodule update --init third_party/libjnivm
+git -C third_party/libjnivm apply ../../switch/patches/libjnivm-local-refs.patch
+git -C third_party/libjnivm apply ../../switch/patches/libjnivm-native-int-dispatch.patch
+```
+
+Copy `switch/cordial-switched.nro` to `sdmc:/switch/cordial-switched.nro`,
+launch it from the Homebrew Menu on a Switch with working homebrew support,
+then check:
+
+1. The Home page renders correctly, including fonts, pastel colours and cards.
+2. **L/R** cycle the eight pages; **D-pad up/down** move through pages except
+   in Settings (categories) and Logs (file selection). **B** returns Home or
+   Settings from a diagnostic page. **A** opens Browse from Home.
+3. Tapping the left rail or a Home card switches pages. Browse tabs, Settings
+   categories, Diagnostics shortcuts and individual log filenames are touchable.
+   On Settings > Graphics, **X** or the toggle changes ambient animation.
+4. Check Settings > Graphics after a few seconds. Report the renderer type,
+   average UI frame rate and any stutters; do not treat it as Roblox FPS.
+   Settings > Diagnostics opens Link or Logs; the log viewer displays recent
+   `.txt` report files in read-only form with a 32 KiB input limit and a
+   48-line tail. On Logs, D-pad up/down selects files, left/right scrolls the
+   tail, and **X/Y** rescans the report directory. It does not launch Roblox.
+5. On the Engine tab, press **X** (or tap **X: TEST JIT**) to try the optional
+   isolated executable-memory check described below. It does **not** require
+   a Roblox library, and it does **not** launch Roblox.
+6. Open the **Loader** page after adding your library. It reports segment
+   permissions, memory span, relative/PLT relocation counts, Android packed
+   relocation bytes and symbol version tags. Press **X** to cycle between
+   the profile, the dependency list and imported PLT symbol names. **Y**
+   rescans on either Engine or Loader; it is metadata inspection only.
+   Press **ZL** on Loader to save a numbered `imports-XX.txt` report in
+   `sdmc:/switch/cordial-switched/`, with names and symbol version indices
+   but no APK bytes or credentials. Old reports are never overwritten.
+   Press **ZR** to run the opt-in **engine bootstrap preflight** against your
+   real library, including copying/relocating it into non-executable scratch
+   RAM. It audits missing imports without binding them and automatically
+   saves `sdmc:/switch/cordial-switched/stage-XX.txt`. The file records
+   inspected dependencies, relocation requirements, stage status, missing-import
+   count and up to 24 missing-import examples. It never includes engine bytes
+   or credentials, and does **not**
+   call a Roblox function. Logs are numbered and previous reports are kept.
+7. On the **Loader** page, click **R3** (right stick) to run the opt-in
+   synthetic ARM64 ELF mapping check. It writes only an original 1 KiB
+   fixture, reserves and maps a 4 KiB page, verifies a relative relocation,
+   calls its two-instruction `movz w0,#42; ret` function and releases the page.
+   It saves a numbered `map-XX.txt` log under `sdmc:/switch/cordial-switched/`
+   and removes the temporary fixture. **It never reads or runs `libroblox.so`.**
+   This v0.25 test passed synthetic host checks; real Switch Lite execution
+   remains unverified until a device log is collected.
+8. With your own Android ARM64 `libroblox.so` on the SD card, click **L3**
+   (left stick) on Loader for a strict final-base relocation preflight.
+   It reserves a real Horizon code address, stages supported relocations
+   against that address, reports the first unresolved or unsupported import,
+   then discards the NX staging bytes and releases the reservation.
+   This option saves `link-XX.txt` in the same folder. Normal L3 does not
+   map the Roblox image as executable, call an engine initialiser, sign in,
+   or join a game. For the experimental engine attempt, hold
+   **ZL + ZR + Minus** instead. This quits Morrow's SDL renderer before
+   attempting `JNI_OnLoad`, the five native App Bridge entries, and then up
+   to 120 message callbacks, each with durable crash breadcrumbs. The old ZL/ZR+L3
+   and ZL+ZR+R3 native calls are blocked while SDL still owns the display.
+   This is not a gameplay or login implementation. A real engine still needs
+   Android TLS, constructors, complete JNI and graphics.
+   Starting with v0.27, this same report checks whether a separate, aligned
+   copy of the real library's PT_TLS initializer and a single-module DTV
+   shadow can be prepared. These are diagnostic per-thread allocations only;
+   the CPU thread pointer and Android thread callbacks are **not** installed.
+   v0.28 also implements the NDK media format object and exported key symbols,
+   following the user's first real L3 blocker (
+   `AMediaFormat_delete`). Codec creation correctly reports unavailable and
+   codec methods return an NDK invalid-object error; it does **not** decode or
+   encode any media or invent a successful codec handle.
+   The log now includes the first missing import's version and provider so a
+   correctly rejected API can be distinguished from an absent implementation.
+   v0.29 fixes intermittent Horizon reservation failures: libnx's
+   `virtmemFindCodeMemory` takes a **guard size** as its second argument,
+   not the ELF alignment. The native loader now searches a slightly larger
+   free span and selects the correct 16 KiB load-bias phase within it.
+   Remaining allocation failures are recorded with a specific reason in
+   the numbered `link-XX.txt` report.
+   v0.30 attempts the **real engine entry-readiness checks** at the reserved
+   final address. If strict relocation fails, L3 now runs a separate bounded,
+   non-executable relocation audit at the *same* base and lists up to 24 missing
+   Android imports, total missing lookups, and unsupported relocation counts.
+   The `execution_gate` and `engine_entry_called` fields state exactly why a
+   call into Roblox is refused. It cannot safely execute the Roblox entry while
+   required imports, the Bionic/JNI runtime, and graphics services are absent.
+   v0.31 supplies a separate, bounded C++ destructor registry for Android's
+   versioned `__cxa_atexit` and `__cxa_finalize` imports. It respects DSO
+   ownership and reverse registration order, runs callbacks outside its lock,
+   and never aliases a native newlib C++ exit-handler list. The missing
+   `__register_atfork` import is **not** claimed as working: actual process-fork
+   semantics are not implemented. This is a linker-runtime component, not
+   evidence of successful Roblox engine execution.
+   v0.32 implements the seven imported Android NDK `ALooper_*` APIs
+   against native file-descriptor polling: thread-local loopers, bounded
+   registration/replacement/removal, correct timeout/error results, and
+   callback invocation without holding the registration mutex. Callbacks
+   returning zero are removed, and all observed callbacks in a poll batch run.
+   This is not a GameActivity or JNI implementation. The libnx socket/poll
+   backend has not been confirmed on the user's actual command-pipe fds, so
+   hardware startup remains **unverified**.
+   v0.33 adds Android's **versioned libdl lookup** exports (`dlopen`, `dlsym`,
+   `dlclose`, `dlerror`, `dladdr`) using a bounded namespace of the real native
+   adapters already supplied here (`liblog.so`, partial `libandroid.so`,
+   `libm.so`, `libdl.so`). Unknown Android libraries and missing symbols fail
+   explicitly; per-thread `dlerror` retains useful errors and `dladdr`
+   refuses to fabricate a guest DSO base. This does **not** load arbitrary
+   Android binaries or replace the missing GameActivity/JNI/graphics runtime.
+   v0.34 inspects the real ELF's exported `JNI_OnLoad` and
+   `ANativeActivity_onCreate` functions plus `DT_INIT` and constructor-array
+   metadata. The new `entry_probe_*`, `jni_onload_*`, `native_activity_*`, and
+   `elf_init_array_entries` fields appear in the same numbered L3 report.
+   Stripped section headers are reported as *unknown*, not as proof that an
+   initializer is absent. All discovery is **read-only**: it does not execute
+   the initializers or resolve the remaining Android JNI/graphics dependencies.
+   v0.35 supplies a native `ANativeWindow` reference-count and dimension bridge
+   (five NDK imports), accepting only surfaces explicitly registered by a future
+   JNI implementation. No Java surface is registered today, so `fromSurface`
+   correctly returns unavailable, and no EGL framebuffer is claimed.
+   v0.36 adds six Android NDK asset-manager entry points. Read-only assets can
+   come from a deliberately bound local directory, with path traversal rejected,
+   buffers limited to 16 MiB and file descriptors issued for real files. No Java
+   `AssetManager` has been bound yet: the caller must supply a verified object
+   and keep its JNI reference alive, so this is not APK-resource emulation.
+   v0.37 adds the C ABI for JavaVM's five JNI invocation callbacks, including
+   `GetEnv`, thread attachment/detachment, and daemon attachment. Calls fail
+   closed until a real Java environment provider is installed once; `GetEnv`
+   delegates per-thread `JNIEnv` lookup to that provider, which must never
+   share an environment between threads. The host regression test uses a
+   deliberately **mock** provider to verify the ABI,
+   failure modes, and thread isolation. **No JNI environment or Java classes
+   exist in the Switch runtime yet; Roblox `JNI_OnLoad` is still not called.**
+   v0.38 introduces an **opt-in, isolated native Mesa EGL/GLES2 display test**.
+   On the Loader page press **Minus**. Morrow first closes its SDL renderer,
+   then asks Mesa for the default Horizon window and an OpenGL ES 2 context.
+   If successful, it draws a pastel triangle through GLES shaders and a vertex
+   buffer. Press **B** or **Plus** to return to Homebrew Menu. The numbered
+   `graphics-XX.txt` report records the actual EGL error or first successful
+   swap. The graphics test does **not** render any Roblox content. The user
+   reported seeing the triangle on their Switch Lite with v0.38; a numbered
+   `graphics-XX.txt` report for that run has not yet been supplied.
+   v0.39 exposed 90 explicit, ABI-compatible EGL/GLES2 function addresses to
+   the ARM64 strict import resolver, using the same native Mesa libraries that
+   power the graphics test. Guest `dlopen`/`dlsym` can find only registered
+   symbols in `libEGL.so` and `libGLESv2.so`. One critical EGL import,
+   `eglCreateWindowSurface`, was intentionally left unmapped at that point:
+   a guest `ANativeWindow` is not a Horizon `NWindow`, and handing the former
+   directly to Mesa would be unsafe. The imported `eglGetProcAddress` is
+   restricted to registered symbols too.
+   v0.40 adds the **91st EGL/GLES symbol**, a checked `eglCreateWindowSurface`
+   adapter. An explicit guest `ANativeWindow` to Horizon `NWindow` registration
+   is mandatory; arbitrary guest handles and unbound windows are refused with
+   `EGL_BAD_NATIVE_WINDOW`. The existing **Minus** graphics test now exercises
+   this path using a synthetic Surface identity paired to the real Horizon
+   display, checks that an unregistered handle fails, then draws the same
+   triangle. `graphics-XX.txt` records `unregistered_window_rejected` and
+   `guest_egl_window_surface_created` separately. **This synthetic test is not
+   Java, JNI or Roblox.** No real Java Surface is registered yet; the Android
+   engine still cannot initialise and this is not a release candidate.
+   v0.41 supplies nine imported `AConfiguration_*` functions, including
+   configuration lifecycle and language/country, screen-size and dp getters.
+   A newly allocated configuration starts with the NDK's unspecified values;
+   `AConfiguration_fromAssetManager` copies metadata only if an existing,
+   verified native asset manager received a configuration profile explicitly
+   from its owner. Stale or unregistered handles cannot supply locale or dp.
+   No real Android Java asset manager is registered on Switch yet, so this
+   narrows the unresolved import gap without pretending to have a complete
+   Android resources subsystem or JNI environment.
+   The native workflow also runs an **independent experimental cross-build**
+   of Cordial's pinned `libjnivm` dependency for Switch ARM64. The result is
+   checked as a static library and linked into a **separate opt-in v0.44
+   preview**; the default `.nro` does not initialise the VM. This is a JNI
+   runtime component, not proof of a working Roblox callback path.
+   A separate experimental **`morrow-jni-probe.nro`** is built from that
+   library when the independent JNI job succeeds. Launch it in Homebrew Menu
+   to construct a `jnivm::VM`, obtain the current thread's `JNIEnv`, and
+   exercise the JNI 1.6 `JavaVM::GetEnv` callback. The v0.43 probe also
+   attaches a worker pthread, checks it receives a distinct `JNIEnv`, tests
+   JavaVM lookup and detaches it. In v0.44 the overall PASS requires **both**
+   the core and worker tests, so a worker failure cannot be hidden.
+   It prints PASS/FAIL and writes `sdmc:/switch/cordial-switched/jni-XX.txt`.
+   This program cannot
+   start Roblox: it does not load `libroblox.so`, register its Android
+   GameActivity classes, or provide an EGL surface. The separate `.nro` must
+   pass **on actual Switch hardware** before JNI can be claimed working.
+   The opt-in runtime also has a host test against the **real pinned libjnivm**
+   and a strict JNI bridge that returns `JNI_EDETACHED` for unbound threads.
+   It deliberately does not call `JNI_OnLoad`: the full Android
+   GameActivity bootstrap and platform callbacks are still absent.
+   The v0.45 host test creates a real typed JNI `Surface`, verifies the native
+   NDK `ANativeWindow_fromSurface` handoff and its Horizon-window identity,
+   tests dimensions and resize without changing Java identity, and checks that
+   unbinding rejects new EGL use while old native references can be released.
+   No Java Activity, Android compositor or game rendering is implemented.
+   v0.46 adds the actual JNI AssetManager reference and binds it to the NDK
+   `AAssetManager_fromJava` provider only when an existing asset directory
+   passes the native validation checks. The host test opens a synthetic asset,
+   rejects traversal, retains Java identity on rebind to the same directory,
+   rejects changing the directory silently and verifies stale handles fail
+   after unbinding. No Android resources metadata is guessed.
+   v0.47 registers a stable typed JNI `GameActivity` global reference and the
+   `getWaterfallInsets()` method from Cordial's existing GameActivity contract.
+   The method returns an actual `androidx/core/graphics/Insets` object with
+   all four JNI integer fields set to zero (appropriate for this fullscreen
+   Switch display). The host JNI test verifies class identity, method lookup,
+   result class, field values and reference release using the real `libjnivm`.
+   **No Activity lifecycle callbacks, Android UI services, engine bootstrap,
+   or Roblox execution are provided by this single callback.**
+   v0.48 adds `GameActivity.getAssets()` and recognises additional valid JNI
+   references to the same read-only AssetManager. The native bridge checks
+   that a reference belongs to the active VM before comparing Java identity,
+   and rejects unknown references and stale managers. If no optional asset
+   directory exists, the method returns null rather than inventing an owner.
+   The real-VM host test exercises both identity paths and cleanup. Neither
+   Activity bootstrap nor the Roblox engine is started by this preview.
+   v0.49 extends the same verified JNI alias resolution to the native Surface
+   adapter. The host test first reproduced an alias lookup failure, then
+   confirmed that both local and global Surface references resolve to the
+   same NWindow, retain their dimensions and fail new acquisitions after
+   unbinding. The native window and AddressSanitizer tests also pass. This
+   does not yet give the Roblox engine an EGL context or a first frame.
+   v0.50 gives the opt-in **Minus** graphics test a second, real-JNI path.
+   After SDL releases its renderer, the test starts the VM, obtains the actual
+   current-thread JNI environment, binds a typed Java Surface to the Horizon
+   window, and passes that reference through `ANativeWindow_fromSurface` to
+   the checked EGL window-surface adapter. The `graphics-XX.txt` diagnostic
+   distinguishes this from the default synthetic test and records the real
+   window identity and EGL outcome. The VM/thread host regression test passes,
+   but this joined JNI/EGL path still requires Switch Lite hardware results.
+   v0.51 registers the typed `GameActivity.setWindowFlags(II)V` and
+   `setImeEditorInfoFields(III)V` JNI methods found in Cordial's existing
+   Android bridge. The Switch keeps an observable count and last parameters
+   for these requests, including a call from an attached JNI worker thread.
+   `link-XX.txt` reports the counts and explicitly states that **neither
+   Android window flags nor IME settings are applied**: the Switch still has
+   no Android window manager or soft keyboard. The real-JNI and ASan host
+   tests pass; engine startup and this callback path on hardware are untested.
+   v0.52 adds a stable typed `java/lang/ClassLoader` returned by
+   `GameActivity.getClassLoader()`. Its `loadClass` and `findClass` methods
+   recognise dotted/slashed names for the platform classes Morrow registers;
+   unknown APK classes return null because no Android APK classpath exists.
+   The real-JNI test checks class identity and unknown-name rejection.
+   Repeated Activity calls also no longer create a second hidden local JNI
+   reference. The pinned VM itself still retains a temporary class reference
+   per method call in the host test, so JNI local lifetime is **not yet fully
+   resolved**. No Roblox engine instructions are executed by this preview.
+   v0.53 patches the pinned open-source JNI VM's internal `CallMethod` and
+   `IsInstanceOf` class queries to release their temporary JNI local refs.
+   Both the host test and the Switch cross-build apply the same tracked patch.
+   Repeated Activity calls and object-type checks now leave no retained locals
+   in the patched-VM host test. This does not prove the whole Android runtime
+   or Roblox engine is ready; Switch Lite hardware testing remains pending.
+   v0.54 adds a repeatable on-device synthetic `JNI_OnLoad` contract probe to
+   the L3 report. The host test repeats it 64 times, confirming VM ABI,
+   registration, unregistration and JNI-local cleanup. Its negative control
+   shows that registered methods cannot yet be called through the JNI static
+   invocation table. The failing subcheck stays visible in diagnostics; a green
+   cross-build does not prove Roblox's initialiser can execute.
+   v0.55 supplies a narrowly typed registered-native call adapter in the
+   pinned VM. It correctly runs predeclared static and instance `(I)I` JNI
+   methods, with native registration and class-local cleanup verified by
+   repeated host and ASan tests. Unsupported signatures fail registration
+   instead of silently returning zero; this is not general Android ART or
+   a working Roblox bootstrap. The L3 `morrow_synthetic_jni_onload_probe`
+   field now expects `passed` on a functioning opt-in device runtime.
+   v0.56 provides the separate typed Java `Configuration` identity required
+   by `GameActivity.initializeNativeCode`, registers it in the bounded
+   ClassLoader, and verifies global/local aliases, stable identity, release
+   and rebinding in the real-VM host test. L3 reports whether it exists.
+   The object does not invent resource tables, density or locale values,
+   and Roblox's entry point is still not called.
+   v0.57 corrects entry discovery to inspect the full exported
+   `Java_com_google_androidgamesdk_GameActivity_initializeNativeCode` name,
+   the actual activity initialiser identified by Cordial's Android startup
+   tracing. The read-only L3 report records the export, virtual address and
+   unmapped final-base candidate, if present; it explicitly says the call is
+   ineligible and was not attempted. The host ELF test rejects truncated
+   names and addresses outside executable load segments.
+   v0.58 also discovers exported engine entry points when Android has stripped
+   ELF section headers, using bounded SysV `DT_HASH` or GNU `DT_GNU_HASH`
+   metadata from `PT_DYNAMIC`. Both paths are covered by synthetic ARM64 ELF
+   tests, including malformed hash tables and nonexecutable candidates. If
+   neither hash table is usable, the entry remains **unknown**, never falsely
+   reported absent. This is read-only discovery, not Roblox execution.
+   v0.59 introduces a separate, deliberate **ZL + L3** path on the JNI-enabled
+   preview. After fully resolved relocation, it validates the JNI_OnLoad
+   address against actual RX pages and refuses to run without per-thread JNI,
+   an Activity, and a library without uninitialised TLS or constructors.
+   Only then does it map the real user-supplied library executable and call
+   that export once. Successful *host tests* use a Morrow-owned JNI function,
+   not Roblox; no real engine execution on Switch has been observed yet.
+   v0.60 registers all 18 primitive JNI `Configuration` fields required by
+   GameActivity's configuration read, plus typed `getLocales`, `LocaleList`
+   and `Locale` method signatures. The configuration remains unpopulated
+   where a real device locale, density or Android resource service is not
+   known: it exposes zero/empty values, **not fabricated Android metadata**.
+   The strict JNI provider test checks field identity, types and the empty
+   locale list using the actual pinned VM. GameActivity launch and Roblox
+   login are still not implemented.
+   v0.61 adds the next opt-in call boundary: when real `JNI_OnLoad` returns
+   JNI 1.6, a later **ZR + L3** run attempts the exported AGDK
+   `GameActivity.initializeNativeCode` using the exact argument types recorded
+   from Cordial's Android trace. Its Activity, AssetManager and Configuration
+   are verified JNI references, the three strings name the existing Morrow
+   data directory, and saved state is null for a cold boot. The mapped image
+   stays pinned. Host tests verify ABI argument order and local-ref cleanup
+   with a synthetic function. **This does not initialise the full Android
+   Java application, connect EGL to Roblox or render a login screen**.
+   v0.62 follows Cordial's independently recorded Android startup and
+   [`render-gate.md`](../docs/analysis/render-gate.md): the actual home-shell
+   graphics path is NativeGLInterface's **App Bridge V2**, not the AGDK
+   GameActivity surface lifecycle. L3 now detects four *real* App Bridge
+   exports (`nativeGameGlobalInit`, `nativeAppBridgeV2InitWithParams`,
+   `nativeAppBridgeStartLuaAppDM`, `nativeAppBridgeV2StartAppWithParams`) and
+   reports whether each name was inspected or unknown, including the ELF
+   virtual addresses. These are **read-only**: required AutoValue InitParams,
+   StartAppParams, real surface/lifecycle and app services are not yet in
+   the Horizon JNI VM. The engine home shell is not started by v0.62.
+   v0.63 adds a real JNI `StartAppParams` object and nested `PlatformParams`
+   with fields and getter methods observed in Cordial's Android client.
+   They become available only when **both** an actual Horizon `Surface` and
+   an existing extracted asset directory have been bound. The params refer
+   to the **same** host-owned window as `ANativeWindow_fromSurface`; host
+   tests verify JNI field/getter identity and the real native-window lookup,
+   including repeated references and cleanup. They preserve signed-out
+   identity and leave unknown physical dimensions and theme unset rather than
+   inventing values. L3 reports `app_bridge_start_app_params_typed_partial`.
+   The `vrContext`, complete `InitParams`/`DeviceParams`, real Java callbacks
+   and app lifecycle are **still absent**; the Roblox App Bridge is not yet
+   called and no sign-in screen or playable game has been verified.
+   v0.64 registers real libjnivm classes for the observed `InitParams`
+   and its 21 `DeviceParams` fields, sharing the same asset-backed
+   `PlatformParams` object used by `StartAppParams`. It fills only known
+   facts (host name, 64-bit CPU, measured bound surface dimensions and
+   documented Roblox base URL). Android API level, app version, network,
+   locale, memory and User-Agent are unknown and remain unset; no fake
+   Android environment is supplied. The new `app_bridge_init_params_*`
+   fields in `link-XX.txt` distinguish typed objects from a complete
+   runtime. Host tests exercise JNI fields, getters, common platform
+   identity, repeated reads and reference cleanup. **Neither this object
+   nor the real Roblox App Bridge is called during the diagnostic.**
+   v0.66 queries the actual Horizon settings language when Loader's L3
+   initialises the JNI runtime. The Java `Configuration.getLocales()` now
+   returns one typed `Locale` with real language, script and region parts;
+   missing settings leave the list empty. Invalid tags and changes after
+   Configuration creation are refused. The L3 report records
+   `jni_system_locale_bound`; host JNI tests verify methods and repeated
+   local-reference cleanup. Android density, classpath, authentication and
+   full App Bridge startup remain unavailable.
+   v0.67 measures real available SD-card space using libnx's mounted
+   `FsFileSystem`, before starting libjnivm. With a successful filesystem
+   query it registers a stable, typed `com/roblox/client/LocalStorageManager`
+   instance and its observed `getAllocatableBytes()J` callback. A failed
+   query leaves this service absent rather than claiming the card has zero
+   free bytes. The L3 report records `jni_storage_free_space_measured`,
+   `jni_storage_available_bytes`, and `jni_local_storage_manager_registered`.
+   Host tests call the real JNI long method repeatedly and verify reference
+   lifetime. The game's native storage initialiser is **not** called yet;
+   this does not download Roblox assets, display login, or join experiences.
+   v0.68 registers real JNI `android/content/res/Resources` and
+   `android/util/DisplayMetrics` classes. `GameActivity.getResources()` only
+   succeeds for a bound Horizon Surface, and its metrics report the actual
+   1280×720 viewport (or current resized size). The 1× scale and Android's
+   corresponding 160 `densityDpi` are a UI layout baseline, **not** a measured
+   physical panel DPI; physical `xdpi` and `ydpi` stay unknown. Host tests
+   verify the complete JNI object chain, stable Resources identity, 64 repeated
+   calls without leaking references, resize values and null after unbind.
+   Roblox has not consumed these values on Switch; login and gameplay remain
+   unimplemented.
+   v0.69 also populates the existing typed `Configuration` object from the
+   actual bound Horizon Surface (size, orientation, smallest dimension). It
+   keeps the same 1× 160-dpi **layout baseline** as `DisplayMetrics`, a neutral
+   `fontScale=1.0`, and `touchscreen=FINGER` because the Switch Lite has a
+   touchscreen. Viewport-dependent fields revert to unknown on unbind; a
+   resize updates the existing Configuration identity. `Resources` now offers
+   a typed `getConfiguration()` returning that actual runtime object only
+   while a Surface exists. Unmeasured hardware, UI-mode and carrier fields
+   stay unknown. These are Android-JNI compatibility improvements verified
+   with synthetic host tests—not proof of real Roblox Java bootstrap, login,
+   rendering, or game join on Switch.
+   v0.70 mirrors the same verified viewport dimensions and device language
+   into the **separate native** `AAssetManager` configuration, which
+   `AConfiguration_fromAssetManager` actually reads. This requires the existing
+   read-only assets directory and a verified JNI manager; it does not grant
+   configuration to a missing manager. Resizing or unbinding the Surface
+   updates the native dimensions, while an available system language supplies
+   only the two-byte NDK language/country fields it can represent (for example,
+   `es-419` retains `es` and leaves the three-digit country unset). Android
+   screen-size bucket and navigation state remain unknown. L3 now separately
+   records whether native asset configuration was registered. Real libjnivm
+   host tests cover its initial, live-resized and unbound states; this still
+   does **not** initialise the Roblox Java app or prove login or game rendering.
+9. **Plus** returns to the Homebrew Menu without a crash.
+
+### Engine inspection (optional)
+
+The Engine tab looks for the library at:
+
+```text
+sdmc:/switch/cordial-switched/libroblox.so
+```
+
+If you have a **legitimate official Android Roblox APK** available, you may
+extract your own `lib/arm64-v8a/libroblox.so` from it and place that file in
+the location above on the SD card. Press **Y** on the Engine page to rescan.
+Do **not** upload the APK, extracted library or Roblox account credentials to
+GitHub or send them to us.
+
+The scanner recognises ELF64/AArch64 shared objects, checks the bounds and
+alignment of loadable segments, and lists a few `DT_NEEDED` Android libraries.
+It reads only a small amount of metadata and does not map executable pages,
+relocate code, call into the engine or verify the APK's signing certificate.
+**A structurally valid ELF is not necessarily a genuine or safe Roblox build.**
+We will need signed-package verification before any future execution feature.
+
+### Actual Switch Lite observations (November 13, 2026)
+
+The user reported seeing Morrow's colourful GLES2 triangle on v0.38.
+The user subsequently reported that the v0.40 checked guest-window triangle
+test also worked. These are on-device graphics milestones, not Roblox renders;
+numbered graphics logs from those runs have not been supplied.
+
+In the user's photograph of a v0.6 run on their Switch Lite, the on-screen
+results showed **JIT VERIFIED / ARM64 test returned 42**, and an
+**ELF STRUCTURE OK** result for a user-supplied 103.3 MiB file, with
+3 `PT_LOAD` segments, maximum alignment 16,384 bytes and 10 `DT_NEEDED`
+libraries (including `libandroid.so`, `libmediandk.so`, `liblog.so`,
+`libGLESv2.so` and `libOpenMAXAL.so`). These are **user-reported hardware
+observations**; they establish neither APK authenticity nor engine startup.
+
+In subsequent v0.7 Switch Lite photographs, the read-only Loader reported a
+119.1 MiB virtual image span, 1 executable and 2 writable segments, 549 PLT
+relocations, 2,173,222 bytes of Android packed relocations, and versioned
+symbol metadata. The ten imported libraries were `libandroid.so`,
+`liblog.so`, `libOpenMAXAL.so`, `libmediandk.so`, `libGLESv2.so`, `libEGL.so`,
+`libOpenSLES.so`, `libdl.so`, `libm.so`, and `libc.so`. These are readouts of a
+user-supplied file; its authenticity has not been verified.
+
+The v0.7 **Loader** tab reads further dynamic metadata with bounded small
+reads; it does not load the file into RAM, resolve symbols, map executable
+pages or call any library function. This distinguishes the actual dependency
+and relocation requirements from what our current synthetic tests cover.
+
+Version 0.9 can also inspect undefined PLT symbol names and version indices,
+then export a text manifest on an explicit **ZL** press. This is a linker
+**preflight**, not an engine launch. Android library providers, bionic symbol
+resolution and JNI/GameActivity are still not connected to the Switch `.nro`.
+
+Version 0.10 adds actual implementations of four unversioned Android `liblog`
+imports: `__android_log_write`, `__android_log_buf_write`,
+`__android_log_print` and the fatal `__android_log_assert`. A strict resolver
+maps **only** these names to real functions and passes synthetic linker tests.
+The Imports view now counts these implemented candidates. **None have been
+bound to or called by the actual Roblox engine**, and Android dependency
+loading, versioned bionic imports, JNI and graphics remain unimplemented.
+The log compatibility functions can be tested without a Switch or an APK:
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+  switch/tests/android_log_compat_test.c switch/source/android_log_compat.c \
+  -o /tmp/cordial-android-log-test
+/tmp/cordial-android-log-test
+```
+
+Version 0.11 adds a strict GNU symbol-version reader for Android's
+`DT_VERSYM` and `DT_VERNEED` tables. It passes the **name, version and
+provider library** to the resolver and rejects unmatched imports; it does
+not misbind versioned libc routines to unrelated Switch/newlib functions.
+The **ZR** action on the Loader profile now runs the existing scratch linker
+against the user's actual `libroblox.so` and the four implemented `liblog`
+adapters. This is the first **on-device relocation attempt with real input**,
+not an engine boot: unsupported imports, graphics and JNI still stop the
+linker, and no library memory becomes executable. In actual Switch Lite tests,
+the first attempt failed to allocate scratch memory in Album mode; a later
+attempt reached APS2 decoding but reported `Invalid APS2 offset delta`.
+The parser now accepts signed APS2 offset deltas with bounds checks, matching
+Android's linker format. This change passed synthetic host tests, but **has
+not yet been verified against the user's library on Switch hardware**. Host
+CI cannot access their SD card or attest their APK.
+Version 0.13 adds an **opt-in, automatically saved engine-startup preflight
+trace**. It flushes the inspection and dependency results before attempting
+the potentially memory-intensive scratch link, so a failed stage leaves a
+useful partial report. If staging completes, the test still records
+`engine_executed=no`: bionic, JNI/GameActivity, EGL/GLES and APK signature
+verification are not connected. This is a readiness test, **not** a playable
+Roblox launch or a claim that Roblox's entry point was called. Hardware logs
+were collected on a Switch Lite: `stderr@LIBC` was the first unresolved import.
+
+Version 0.14 adds an **NX-only audit mode** that leaves unresolved relocation
+slots zero and continues inspecting remaining relocations. Reports now
+distinguish total unresolved lookups from the first 24 examples. Any unresolved
+symbol still prevents a prepared/usable image; no Android code executes.
+
+Version 0.15 adds real, provider- and version-checked native math bindings for
+the plain AArch64 float/double signatures in Android `libm.so` (`LIBC` symbol
+version), such as `sinf`, `cosf`, `pow`, and `log`. These are actual compiled
+math routines, not address placeholders. Android's JNI, pthread runtime and
+long-double routines remain intentionally unresolved, because a wrong ABI
+binding could crash the console. The host suite validates a
+versioned math binding without ever executing the Roblox library itself.
+
+Version 0.16 adds provider/version-checked Bionic `libc.so` adapters using
+the Android-to-Switch wrapper approach demonstrated by Max Payne NX, Adventures
+of Mana NX and Angry Birds 2 NX. `stdin`, `stdout` and `stderr` now resolve
+as Android-facing `FILE *` data symbols with opaque handles; stdio calls
+through those handles are translated by dedicated adapters. The resolver also
+exposes ABI-identical plain C routines and translates Android's numeric
+`clock_gettime` IDs. Neither native `FILE` layouts nor pthread state are passed
+to Android as if they were Bionic objects. The new host suite checks the
+`stderr@LIBC` resolution that blocked the v0.13 hardware trace, but a fresh
+device stage log is required to establish the next real blocker. This is a
+partial compatibility layer: `__errno`, Bionic pthread/fortify functions,
+JNI/GameActivity, graphics, assets, dependency loading and executable memory
+mapping are **not** implemented. The library is still never executed, and the
+Switch Lite's unsuccessful title takeover may also prevent full-memory tests.
+See [Angry Birds 2 NX](https://github.com/NaGaa95/angrybirds2_nx) for the
+stdio/clock reference and [Adventures of Mana NX](https://github.com/NaGaa95/aom_nx)
+for a working native ARM64 executable loader architecture.
+
+Version 0.17 adds Bionic FORTIFY checks for the AArch64 imports visible in
+the user's `imports-04.txt`: checked memory and string operations, the
+thread-local `__errno` accessor, and fatal `__assert`. Checked `fread` and
+`fwrite` use Android's `LIBC_N` export version and still translate the opaque
+Android FILE handles. Bad buffer sizes **abort instead of silently writing
+past the caller's buffer**. These signatures and symbol versions were checked
+against Android's official Bionic sources. The host suite tests ordinary
+success cases, intentional fatal bounds failures in isolated child processes,
+and wrong-provider rejection; real Switch Lite runtime behaviour
+remains unverified. This still does not execute the Roblox engine.
+
+Version 0.18 adds a **partial Bionic pthread object adapter**, following the
+opaque-object technique used in native Android-to-Switch ports while using a
+thread-safe registry and lifetime tracking. It translates Bionic's inline
+mutex and condition storage into distinct native pthread objects rather than
+casting between incompatible structs. Static normal, recursive and errorcheck
+mutex initializers, default condition variables, `pthread_once`, mutex attrs,
+and basic lock/wait/signal/broadcast/destroy calls have host concurrency
+tests. Unsupported attributes, nonstandard object patterns and unresolved
+pthread services (`pthread_create`, TLS keys, rwlocks, timed waits, etc.) still
+**fail closed**. The wrapper does not establish that Roblox's particular
+threads run on the Switch Lite. JNI/GameActivity, graphics, assets, Android
+dependency loading and executable engine startup are still missing. A fresh
+**ZR stage log** is needed to measure the remaining imports on your hardware.
+
+Version 0.19 adds a provider/version-checked **Bionic pthread TLS key bridge**.
+Android provides at least 128 user TLS keys while native Switch pthread key
+resources may be scarcer. The bridge multiplexes 128 Bionic-compatible
+32-bit key IDs onto one native pthread TLS key, isolates values by thread,
+invalidates stale values on key deletion/recreation, and invokes destructors
+on thread exit with up to four POSIX iterations. Host tests confirm all 128
+keys, multiple simultaneous threads, repeated destructor callbacks, invalid
+keys and provider-version rejection. This does **not** add the rest of Bionic
+thread-local state, a native `pthread_create`/`pthread_self` bridge, or any
+ability to execute Roblox: JNI, graphics and live engine loading remain
+unimplemented. Real Switch behaviour needs another ZR stage trace.
+
+Version 0.20 adds another provider-checked piece of Bionic pthread support:
+the real **56-byte ARM64 `pthread_attr_t` layout**, with stack size, guard size,
+detach-state and attribute lifetime handling. The attribute storage is
+independent of libnx/newlib types, follows documented Bionic offsets and
+minimum stack sizes, and is checked by host tests with canary bytes and
+wrong-provider rejection. Unsupported custom stacks, scheduling and actual
+thread creation remain deliberately unresolved; this adds ABI compatibility
+to the loader preflight, **not Roblox execution**.
+
+Version 0.21 adds an **experimental, bounded pthread lifecycle bridge** for
+`pthread_create`, `pthread_self`, `pthread_join`, `pthread_detach` and
+`pthread_equal`. Native thread handles are hidden behind stable Bionic-sized
+tokens. It translates supported stack, guard and detach attributes, rejects
+custom stacks and scheduling requests, and prevents unknown, stale and
+double-consumed handles from reaching native pthread functions. Host tests
+cover 64 worker joins, detached threads and invalid-handle behaviour. The
+bridge **does not create Bionic TCB/TLS, implement the complete Android
+runtime, or run Roblox**; its provider mappings are used only in the existing
+non-executable loader audit until those blockers are solved. The next on-device
+stage trace is needed to check real symbol coverage.
+
+Version 0.22 adds read-only `PT_TLS` inspection (initializer size, per-thread
+memory size and alignment) and a tested **ARM64 Bionic TCB shadow** with slots
+`-1` through `7`. Each bridged thread now has a distinct diagnostic TCB
+layout, separate from the host pthread identity. These bytes are **not**
+installed into the CPU's thread-pointer register, and the ELF DTV, Bionic TLS
+object, stack guard and real Bionic thread record remain uninitialized. This
+is an architectural check and helps diagnose the next loader trace; it does
+not let the engine execute or join Roblox games.
+
+Version 0.23 adds a bounded **non-executable PT_TLS scratch-template copier**.
+Loader → ZR now reports whether it copied the file-backed initializer and
+zero-filled the remaining per-thread memory, respecting the ELF alignment and
+rejecting templates over 1 MiB. Two independent copies are verified by host
+tests, along with bad alignment, truncation and size limits. The copy is
+discarded after the read-only diagnostic. It is **not** registered with a
+dynamic thread vector or the CPU thread pointer: actual Bionic TLS, relocations
+and Roblox startup remain blocked.
+
+Version 0.24 improves the **non-executable AArch64 relocation audit**: it
+recognizes Android's four DTPMOD, DTPREL, TPREL and TLSDESC relocation kinds,
+validates their target ranges (including the TLSDESC two-word slot), and
+records counts without modifying their target bytes or fabricating a Bionic
+thread vector. The read-only scan now continues after unsupported relocations
+so a later missing import or TLS blocker is not hidden by the first failure.
+Loader → ZR exports `unsupported_relocations_seen`, `tls_relocations_seen`
+and `tlsdesc_relocations_seen`; the result remains a failed preflight whenever
+unsupported types occur. This **does not execute Roblox**.
+
+The inspector is independently tested on the development host using synthetic
+ELF images with no proprietary content:
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+  switch/tests/elf_probe_test.c switch/source/elf_probe.c switch/source/android_log_compat.c \
+  -o /tmp/cordial-elf-probe-test
+/tmp/cordial-elf-probe-test
+```
+
+### Segment staging experiments
+
+Version 0.4 and later also compile `engine_stage.c` into the homebrew build. It can
+construct a **bounded, non-executable scratch image** from an inspected ARM64
+ELF: copy file-backed `PT_LOAD` bytes, zero-fill BSS, and apply the
+`R_AARCH64_RELATIVE` RELA and ELF/Android RELR relative relocations. It checks
+each relocation destination against a real loaded segment and fails closed on
+unknown relocations. Version 0.8 adds synthetic APS2 packed-RELA support. This prepares data
+only; it does not map executable memory, perform bionic symbol resolution,
+verify an APK signature or start Roblox. **Before v0.11 the Switch UI did not
+invoke the stager**; the validation used synthetic ELF fixtures, not an actual
+Roblox engine or a Switch Lite hardware run.
+
+Version 0.6 extends that scratch-only layer with an optional, strict
+**symbol-resolver callback**. Synthetic tests demonstrate applying
+`R_AARCH64_ABS64`, `R_AARCH64_GLOB_DAT`, and `R_AARCH64_JUMP_SLOT` from ordinary
+RELA and PLT (`DT_JMPREL`) tables. It validates dynamic symbol/string names,
+never fabricates a success address, and rejects unresolved, malformed,
+or unsupported relocation formats. Versioned symbols require a matching
+version and provider via the callback. The original no-resolver API
+still fails closed on external imports. **This is a linker unit-test capability,
+not a working Android bionic linker**: it lacks most actual Android symbol
+providers, dependency loading, TLS and constructors. Version resolution was
+added in v0.11; the Switch now passes its four liblog adapters to the bounded
+scratch linker on demand, but never executes staged ELF code.
+
+Version 0.8 adds a bounded parser for Android's APS2 signed-LEB128 grouped
+RELA format, with tests for grouped and ungrouped addends and malformed inputs.
+It applies supported relocations only to non-executable scratch RAM and
+explicitly rejects unresolved imports, malformed data and unsupported REL
+records. **This does not mean the user-supplied 2.17 MB relocation section
+has been fully linked:** host tests use synthetic ELF images, and the actual
+Switch log from v0.13 stopped at an unresolved Bionic `stderr` import.
+
+The native CI runs these tests, which you can also execute locally:
+
+```sh
+cc -std=c11 -O2 -Wall -Wextra -Werror -Iswitch/source \
+  switch/tests/engine_stage_test.c switch/source/engine_stage.c switch/source/elf_probe.c \
+  switch/source/engine_boot_log.c switch/source/android_log_compat.c \
+  switch/source/android_math_compat.c -lm \
+  -o /tmp/cordial-engine-stage-test
+/tmp/cordial-engine-stage-test
+```
+
+### Executable-memory capability check (v0.5)
+
+Version 0.5 adds an **opt-in hardware JIT check** on the Engine page, using
+libnx's `jitCreate`, `jitTransitionToExecutable`, and `jitClose` API. After
+pressing **X**, it allocates a single 4 KiB JIT page, copies **only two
+hard-coded instructions** (`movz w0, #42; ret`) into the writable alias,
+flushes the data cache, transitions to RX, invalidates the instruction cache,
+calls this small function, checks that it returns 42, and releases the page.
+The result is shown on screen, including the libnx error code on failure.
+The check is never triggered automatically at launch.
+
+The memory capability can legitimately be unavailable depending on Horizon
+homebrew permissions, launch mode, firmware or system configuration. **A
+successful compilation on GitHub Actions is not a successful hardware test.**
+The user has observed `JIT execution: VERIFIED` and `ARM64 test returned 42`
+on their own Lite, but that proves only the tiny native test, not the
+Android/Roblox engine.
+
+This probe **never loads or executes `libroblox.so` or any external code**.
+The staged ELF image remains non-executable and disconnected from the probe.
+Running the full engine will additionally require executable pages with the
+correct memory permissions, relocations against the final code addresses,
+Android-compatible dynamic linking, JNI, graphics, services and more.
+
+Do not enter Roblox credentials into this build. It has no login functionality.
+
+## What needs porting next
+
+Cordial's aarch64 support currently targets **Linux**, not Horizon OS. The
+Android ARM64 engine matches the CPU family, but the existing runtime relies
+on glibc, POSIX memory and thread primitives, Linux file descriptors and
+shared-library loading, Wayland/windowing, and desktop EGL/Vulkan interfaces.
+Horizon does not provide those Linux services just because it uses ARM64.
+
+The actual engine port must establish, in order:
+
+1. A working Horizon platform abstraction for memory, threads, TLS and files.
+2. Loading and relocating an **unmodified, user-provided** Android ARM64 ELF
+   library with bionic-compatible symbols. `elf_probe.c` inspects its ELF
+   metadata; `engine_stage.c` prepares a limited set of relocations and
+   callback-resolved symbols in scratch memory under synthetic tests. `native/` and
+   `third_party/mcpelauncher-linker/` are reference implementations, not yet
+   compiled into this `.nro`.
+3. Working JNI and GameActivity services without Android itself.
+4. A graphics path for the engine's GLES/EGL or Vulkan calls, plus audio,
+   inputs and networking.
+5. An observed engine startup on hardware, then an official account login and
+   live Roblox experience **if** Roblox accepts the runtime. Account integrity
+   and access policy remain external constraints, not something this repo can
+   guarantee or bypass.
+
+This sequence is **INFERRED**, not a demonstrated Switch engine boot. No APK,
+engine binaries, account tokens, or proprietary Roblox files belong in Git.
+
+### Native ARM64 wrapper references (in progress; after v0.24)
+
+The MIT-licensed [Adventures of Mana Switch wrapper](https://github.com/NaGaa95/aom_nx),
+[Half-Life 2 Switch wrapper](https://github.com/NaGaa95/hl2_nx), and
+[Pocket Camp Switch wrapper](https://github.com/NaGaa95/acpc_nx) demonstrate
+real ARM64 Android-library execution on Horizon. Their working game-specific
+adapters are **not** general-purpose Roblox or Android runtimes.
+
+The next native-loader foundation uses the same separation of concerns as
+Adventures of Mana's `so_finalize`: build a per-page RX/R/RW permission plan,
+reject W+X page conflicts, map a separately prepared aligned source with
+`svcMapProcessCodeMemory`, and set RX runs **before** writable data pages.
+`engine_memory_plan.c` now builds and validates that bounded plan on the host;
+`horizon_code_memory.c` contains the corresponding Horizon mapping and cleanup
+primitive. The latter compiles into the Switch target but is **not invoked**
+by the UI or linked to the Roblox ELF at this stage.
+
+The loader now separates **address reservation** from mapping:
+`horizon_code_memory_reserve` holds the final Horizon code address before
+relocations, and `horizon_code_memory_map_reserved` can map the prepared
+page-aligned heap image there later. `engine_stage_stream_resolved_at`
+computes ordinary RELA, Android APS2 and RELR relative relocations for this
+explicit final address, while its working buffer remains non-executable.
+The inspector also retains validated PT_LOAD page flags, allowing
+`engine_memory_plan_from_probe` to construct a permission plan for the actual
+ELF. Host fixtures cover the final-base arithmetic. The new
+`engine_runtime_image_prepare` path connects inspector → permission plan →
+address reservation → final-base relocation → aligned source → code-memory
+mapping. Its mapping backend is implemented for Horizon, but **the UI does not
+invoke this path, and it has not been run against Roblox code or on Switch
+hardware**. Host tests use a synthetic ELF and a fake code-memory backend;
+they verify actual relocation bytes, reservation failures, map failures and
+retryable cleanup. Successful mapping is explicitly not treated as execution.
+
+The mapper now observes the ELF's `p_align` requirement (16 KiB in the
+user's reported library) instead of assuming every page-aligned address can
+be a valid load bias. An unsupported nonzero alignment phase fails closed.
+The scratch stage uses page-aligned NX memory that the runtime mapping path
+can take ownership of without copying the entire roughly 119 MiB image. This
+reduces peak host allocation demand but has **not** established a successful
+full-memory load on the user's Switch Lite.
+
+The final-address relocation API is only one part of a live linker. All imports,
+PT_TLS/DTV thread state, JNI/GameActivity, callbacks and ownership checks must
+be established before any Roblox initializer can be called. Half-Life 2's
+`dl_emu.c` illustrates module-scoped `dlopen`/`dlsym` and Mesa EGL/GLES symbol
+lookup; Pocket Camp's `android_native_unity.c` demonstrates an `NWindow` and
+per-thread `ALooper` adapter. These will require Roblox-specific ABI
+validation rather than copying arbitrary stubs or hooks. This is runtime
+groundwork, **not a runnable Roblox release**.
+The first testable deliverable is deliberately labelled a smoke test so it
+cannot be mistaken for a playable Roblox client.
+
+**Morrow** is the proposed v1.0 rebrand, reserved for the point where real
+account login and joining playable games have been demonstrated. Current
+development builds remain **Cordial Switched**; 60 FPS gameplay and the v1.0
+timeline are not guaranteed.
+
+### Runtime compatibility follow-up
+
+The condition bridge now translates Android clock IDs and attribute bits into
+native condition attributes. Tests exercise future realtime and monotonic
+expiry, a worker signalling a timed waiter, static initialisation, and rejection
+of process-shared state. This corrects the earlier claim that Horizon could not
+support monotonic conditions: devkitPro's libsysbase pthread implementation
+stores the selected clock and uses it when deriving the native relative wait.
+
+The file bridge also answers the supplied engine's `writev@LIBC` import. It
+validates vector count, null buffers and total-length overflow, then combines
+the vectors into one native write so datagrams and append operations are not
+split into separate writes. Large requests need a temporary allocation and can
+fail with `ENOMEM`. The native write result preserves short writes and errors.
+Host tests check a single datagram, file contents and invalid requests.
+
+These are runtime adapter improvements, not evidence of engine startup.
+**INFERRED:** their behaviour on Switch remains to be measured; the proprietary
+engine has not executed and the required-import gate remains incomplete.
+
+### Worker exit and thread identity
+
+The lifecycle provider now resolves `pthread_exit@LIBC` for bridged workers.
+Both a worker's normal return and explicit exit run Bionic TLS destructors
+before native TLS teardown, preserving its original `pthread_self` token
+inside destructors. Cleanup honours the existing four-round destructor limit
+and clears the native master slot to prevent duplicate cleanup. A worker joining
+its own token returns `EDEADLK` before consulting the native handle, including
+when the creator has not yet returned from `pthread_create`.
+
+`gettid@LIBC` now reads the real Horizon thread ID through `svcGetThreadId`.
+It rejects IDs that cannot fit Android's signed 32-bit `pid_t`, rather than
+truncating them. The Linux host test uses its native thread-ID syscall and checks
+that a worker has a stable ID distinct from the main thread. This import adapter
+does not translate raw Linux syscall instructions inside the engine.
+
+Host lifecycle tests cover 32 workers returning or explicitly exiting, return
+values, destructor re-arming, identity during cleanup and self-join. These tests
+exercise our adapters, not proprietary engine execution. **INFERRED:** Switch
+worker exit, cleanup and thread-ID behaviour remain unverified on hardware.
+Main-thread exit and foreign host-thread teardown are not validated.
+
+### Joinable worker stacks in preview 0.99.5
+
+The CI previews include a pinned libnx extension that reserves an unmapped
+range below each Android worker's stack. A default joinable worker requests
+a 992 KiB stack and a 16 KiB guard. Explicit sizes round up to a 4 KiB page.
+A zero guard is supported. Detached creation and caller-owned stacks still
+return an error on Horizon.
+
+On the Loader page, press L3. The numbered link report records
+whether a worker observed the whole 16 KiB guard unmapped and whether joining
+released its reservation. The report also records the preview version and,
+for Git builds, its source revision. See the [playability milestones](docs/playability-milestones.md)
+for the engine import audit and the evidence still needed for gameplay.
+
+### Explicit process policy in preview 0.99.6
+
+The v0.99.4 console diagnostic recorded 65 required missing relocation sites,
+with `geteuid@LIBC` first in the strict pass. This preview adds a separately
+tested provider for ten process-related import names. On Horizon, user/parent
+identity queries return `ENOSYS` rather than inventing a real Android app UID;
+fork, process replacement, waiting, tracing and command execution also fail
+explicitly. A `system(NULL)` query correctly reports no command interpreter.
+The versioned `__register_atfork` call reports a registration error rather than
+losing callbacks after pretending success. Host builds forward identity queries
+to their genuine operating system.
+
+This makes the names eligible for relocation, **not** the missing process
+semantics. Host tests cover policy and the staged `geteuid` import; the full
+current Horizon import inventory and engine execution still need a new verified
+runtime observation. The 0.99.6 preview is not a playable Roblox release.

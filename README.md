@@ -54,6 +54,10 @@ Credit to sober for making android Roblox runtimes possible
 
 Experimental. Full table in [`docs/status.md`](docs/status.md).
 
+This fork also has an [early Nintendo Switch homebrew target](switch/README.md)
+with a 720p graphical dashboard, UI performance diagnostics, and read-only
+Android ARM64 engine inspection. It **does not run Roblox** yet.
+
 **Works:** loading an experience, sign-in, keyboard and mouse, camera, text
 entry with IME preedit, audio, voice chat, pointer capture, fullscreen, two
 accounts side by side, asset overlays, joining a public server from a game's
@@ -158,7 +162,7 @@ sudo pacman -U cordial-*-x86_64.pkg.tar.zst # x86-64 only -- see above
 Signed apt, dnf and pacman repositories are published too; the setup commands
 are in [`docs/install.md`](docs/install.md). The `cordial`,
 `cordial-bin` and `cordial-git` packages on the AUR are maintained by someone
-outside this project and were last updated at 0.17.0.
+outside this project and were last updated at 0.20.0.
 
 **From source:**
 

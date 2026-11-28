@@ -1,0 +1,385 @@
+#ifdef __SWITCH__
+#define _POSIX_C_SOURCE 200809L
+#include <switch.h>
+#ifdef MORROW_HAS_STACK_GUARDS
+extern size_t morrowStackGuardSize(void *stack);
+#endif
+#else
+// Host builds answer the getattr model query through the native libc, which
+// needs _GNU_SOURCE for pthread_getattr_np on glibc. This validates the
+// bridge model only; target bounds come from the libnx capture path.
+#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#include "android_thread_lifecycle_compat.h"
+
+#include <errno.h>
+#include <pthread.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdatomic.h>
+#include <string.h>
+
+#include "android_thread_attr_compat.h"
+#include "android_arm64_tcb_shadow.h"
+#include "android_tls_compat.h"
+
+// Bionic's pthread_t is a 64-bit pointer to its own thread structure, not a
+// libnx/newlib pthread_t. Stable, non-reused registry addresses keep an old
+// handle from ever referring to a newly created thread. This remains an ABI
+// experiment: Bionic TLS, stack metadata and pthread_internal_t are absent.
+enum { MAX_BRIDGED_THREADS = 4096 };
+
+typedef struct {
+    pthread_t native;
+    void *(*start)(void *);
+    void *argument;
+    bool occupied;
+    bool joinable;
+    bool joining;
+    bool consumed;
+    bool auto_registered; // First saw this native thread via pthread_self.
+    bool stack_known;     // Stack bounds were captured on the thread itself.
+    void *native_stack_base;
+    size_t native_stack_size;
+    size_t native_stack_guard;
+    AndroidArm64TcbShadow tcb_shadow;
+} ThreadEntry;
+
+static ThreadEntry entries[MAX_BRIDGED_THREADS];
+static unsigned entry_count;
+static pthread_mutex_t registry_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t identity_once = PTHREAD_ONCE_INIT;
+static pthread_key_t identity_key;
+static int identity_error;
+static atomic_uint diagnostic_create_attempts;
+static atomic_uint diagnostic_create_successes;
+static atomic_uint diagnostic_worker_entries;
+static atomic_uint diagnostic_worker_normal_returns;
+static atomic_int diagnostic_last_create_error;
+
+void android_thread_lifecycle_compat_stats(AndroidThreadLifecycleStats *out)
+{
+    if (!out) return;
+    out->create_attempts = atomic_load_explicit(&diagnostic_create_attempts,
+                                                 memory_order_relaxed);
+    out->create_successes = atomic_load_explicit(&diagnostic_create_successes,
+                                                  memory_order_relaxed);
+    out->worker_entries = atomic_load_explicit(&diagnostic_worker_entries,
+                                                memory_order_relaxed);
+    out->worker_normal_returns = atomic_load_explicit(
+        &diagnostic_worker_normal_returns, memory_order_relaxed);
+    out->last_create_error = atomic_load_explicit(
+        &diagnostic_last_create_error, memory_order_relaxed);
+}
+
+static int record_create_result(int error)
+{
+    if (!error)
+        atomic_fetch_add_explicit(&diagnostic_create_successes, 1,
+                                  memory_order_relaxed);
+    atomic_store_explicit(&diagnostic_last_create_error, error,
+                          memory_order_relaxed);
+    return error;
+}
+
+static void initialize_identity(void)
+{
+    identity_error = pthread_key_create(&identity_key, NULL);
+}
+
+static int ensure_identity(void)
+{
+    int result = pthread_once(&identity_once, initialize_identity);
+    return result ? result : identity_error;
+}
+
+static ThreadEntry *find_entry(uint64_t token)
+{
+    for (unsigned i = 0; i < entry_count; i++) {
+        if (entries[i].occupied && (uint64_t)(uintptr_t)&entries[i] == token)
+            return &entries[i];
+    }
+    return NULL;
+}
+
+static ThreadEntry *reserve_entry(void)
+{
+    if (entry_count >= MAX_BRIDGED_THREADS)
+        return NULL;
+    ThreadEntry *entry = &entries[entry_count++];
+    entry->occupied = true;
+    android_arm64_tcb_shadow_init(&entry->tcb_shadow, entry);
+    return entry;
+}
+
+const void *const *android_thread_lifecycle_compat_shadow_current(void)
+{
+    if (ensure_identity() != 0)
+        return NULL;
+    ThreadEntry *entry = pthread_getspecific(identity_key);
+    return entry ? android_arm64_tcb_shadow_pointer(&entry->tcb_shadow) : NULL;
+}
+
+static void *native_start(void *opaque)
+{
+    ThreadEntry *entry = opaque;
+    atomic_fetch_add_explicit(&diagnostic_worker_entries, 1,
+                              memory_order_relaxed);
+    // A failed native TLS registration must not call Android code under an
+    // incorrect pthread_self identity.
+    if (pthread_setspecific(identity_key, entry) != 0)
+        return NULL;
+#ifdef __SWITCH__
+    // Capture the real stack bounds while running on the new thread; the
+    // pinned libnx exposes them on the Thread struct. morrowStackGuardSize is
+    // supplied by the extended allocator when guards are compiled in.
+    Thread *native_self = threadGetSelf();
+    if (native_self) {
+        size_t captured_guard = 0;
+#ifdef MORROW_HAS_STACK_GUARDS
+        captured_guard = morrowStackGuardSize(native_self->stack_mirror);
+#endif
+        pthread_mutex_lock(&registry_lock);
+        entry->native_stack_base = native_self->stack_mirror;
+        entry->native_stack_size = native_self->stack_sz;
+        entry->native_stack_guard = captured_guard;
+        entry->stack_known = true;
+        pthread_mutex_unlock(&registry_lock);
+    }
+#endif
+    void *result = entry->start(entry->argument);
+    atomic_fetch_add_explicit(&diagnostic_worker_normal_returns, 1,
+                              memory_order_relaxed);
+    android_tls_compat_cleanup_current();
+    return result;
+}
+
+static int bridge_create(uint64_t *token, const void *attr,
+                         void *(*start)(void *), void *argument)
+{
+    atomic_fetch_add_explicit(&diagnostic_create_attempts, 1,
+                              memory_order_relaxed);
+    if (!token || !start)
+        return record_create_result(EINVAL);
+    int result = ensure_identity();
+    if (result)
+        return record_create_result(result);
+    pthread_attr_t native_attr;
+    pthread_attr_t *translated = NULL;
+    bool joinable = true;
+    size_t guard = 0;
+#ifdef MORROW_HAS_STACK_GUARDS
+    // The extended allocator can honour Bionic defaults for a NULL attr too.
+    {
+#else
+    if (attr) {
+#endif
+        result = android_thread_attr_compat_for_create(attr, &native_attr, &guard);
+        if (result)
+            return record_create_result(result);
+        translated = &native_attr;
+        int detach_state;
+        result = pthread_attr_getdetachstate(translated, &detach_state);
+        if (result) {
+            pthread_attr_destroy(translated);
+            return record_create_result(result);
+        }
+        joinable = detach_state == PTHREAD_CREATE_JOINABLE;
+    }
+    pthread_mutex_lock(&registry_lock);
+    ThreadEntry *entry = reserve_entry();
+    if (!entry) {
+        pthread_mutex_unlock(&registry_lock);
+        if (translated) pthread_attr_destroy(translated);
+        return record_create_result(EAGAIN);
+    }
+    entry->start = start;
+    entry->argument = argument;
+    entry->joinable = joinable;
+#ifdef MORROW_HAS_STACK_GUARDS
+    extern size_t morrowSetThreadGuard(size_t);
+    size_t previous = morrowSetThreadGuard(guard);
+#endif
+    // A worker can detach itself immediately. Publish its native identity
+    // under the same lock used by detach and join before either can read it.
+    result = pthread_create(&entry->native, translated, native_start, entry);
+#ifdef MORROW_HAS_STACK_GUARDS
+    morrowSetThreadGuard(previous);
+#endif
+    if (result) entry->occupied = false;
+    else *token = (uint64_t)(uintptr_t)entry;
+    pthread_mutex_unlock(&registry_lock);
+    if (translated) pthread_attr_destroy(translated);
+    return record_create_result(result);
+}
+
+static uint64_t bridge_self(void)
+{
+    if (ensure_identity() != 0)
+        return 0;
+    ThreadEntry *entry = pthread_getspecific(identity_key);
+    if (entry)
+        return (uint64_t)(uintptr_t)entry;
+
+    pthread_mutex_lock(&registry_lock);
+    entry = reserve_entry();
+    if (entry) {
+        entry->native = pthread_self();
+        entry->joinable = false;
+        entry->auto_registered = true;
+    }
+    pthread_mutex_unlock(&registry_lock);
+    if (!entry)
+        return 0;
+    if (pthread_setspecific(identity_key, entry) != 0)
+        return 0;
+    return (uint64_t)(uintptr_t)entry;
+}
+
+static void bridge_exit(void *value)
+{
+    // libnx clears native TLS slots in index order. Run Bionic destructors
+    // first, while pthread_self still names this worker's original token.
+    android_tls_compat_cleanup_current();
+    pthread_exit(value);
+}
+
+static int bridge_join(uint64_t token, void **value)
+{
+    pthread_mutex_lock(&registry_lock);
+    ThreadEntry *entry = find_entry(token);
+    // A worker can reach this before pthread_create publishes native. The
+    // guest identity is already installed by native_start and is sufficient.
+    if (entry && entry->joinable && ensure_identity() == 0 && pthread_getspecific(identity_key) == entry) {
+        pthread_mutex_unlock(&registry_lock);
+        return EDEADLK;
+    }
+    if (!entry || !entry->joinable || entry->joining || entry->consumed) {
+        pthread_mutex_unlock(&registry_lock);
+        return EINVAL;
+    }
+    entry->joining = true;
+    pthread_t native = entry->native;
+    pthread_mutex_unlock(&registry_lock);
+
+    int result = pthread_join(native, value);
+    pthread_mutex_lock(&registry_lock);
+    entry->joining = false;
+    if (!result) entry->consumed = true;
+    pthread_mutex_unlock(&registry_lock);
+    return result;
+}
+
+static int bridge_detach(uint64_t token)
+{
+    pthread_mutex_lock(&registry_lock);
+    ThreadEntry *entry = find_entry(token);
+    if (!entry || !entry->joinable || entry->joining || entry->consumed) {
+        pthread_mutex_unlock(&registry_lock);
+        return EINVAL;
+    }
+    // The host detach call is non-blocking. Holding the registry lock prevents
+    // a concurrent join from claiming this handle before it is consumed.
+    int result = pthread_detach(entry->native);
+    if (!result) entry->consumed = true;
+    pthread_mutex_unlock(&registry_lock);
+    return result;
+}
+
+static int bridge_equal(uint64_t first, uint64_t second)
+{
+    return first == second;
+}
+
+// Bionic's pthread_getattr_np reports the queried thread's REAL stack bounds;
+// Roblox's runtime uses them for conservative stack walking, so an invented
+// answer is worse than a refusal. Bridged threads carry bounds captured on
+// the thread itself. Anything else fails closed: the process stack region is
+// only a superset of one thread's stack, so it is logged as diagnostics and
+// never returned as pthread attributes.
+static int bridge_getattr_np(uint64_t token, void *attr)
+{
+    if (!attr) return EINVAL;
+    pthread_mutex_lock(&registry_lock);
+    ThreadEntry *entry = find_entry(token);
+    pthread_t native = 0;
+    bool known = false, auto_registered = false, joinable = false;
+    void *base = NULL;
+    size_t size = 0, guard = 0;
+    if (entry) {
+        native = entry->native;
+        known = entry->stack_known;
+        auto_registered = entry->auto_registered;
+        joinable = entry->joinable;
+        base = entry->native_stack_base;
+        size = entry->native_stack_size;
+        guard = entry->native_stack_guard;
+    }
+    pthread_mutex_unlock(&registry_lock);
+    if (!entry) return EINVAL;
+    (void)native; // Only the host-model backend below consults the handle.
+    // ANDROID_ATTR_DETACHED == 1; auto-registered threads report flags 0,
+    // matching Bionic's answer for the process main thread.
+    const uint32_t flags = (!auto_registered && !joinable) ? 1u : 0u;
+    if (known) {
+        android_thread_attr_compat_write_native_facts(attr, flags, base, size, guard);
+        return 0;
+    }
+#ifdef __SWITCH__
+    u64 region_base = 0, region_size = 0;
+    const bool region_ok =
+        R_SUCCEEDED(svcGetInfo(&region_base, InfoType_StackRegionAddress,
+                               CUR_PROCESS_HANDLE, 0)) &&
+        R_SUCCEEDED(svcGetInfo(&region_size, InfoType_StackRegionSize,
+                               CUR_PROCESS_HANDLE, 0));
+    fprintf(stderr,
+            "morrow: pthread_getattr_np fail-closed token=%llu "
+            "diagnostics_only_process_stack_region_base=0x%llx size=0x%llx%s\n",
+            (unsigned long long)token,
+            (unsigned long long)(region_ok ? region_base : 0),
+            (unsigned long long)(region_ok ? region_size : 0),
+            region_ok ? " (region is a superset, NOT thread bounds)"
+                      : " (svcGetInfo failed)");
+    return ENOSYS;
+#else
+    // Host model only: the native libc answers real bounds so tests exercise
+    // the full round-trip. This says nothing about target behavior.
+    pthread_attr_t native_attr;
+    if (pthread_getattr_np(native, &native_attr) != 0)
+        return ENOSYS;
+    void *native_base = NULL;
+    size_t native_size = 0, native_guard = 0;
+    int result = pthread_attr_getstack(&native_attr, &native_base, &native_size);
+    if (!result) result = pthread_attr_getguardsize(&native_attr, &native_guard);
+    pthread_attr_destroy(&native_attr);
+    if (result || !native_size)
+        return ENOSYS;
+    android_thread_attr_compat_write_native_facts(attr, flags, native_base,
+                                                  native_size, native_guard);
+    return 0;
+#endif
+}
+
+bool android_thread_lifecycle_compat_resolve(const char *name, const char *version,
+                                             const char *library, uint64_t *address)
+{
+    if (!name || !version || !library || !address ||
+        strcmp(version, "LIBC") != 0 || strcmp(library, "libc.so") != 0)
+        return false;
+    *address = 0;
+#define MAP_ANDROID(name_literal, function) \
+    if (strcmp(name, name_literal) == 0) \
+        *address = (uint64_t)(uintptr_t)&function; else
+    MAP_ANDROID("pthread_create", bridge_create)
+    MAP_ANDROID("pthread_self", bridge_self)
+    MAP_ANDROID("pthread_join", bridge_join)
+    MAP_ANDROID("pthread_detach", bridge_detach)
+    MAP_ANDROID("pthread_equal", bridge_equal)
+    MAP_ANDROID("pthread_exit", bridge_exit)
+    MAP_ANDROID("pthread_getattr_np", bridge_getattr_np)
+    (void)0;
+#undef MAP_ANDROID
+    return *address != 0;
+}

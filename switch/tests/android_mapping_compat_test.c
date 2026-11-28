@@ -1,0 +1,192 @@
+#define _POSIX_C_SOURCE 200809L
+#include "android_mapping_compat.h"
+#include <assert.h>
+#include <errno.h>
+#include <string.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static void *(*map_data)(void *, size_t, int, int, int, int64_t);
+static int (*protect_data)(void *, size_t, int);
+static int (*unmap_data)(void *, size_t);
+static void *(*resize_data)(void *, size_t, size_t, int, ...);
+static int (*discard_data)(void *, size_t, int);
+#define FAILED ((void *)(intptr_t)-1)
+
+static void *worker(void *arg)
+{
+    for (unsigned round = 0; round < 32; ++round) {
+        unsigned char *p = map_data(NULL, 8191, 3, 0x22, -1, 0);
+        assert(p != FAILED && (uintptr_t)p % 4096 == 0);
+        assert(p[0] == 0 && p[8191] == 0);
+        p[0] = (unsigned char)(uintptr_t)arg;
+        p[8191] = 47;
+        assert(protect_data(p + 4096, 1, 1) == 0);
+        assert(unmap_data(p, 8193) == -1);
+        assert(p[8191] == 47 && p[0] == (uintptr_t)arg);
+        assert(resize_data(p, 8191, 12288, 1) == FAILED && errno == ENOTSUP);
+        assert(protect_data(p, 8191, 3) == 0);
+        assert(resize_data(p, 8191, 12288, 0) == FAILED && errno == ENOMEM);
+        unsigned char *grown = resize_data(p, 8191, 12288, 1);
+        assert(grown != FAILED && grown != p);
+        assert(grown[0] == (uintptr_t)arg && grown[8191] == 47);
+        assert(grown[8192] == 0 && grown[12287] == 0);
+        assert(discard_data(grown + 4096, 1, 4) == 0);
+        assert(grown[8191] == 0 && grown[0] == (uintptr_t)arg);
+        assert(resize_data(grown, 12288, 4096, 0) == grown);
+        assert(unmap_data(grown, 4096) == 0);
+    }
+    return NULL;
+}
+
+int main(void)
+{
+    uint64_t value;
+    assert(!android_mapping_compat_resolve("mmap", "LIBC_N", "libc.so", &value));
+    assert(android_mapping_compat_resolve("mmap", "LIBC", "libc.so", &value));
+    map_data = (void *)(uintptr_t)value;
+    assert(android_mapping_compat_resolve("mprotect", "LIBC", "libc.so", &value));
+    protect_data = (void *)(uintptr_t)value;
+    assert(android_mapping_compat_resolve("munmap", "LIBC", "libc.so", &value));
+    unmap_data = (void *)(uintptr_t)value;
+    assert(android_mapping_compat_resolve("mremap", "LIBC", "libc.so", &value));
+    resize_data = (void *)(uintptr_t)value;
+    assert(android_mapping_compat_resolve("madvise", "LIBC", "libc.so", &value));
+    discard_data = (void *)(uintptr_t)value;
+    assert(map_data(NULL, SIZE_MAX, 3, 0x22, -1, 0) == FAILED);
+    assert(map_data(NULL, 4096, 7, 0x22, -1, 0) == FAILED);
+    assert(map_data(NULL, 4096, 6, 0x22, -1, 0) == FAILED);
+    assert(map_data(NULL, 4096, 2, 0x22, -1, 0) == FAILED);
+    assert(map_data(NULL, 4096, 3, 0x32, -1, 0) == FAILED);
+    assert(map_data(NULL, 4096, 3, 2, -1, 0) == FAILED);
+    // The guest's allocator reserves anonymous pages with fd=0, not -1.
+    // Linux ignores fd for MAP_ANONYMOUS, and the following mprotect must
+    // succeed; otherwise its initialization error path recursively allocates.
+    unsigned char *arena = map_data(NULL, 0x7b2000, 0, 0x22, 0, 0);
+    assert(arena != FAILED && (uintptr_t)arena % 4096 == 0);
+    assert(protect_data(arena, 0x7b2000, 3) == 0);
+    arena[0] = 0x5a;
+    arena[0x7b1fff] = 0xa5;
+    assert(unmap_data(arena, 0x7b2000) == 0);
+    unsigned char *p = map_data(NULL, 4096, 0, 0x22, -1, 0);
+    assert(p != FAILED);
+    struct rlimit limit = {0, 0};
+    assert(setrlimit(RLIMIT_CORE, &limit) == 0);
+    for (int perm = 0; perm <= 1; perm++) {
+        assert(protect_data(p, 4096, perm) == 0);
+        pid_t child = fork();
+        assert(child >= 0);
+        if (!child) { *(volatile unsigned char *)p = 1; _exit(1); }
+        int status;
+        assert(waitpid(child, &status, 0) == child);
+        assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGSEGV);
+    }
+    assert(protect_data(p, 4097, 3) == -1);
+    assert(protect_data(p, 4096, 3) == 0);
+    p[0] = 99;
+    // An ordinary data region can never become executable: the console
+    // kernel only grants execute permissions on code memory, which cannot
+    // occupy a heap address. This must fail loudly, not fake a success
+    // that would surface as a guest fault on the next jump.
+    assert(protect_data(p, 4096, 5) == -1 && errno == ENOTSUP);
+    assert(protect_data(p, 4096, 4) == -1 && errno == ENOTSUP);
+    assert(p[0] == 99);
+    assert(unmap_data(p, 4096) == 0);
+    assert(protect_data(p, 4096, 3) == -1);
+    p = map_data(NULL, 12288, 3, 0x22, -1, 0);
+    assert(p != FAILED);
+    p[0] = 11;
+    p[8192] = 22;
+    // Pure-hint advice succeeds as a validated no-op; destructive or
+    // unknown advice gets the Linux EINVAL. The guest allocator probes
+    // MADV_FREE (8) and only falls back to MADV_DONTNEED on EINVAL.
+    assert(discard_data(p, 4096, 1) == 0);
+    assert(discard_data(p, 4096, 14) == 0);
+    assert(discard_data(p, 4096, 16) == 0);
+    assert(discard_data(p, 4096, 23) == 0);
+    assert(discard_data(p, 4096, 8) == -1 && errno == EINVAL);
+    assert(discard_data(p, 4096, 99) == -1 && errno == EINVAL);
+    assert(discard_data(p, 4096, 18) == -1 && errno == EINVAL);
+    assert(p[0] == 11 && p[8192] == 22);
+    assert(discard_data(p, 4096, 4) == 0);
+    assert(p[0] == 0 && p[8192] == 22);
+    p[0] = 11;
+    assert(unmap_data(p + 4096, 4096) == 0);
+    assert(protect_data(p + 4096, 1, 1) == -1);
+    assert(p[0] == 11 && p[8192] == 22);
+    assert(unmap_data(p + 8192, 1) == 0);
+    assert(unmap_data(p, 4096) == 0);
+    assert(android_mapping_compat_resolve("msync", "LIBC", "libc.so", &value));
+    int (*sync_data)(void *, size_t, int) = (void *)(uintptr_t)value;
+    char path[] = "/tmp/morrow-map-XXXXXX";
+    int fd = mkstemp(path);
+    assert(fd >= 0 && unlink(path) == 0);
+    assert(pwrite(fd, "hello", 5, 4096) == 5);
+    assert(lseek(fd, 37, SEEK_SET) == 37);
+    assert(map_data(NULL, 8192, 3, 2, fd, 4096) == FAILED);
+    p = map_data(NULL, 5, 3, 2, fd, 4096);
+    assert(p != FAILED && !memcmp(p, "hello", 5));
+    assert(lseek(fd, 0, SEEK_CUR) == 37 && p[5] == 0 && p[4095] == 0);
+    p[0] = 'j';
+    assert(sync_data(p, 5, 4) == 0);
+    assert(sync_data(p, 5, 5) == -1 && errno == EINVAL);
+    char source[5];
+    assert(pread(fd, source, 5, 4096) == 5 && !memcmp(source, "hello", 5));
+    assert(close(fd) == 0);
+    assert(!memcmp(p, "jello", 5));
+    assert(discard_data(p, 5, 4) == -1);
+    assert(resize_data(p, 5, 8192, 1) == FAILED);
+    assert(unmap_data(p, 5) == 0);
+    // With no other allocating threads, the released address cannot already
+    // belong to a different guest mapping.
+    p = map_data(NULL, 8192, 3, 0x22, -1, 0);
+    assert(p != FAILED && resize_data(p, 8192, 4096, 0) == p);
+    assert(protect_data(p + 4096, 4096, 3) == -1 && errno == ENOMEM);
+    assert(unmap_data(p, 4096) == 0);
+    // Guest code pages (JIT): execute without write is supported, but only
+    // as whole-region operations, and never writable+executable at once.
+    // Non-private mappings stay refused regardless of execute permission.
+    assert(map_data(NULL, 4096, 5, 1, fd, 0) == FAILED && errno == ENOTSUP);
+    assert(map_data(NULL, 4096, 5, 0x32, -1, 0) == FAILED && errno == ENOTSUP);
+    unsigned char *jit = map_data(NULL, 8192, 5, 0x22, -1, 0);
+    assert(jit != FAILED && (uintptr_t)jit % 4096 == 0);
+    assert(resize_data(jit, 8192, 4096, 0) == FAILED && errno == ENOTSUP);
+    assert(discard_data(jit, 8192, 4) == -1 && errno == ENOTSUP);
+    assert(protect_data(jit + 4096, 4096, 5) == -1 && errno == ENOTSUP);
+    assert(unmap_data(jit + 4096, 4096) == -1 && errno == ENOTSUP);
+    assert(protect_data(jit, 8192, 3) == 0);
+#if defined(__x86_64__)
+    { const unsigned char ret[] = {0xc3};
+#elif defined(__aarch64__)
+    { const unsigned char ret[] = {0xc0, 0x03, 0x5f, 0xd6};
+#endif
+#if defined(__x86_64__) || defined(__aarch64__)
+      memcpy(jit, ret, sizeof(ret));
+      __builtin___clear_cache((char *)jit, (char *)jit + sizeof(ret));
+      assert(protect_data(jit, 8192, 5) == 0);
+      ((void (*)(void))(void *)jit)();
+      assert(protect_data(jit, 8192, 1) == 0);
+      assert(!memcmp(jit, ret, sizeof(ret)));
+      // Through every transition the region must keep serving the guest:
+      // None -> RX and RX -> RW from an already-writable alias, then back.
+      assert(protect_data(jit, 8192, 0) == 0);
+      assert(protect_data(jit, 8192, 5) == 0);
+      assert(protect_data(jit, 8192, 3) == 0);
+      jit[0] = 0;
+      assert(protect_data(jit, 8192, 5) == 0);
+    }
+#endif
+    assert(unmap_data(jit, 8192) == 0);
+    pthread_t threads[8];
+    for (uintptr_t i = 0; i < 8; ++i)
+        assert(pthread_create(&threads[i], NULL, worker, (void *)i) == 0);
+    for (unsigned i = 0; i < 8; ++i) assert(pthread_join(threads[i], NULL) == 0);
+    puts("anonymous mappings, permission faults and concurrent release passed");
+}
